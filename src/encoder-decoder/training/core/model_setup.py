@@ -126,10 +126,31 @@ def setup_models(config: Dict, device: torch.device, is_main: bool):
             p.requires_grad = True
 
         # Vision models
-        vision_adapter = VisionAdapter(2048, d_model).to(device)
+        # VisionAdapter expects (d_in, dropout) - d_in=2048 from DeepEncoder projector
+        vision_adapter = VisionAdapter(2048, dropout=0.10).to(device)
+        
+        # VATVision new signature: takes d_in, d_model, n_input_tokens, compression_factor
+        # n_input_tokens = 6 views * 256 tokens/view = 1536
+        # n_queries is calculated as: n_input_tokens // compression_factor
+        # To get desired n_queries from config, calculate compression_factor
+        n_input_tokens = 6 * 256  # 1536 tokens from VisionAdapter
+        desired_n_queries = config["vision_queries"]
+        
+        # Calculate compression factor (default to 2 if exact division not possible)
+        if n_input_tokens % desired_n_queries == 0:
+            compression_factor = n_input_tokens // desired_n_queries
+        else:
+            # Fall back to compression_factor=2 (gives 768 queries)
+            compression_factor = 2
+            if is_main:
+                print(f"[VATVision] Warning: vision_queries={desired_n_queries} not compatible with n_input_tokens={n_input_tokens}")
+                print(f"[VATVision] Using compression_factor={compression_factor}, resulting in {n_input_tokens // compression_factor} queries")
+        
         vat_vision = VATVision(
-            d_model=d_model,
-            n_queries=config["vision_queries"],
+            d_in=2048,  # Input dimension from VisionAdapter
+            d_model=d_model,  # Target output dimension
+            n_input_tokens=n_input_tokens,
+            compression_factor=compression_factor,
             n_layers=config["vision_layers"],
             n_heads=config["vision_heads"],
             mlp_ratio=config["vision_mlp_ratio"],
