@@ -28,12 +28,12 @@ def get_training_config() -> Dict:
     config = {
         # ==================== I/O Configuration ====================
         # Directories containing BEV feature .npy files (one per sample_token)
-        "feature_dirs": ["./bev_feats/train"],
+        "feature_dirs": ["/home/j_bindu/fyp-26-grp-38/bev_feats"],
         
         # JSON/JSONL files with QA pairs (nuCaption, nuGrounding, etc.)
         "jsons": [
-            "Dataset_subset/external/nuCaption.json",
-            "Dataset_subset/external/nuGrounding.json"
+            "/home/j_bindu/fyp-26-grp-38/Dataset_subset/external/nuCaption.json",
+            "/home/j_bindu/fyp-26-grp-38/Dataset_subset/external/nuGrounding.json"
         ],
         
         # Output directory for checkpoints, logs, and plots
@@ -107,7 +107,7 @@ def get_training_config() -> Dict:
         # Number of learnable query tokens for LiDAR VAT
         # MUST be divisible by 6 (for 6 spatial sectors)
         # Recommended: 12 (testing), 576 (medium), 768 (large)
-        "vat_queries": 12,
+        "vat_queries": 2,
         
         # Number of transformer layers in LiDAR VAT
         "vat_layers": 1,
@@ -132,7 +132,7 @@ def get_training_config() -> Dict:
         # Number of learnable query tokens for Vision VAT
         # MUST be divisible by 6 (for 6 camera views)
         # Recommended: 12 (testing), 1536 (medium), 2304 (large)
-        "vision_queries": 12,
+        "vision_queries": 2,
         
         # Number of transformer layers in Vision VAT
         "vision_layers": 1,
@@ -211,7 +211,7 @@ def get_training_config() -> Dict:
         # ==================== nuScenes / DeepEncoder Configuration ====================
         # Path to nuScenes dataset root directory
         # Should contain folders: samples, sweeps, maps, etc.
-        "nu_dataroot": "./nuscenes/train",
+        "nu_dataroot": "/home/j_bindu/fyp-26-grp-38/Dataset_subset",
         
         # nuScenes version
         # Options: "v1.0-trainval", "v1.0-mini", "v1.0-test"
