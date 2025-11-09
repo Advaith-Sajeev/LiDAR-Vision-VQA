@@ -164,13 +164,25 @@ def get_training_config() -> Dict:
         # LoRA dropout rate
         "lora_dropout": 0.05,
         
+        # LLM LoRA target modules (which layers to apply LoRA to)
+        # Common targets for Qwen/LLaMA-style models:
+        #   - Attention: "q_proj", "k_proj", "v_proj", "o_proj"
+        #   - MLP: "gate_proj", "up_proj", "down_proj"
+        # Set to None to use defaults, or customize the list eg: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+        "lora_target_modules": ["q_proj",  "down_proj"],
+        
         
         # ==================== CLIP LoRA Configuration ====================
         # Enable LoRA fine-tuning for CLIP (if False, CLIP is fully frozen)
         "clip_lora_enabled": True,
         
+        # CLIP LoRA target modules (which layers to apply LoRA to)
+        # Common targets for CLIP ViT models:
+        #   - Attention: "qkv_proj", "out_proj" (combined Q/K/V projection)
+        #   - MLP: "mlp.fc1", "mlp.fc2"
+        # Set to None to use auto-detected defaults from clip_l_lora_default_targets()
         # Note: CLIP uses the same lora_r, lora_alpha, lora_dropout as LLM above
-        # The LoRA is applied to CLIP's attention (qkv_proj, out_proj) and MLP (fc1, fc2) layers
+        "clip_lora_target_modules": ["qkv_proj", "out_proj"],  # None = auto-detect, or provide list like ["qkv_proj", "out_proj", "mlp.fc1", "mlp.fc2"]
         
         
         # ==================== Optimization Configuration ====================
@@ -190,7 +202,7 @@ def get_training_config() -> Dict:
         "weight_decay": 0.01,
         
         # Number of warmup steps for learning rate scheduler
-        "warmup_steps": 1000,
+        "warmup_steps": 100,
         
         # Gradient clipping norm (prevents exploding gradients)
         "clip_norm": 1.0,
@@ -275,6 +287,23 @@ def main():
     # config["lr_lora"] = 5e-4
     # config["warmup_steps"] = 500
     
+    # Custom LoRA configuration
+    # Example 1: Only tune attention layers in LLM
+    # config["lora_target_modules"] = ["q_proj", "k_proj", "v_proj", "o_proj"]
+    
+    # Example 2: Only tune MLP layers in LLM
+    # config["lora_target_modules"] = ["gate_proj", "up_proj", "down_proj"]
+    
+    # Example 3: Higher rank LoRA for more capacity
+    # config["lora_r"] = 16
+    # config["lora_alpha"] = 32
+    
+    # Example 4: Custom CLIP LoRA targets (attention only)
+    # config["clip_lora_target_modules"] = ["qkv_proj", "out_proj"]
+    
+    # Example 5: Disable CLIP LoRA (freeze CLIP completely)
+    # config["clip_lora_enabled"] = False
+    
     # Debug mode
     # config["debug_shapes"] = True
     # config["max_samples"] = 5
@@ -306,7 +335,13 @@ def main():
     print(f"LiDAR VAT queries: {config['vat_queries']} (layers={config['vat_layers']}, heads={config['vat_heads']})")
     if config['use_vision']:
         print(f"Vision VAT queries: {config['vision_queries']} (layers={config['vision_layers']}, heads={config['vision_heads']})")
-    print(f"LoRA rank: {config['lora_r']}, alpha: {config['lora_alpha']}")
+    print(f"\nLoRA Configuration:")
+    print(f"  Rank: {config['lora_r']}, Alpha: {config['lora_alpha']}, Dropout: {config['lora_dropout']}")
+    print(f"  LLM target modules: {config.get('lora_target_modules', 'default')}")
+    if config['use_vision']:
+        clip_targets = config.get('clip_lora_target_modules', None)
+        print(f"  CLIP LoRA enabled: {config.get('clip_lora_enabled', True)}")
+        print(f"  CLIP target modules: {clip_targets if clip_targets is not None else 'auto-detect'}")
     
     print(f"\n{'='*30} Optimization {'='*30}")
     print(f"LR VAT: {config['lr_vat']}")

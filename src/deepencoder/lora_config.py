@@ -13,25 +13,14 @@ class DeepEncoderLoRAConfig:
     lora_dropout: dropout applied to LoRA paths.
     bias:    "none" | "lora_only" | "all" (see PEFT docs).
     target_modules: list of module name substrings to match (e.g., ["qkv_proj", "out_proj"]).
-                    If None, training code should supply defaults (see clip_l_lora_default_targets()).
+                    If None, DeepEncoderRuntime will use auto-detected defaults from clip_l_lora_default_targets().
     """
     enabled: bool = False
     r: int = 8
     lora_alpha: int = 16
     lora_dropout: float = 0.0
     bias: str = "none"
-    target_modules: Optional[List[str]] = field(default_factory=lambda: [
-        "q_proj", "k_proj", "v_proj", "o_proj",
-        "gate_proj", "up_proj", "down_proj"
-    ])
-
-    def __post_init__(self):
-        """Set default target modules if not provided."""
-        if self.target_modules is None:
-            self.target_modules = [
-                "q_proj", "k_proj", "v_proj", "o_proj",
-                "gate_proj", "up_proj", "down_proj"
-            ]
+    target_modules: Optional[List[str]] = None
 
     def materialize_target_modules(self, fallback: Optional[List[str]] = None) -> List[str]:
         """

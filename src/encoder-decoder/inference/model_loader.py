@@ -90,7 +90,9 @@ class ModelLoader:
             base.resize_token_embeddings(len(tokenizer))
         
         # Apply LoRA
-        lora_targets = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+        # Use target modules from config (saved during training) or default
+        lora_targets = self.config.get("lora_target_modules", ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"])
+        print(f"[loader] Applying LoRA with targets: {lora_targets}")
         base = make_lora(
             base,
             lora_targets,
@@ -152,13 +154,17 @@ class ModelLoader:
         )
         
         # Create LoRA configuration for CLIP
+        # Use target modules from config (saved during training) or None for auto-detect
+        clip_target_modules = self.config.get("clip_lora_target_modules", None)
+        print(f"[loader] CLIP LoRA targets: {clip_target_modules if clip_target_modules else 'auto-detect'}")
+        
         clip_lora_config = DeepEncoderLoRAConfig(
             enabled=self.config.get("clip_lora_enabled", True),
             r=self.config["lora_r"],
             lora_alpha=self.config["lora_alpha"],
             lora_dropout=self.config["lora_dropout"],
             bias="none",
-            target_modules=None,  # Let DeepEncoderRuntime infer automatically
+            target_modules=clip_target_modules,
         )
         
         # Initialize DeepEncoder

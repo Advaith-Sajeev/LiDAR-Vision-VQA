@@ -61,7 +61,9 @@ def setup_models(config: Dict, device: torch.device, is_main: bool):
         base.resize_token_embeddings(len(tok))
 
     # Apply LoRA to base model
-    lora_targets = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+    lora_targets = config.get("lora_target_modules", ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"])
+    if is_main:
+        print(f"[LLM LoRA] Applying LoRA to target modules: {lora_targets}")
     base = make_lora(base, lora_targets, config["lora_r"], config["lora_alpha"], config["lora_dropout"])
 
     d_model = base.config.hidden_size
@@ -78,13 +80,20 @@ def setup_models(config: Dict, device: torch.device, is_main: bool):
         )
 
         # Create LoRA configuration for CLIP
+        clip_target_modules = config.get("clip_lora_target_modules", None)
+        if is_main:
+            if clip_target_modules is None:
+                print("[CLIP LoRA] Using auto-detected target modules")
+            else:
+                print(f"[CLIP LoRA] Using configured target modules: {clip_target_modules}")
+        
         clip_lora_config = DeepEncoderLoRAConfig(
             enabled=config.get("clip_lora_enabled", True),
             r=config["lora_r"],
             lora_alpha=config["lora_alpha"],
             lora_dropout=config["lora_dropout"],
             bias="none",
-            target_modules=None,  # Let DeepEncoderRuntime infer automatically
+            target_modules=clip_target_modules,  # Can be None (auto-detect) or custom list
         )
 
         runtime = DeepEncoderRuntime(
