@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Optional
 
 @dataclass
@@ -20,7 +20,18 @@ class DeepEncoderLoRAConfig:
     lora_alpha: int = 16
     lora_dropout: float = 0.0
     bias: str = "none"
-    target_modules: Optional[List[str]] = None
+    target_modules: Optional[List[str]] = field(default_factory=lambda: [
+        "q_proj", "k_proj", "v_proj", "o_proj",
+        "gate_proj", "up_proj", "down_proj"
+    ])
+
+    def __post_init__(self):
+        """Set default target modules if not provided."""
+        if self.target_modules is None:
+            self.target_modules = [
+                "q_proj", "k_proj", "v_proj", "o_proj",
+                "gate_proj", "up_proj", "down_proj"
+            ]
 
     def materialize_target_modules(self, fallback: Optional[List[str]] = None) -> List[str]:
         """

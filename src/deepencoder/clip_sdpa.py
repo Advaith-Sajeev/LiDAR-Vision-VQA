@@ -2,7 +2,7 @@
 # Compatible with Torch 1.13 (adds SDP fallback) and optional flash-attn
 # Exposes CLIP module names that are convenient LoRA targets.
 # ------------- LoRA targeting helpers (optional) -------------
-def clip_l_lora_default_targets() -> Tuple[str, ...]:
+def clip_l_lora_default_targets():
     """
     Return a default list of Linear submodule names commonly targeted by LoRA.
     These match this file's module attribute names.

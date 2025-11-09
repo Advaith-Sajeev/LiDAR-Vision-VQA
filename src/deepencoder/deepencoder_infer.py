@@ -30,6 +30,7 @@ from PIL import Image
 import numpy as np
 
 # --- import your package modules ---
+from deepencoder.lora_config import DeepEncoderLoRAConfig
 from deepencoder.sam_vary_sdpa import build_sam_vit_b
 from deepencoder.clip_sdpa import build_clip_l, VitModel
 from deepencoder.build_linear import MlpProjector
