@@ -1,11 +1,16 @@
-"""Vision Adapter - projects DeepEncoder tokens to model dimension"""
+"""Vision Adapter - adds per-view embeddings and concatenates views.
+
+This version:
+- Takes 6 camera views (fixed order).
+- Adds a learned embedding specific to each camera/view.
+- Concatenates all views into a single sequence: [num_views * HW, d_in].
+"""
 
 import torch
 import torch.nn as nn
-from typing import Dict, List, Tuple
+from typing import List
 
 # Default view order for nuScenes cameras (6 views)
-# This matches deepencoder.deepencoder_infer.DEFAULT_VIEW_ORDER
 DEFAULT_VIEW_ORDER = [
     "CAM_FRONT",
     "CAM_FRONT_RIGHT",
@@ -20,76 +25,80 @@ CAM_VIEWS = tuple(DEFAULT_VIEW_ORDER)  # 6 views, fixed order
 
 class VisionAdapter(nn.Module):
     """
-    Projects DeepEncoder tokens [HW, 1280] per view → d_model,
-    adds 2D PE + 6-view embeddings, returns KV tokens for VATVision.
+    Adds learned per-view (camera-specific) embeddings to DeepEncoder tokens
+    and concatenates all views into a single sequence.
 
-    Shapes:
-      per-view tokens: List[6 × (HW, 1280)]
-      output:          [B=1, sum_views(HW), d_model]  ~ [1, ~2400, d_model]
+    Inputs:
+        views_tokens:
+            List of length V (here 6), where each element is a tensor [HW, d_in]
+            corresponding to one camera view in CAM_VIEWS order.
+
+    Output:
+        Tensor of shape [num_views * HW, d_in], where:
+            - num_views * HW = total number of tokens (e.g., 6 * 256 = 1536)
+            - d_in = original token dimension (unchanged)
     """
-    
-    def __init__(self, d_in: int, d_model: int, dropout: float = 0.10):
+
+    def __init__(self, d_in: int, dropout: float = 0.10):
         super().__init__()
-        self.d_model = d_model
-        self.proj = nn.Linear(d_in, d_model, bias=True)
-        self.norm = nn.LayerNorm(d_model)
+        self.d_in = d_in
+        self.num_views = len(CAM_VIEWS)
 
-        self.geo_mlp = nn.Sequential(
-            nn.Linear(5, d_model), nn.GELU(), nn.Linear(d_model, d_model)
-        )
-
-        self.view_embed = nn.Parameter(
-            torch.zeros(len(CAM_VIEWS), d_model), requires_grad=True
-        )
-        nn.init.zeros_(self.view_embed)
-
+        # Per-token normalization + regularization
+        self.norm = nn.LayerNorm(d_in)
         self.dropout = nn.Dropout(dropout)
-        self._grid_cache: Dict[Tuple[int, int, torch.device], torch.Tensor] = {}
 
-    def _grid_feats(self, side: int, device: torch.device) -> torch.Tensor:
-        """Generate 2D geometric features for vision tokens."""
-        key = (side, side, device)
-        if key in self._grid_cache:
-            return self._grid_cache[key]
-            
-        H = W = side
-        yv, xv = torch.meshgrid(
-            torch.linspace(-1, 1, H, device=device),
-            torch.linspace(-1, 1, W, device=device),
-            indexing="ij",
+        # One learnable embedding per camera/view: [num_views, d_in]
+        self.view_embed = nn.Parameter(
+            torch.zeros(self.num_views, d_in), requires_grad=True
         )
-        r = torch.clamp((xv**2 + yv**2).sqrt(), 0, 1)
-        theta = torch.atan2(yv, xv)
-        geom = torch.stack(
-            [xv, yv, r, torch.sin(theta), torch.cos(theta)], dim=-1
-        ).view(H * W, 5)
-        
-        self._grid_cache[key] = geom
-        return geom
 
-    def forward(self, views_tokens: List[torch.Tensor], grid_side: int) -> torch.Tensor:
+        # Init view embeddings (small random values)
+        nn.init.trunc_normal_(self.view_embed, std=0.02)
+
+    def forward(self, views_tokens: List[torch.Tensor]) -> torch.Tensor:
         """
-        Process multi-view tokens.
-        
         Args:
-            views_tokens: List of 6 tensors, each [HW, 1280]
-            grid_side: Spatial dimension of the grid (e.g., 20 for 20x20)
-            
+            views_tokens: list of tensors, length == num_views (6),
+                          each of shape [HW, d_in].
+
         Returns:
-            Concatenated vision tokens [1, 6*HW, d_model]
+            out: tensor of shape [num_views * HW, d_in]
         """
-        device = views_tokens[0].device
-        geom = self._grid_feats(grid_side, device)  # [HW,5]
+        if len(views_tokens) != self.num_views:
+            raise ValueError(
+                f"Expected {self.num_views} views in order {CAM_VIEWS}, "
+                f"got {len(views_tokens)}"
+            )
 
         seqs = []
+        expected_hw = None
+
         for v_idx, t in enumerate(views_tokens):
-            # t: [HW, 1280]  -> proj -> add geom PE + view embed
-            x = self.proj(t)  # [HW,d]
-            x = x + self.geo_mlp(geom)  # [HW,d]
-            x = x + self.view_embed[v_idx].unsqueeze(0)  # [HW,d]
+            if t.dim() != 2:
+                raise ValueError(
+                    f"Expected tensor of shape [HW, d_in] for view {v_idx}, "
+                    f"got shape {tuple(t.shape)}"
+                )
+
+            hw, _ = t.shape
+            if expected_hw is None:
+                expected_hw = hw
+            elif hw != expected_hw:
+                raise ValueError(
+                    f"All views must have same HW. Got {expected_hw} and {hw}."
+                )
+
+            # Add this view's embedding to all its tokens
+            # view_embed[v_idx]: [d_in] -> broadcast to [HW, d_in]
+            x = t + self.view_embed[v_idx].unsqueeze(0)
+
+            # Normalize + dropout
             x = self.norm(x)
             x = self.dropout(x)
-            seqs.append(x.unsqueeze(0))  # [1,HW,d]
 
-        out = torch.cat(seqs, dim=1)  # [1,6*HW,d]
+            seqs.append(x)  # each [HW, d_in]
+
+        # Concatenate along the sequence dimension: [num_views * HW, d_in]
+        out = torch.cat(seqs, dim=0)
         return out
