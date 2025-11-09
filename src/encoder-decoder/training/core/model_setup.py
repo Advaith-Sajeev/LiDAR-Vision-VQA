@@ -104,7 +104,8 @@ def setup_models(config: Dict, device: torch.device, is_main: bool):
         runtime.clip_vit = patch_clip_peft_forward(get_peft_model(runtime.clip_vit, clip_lora_cfg))
 
         # Verify projector dimension
-        test_input = torch.randn(1, 1024, device=device)
+        # Projector expects 2048-dim input (CLIP 1024 + SAM 1024 concatenated)
+        test_input = torch.randn(1, 2048, device=device)
         test_output = runtime.projector(test_input)
         projector_out_dim = test_output.shape[-1]
         if projector_out_dim != 2048:

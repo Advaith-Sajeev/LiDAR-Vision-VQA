@@ -5,6 +5,14 @@ LiDAR-Vision-LLM Training Script
 Comprehensive entry point with all configuration options
 """
 
+import sys
+import os
+
+# Add the 'src' directory to the Python path BEFORE any local imports
+src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../src'))
+if src_path not in sys.path:
+    sys.path.insert(0, src_path)
+
 from typing import Dict
 from training.core import Trainer
 
