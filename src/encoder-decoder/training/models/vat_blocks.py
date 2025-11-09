@@ -1,4 +1,4 @@
-"""VAT Transformer Block"""
+"""VAT Transformer Block :: vat_blocks.py"""
 
 import torch
 import torch.nn as nn
