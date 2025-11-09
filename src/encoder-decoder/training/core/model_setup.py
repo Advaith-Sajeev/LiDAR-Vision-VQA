@@ -9,16 +9,14 @@ from nuscenes.nuscenes import NuScenes
 from typing import Dict, Tuple, Optional
 
 from deepencoder.deepencoder_infer import DeepEncoderRuntime
+from deepencoder.lora_config import DeepEncoderLoRAConfig
 from ..models import (
     VATLiDAR,
     VATVision,
     VisionAdapter,
     make_lora,
-    patch_clip_peft_forward,
-    infer_clip_lora_targets,
 )
 from ..utils import count_trainable_params
-from peft import LoraConfig, get_peft_model
 
 
 def setup_models(config: Dict, device: torch.device, is_main: bool):
@@ -79,29 +77,29 @@ def setup_models(config: Dict, device: torch.device, is_main: bool):
             verbose=False,
         )
 
+        # Create LoRA configuration for CLIP
+        clip_lora_config = DeepEncoderLoRAConfig(
+            enabled=config.get("clip_lora_enabled", True),
+            r=config["lora_r"],
+            lora_alpha=config["lora_alpha"],
+            lora_dropout=config["lora_dropout"],
+            bias="none",
+            target_modules=None,  # Let DeepEncoderRuntime infer automatically
+        )
+
         runtime = DeepEncoderRuntime(
             sam_ckpt=config.get("sam_ckpt", None),
             auto_download_sam=config.get("auto_download_sam", True),
             device=("cuda" if device.type == "cuda" else "cpu"),
             dtype=config["deep_dtype"],
             openclip_pretrained=config["openclip_pretrained"],
+            lora_config=clip_lora_config,
+            freeze_clip_backbone_when_lora_enabled=True,
         )
 
-        # Freeze SAM
+        # Freeze SAM (already done in DeepEncoderRuntime, but explicit for clarity)
         for p in runtime.sam.parameters():
             p.requires_grad = False
-
-        # Apply LoRA to CLIP
-        clip_lora_targets = infer_clip_lora_targets(runtime.clip_vit)
-        clip_lora_cfg = LoraConfig(
-            r=config["lora_r"],
-            lora_alpha=config["lora_alpha"],
-            lora_dropout=config["lora_dropout"],
-            bias="none",
-            target_modules=clip_lora_targets,
-            task_type="FEATURE_EXTRACTION",
-        )
-        runtime.clip_vit = patch_clip_peft_forward(get_peft_model(runtime.clip_vit, clip_lora_cfg))
 
         # Verify projector dimension
         # Projector expects 2048-dim input (CLIP 1024 + SAM 1024 concatenated)

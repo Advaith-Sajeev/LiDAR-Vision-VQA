@@ -165,6 +165,14 @@ def get_training_config() -> Dict:
         "lora_dropout": 0.05,
         
         
+        # ==================== CLIP LoRA Configuration ====================
+        # Enable LoRA fine-tuning for CLIP (if False, CLIP is fully frozen)
+        "clip_lora_enabled": True,
+        
+        # Note: CLIP uses the same lora_r, lora_alpha, lora_dropout as LLM above
+        # The LoRA is applied to CLIP's attention (qkv_proj, out_proj) and MLP (fc1, fc2) layers
+        
+        
         # ==================== Optimization Configuration ====================
         # Learning rate for LiDAR VAT
         "lr_vat": 5e-4,

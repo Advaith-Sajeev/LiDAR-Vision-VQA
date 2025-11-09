@@ -47,6 +47,13 @@ try:
 except Exception:
     _HAS_OPENCLIP = False
 
+# Optional: PEFT for LoRA
+try:
+    from peft import LoraConfig, get_peft_model
+    _HAS_PEFT = True
+except Exception:
+    _HAS_PEFT = False
+
 
 # =========================
 # CONFIG (edit these as needed)
@@ -398,12 +405,22 @@ class DeepEncoderRuntime:
         if self.lora_config.enabled:
             if not _HAS_PEFT:
                 raise RuntimeError("LoRA requested but 'peft' is not installed.")
+            
+            # Infer target modules if not explicitly provided
+            target_modules = self.lora_config.target_modules
+            if target_modules is None:
+                # Import the helper function from clip_sdpa
+                from deepencoder.clip_sdpa import clip_l_lora_default_targets
+                target_modules = list(clip_l_lora_default_targets())
+                print(f"[DeepEncoder] Auto-inferred CLIP LoRA targets: {target_modules}")
+            
             lcfg = LoraConfig(
                 r=self.lora_config.r,
                 lora_alpha=self.lora_config.lora_alpha,
                 lora_dropout=self.lora_config.lora_dropout,
                 bias=self.lora_config.bias,
-                target_modules=self.lora_config.target_modules,
+                target_modules=target_modules,
+                task_type="FEATURE_EXTRACTION",
             )
             self.clip_vit = get_peft_model(self.clip_vit, lcfg)
             # Optionally freeze the non-LoRA CLIP backbone params:

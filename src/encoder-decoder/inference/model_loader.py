@@ -11,15 +11,13 @@ from typing import Dict, Optional, Tuple
 import json
 
 from deepencoder.deepencoder_infer import DeepEncoderRuntime
+from deepencoder.lora_config import DeepEncoderLoRAConfig
 from training.models import (
     VATLiDAR,
     VATVision,
     VisionAdapter,
     make_lora,
-    patch_clip_peft_forward,
-    infer_clip_lora_targets,
 )
-from peft import LoraConfig, get_peft_model
 
 
 class ModelLoader:
@@ -153,6 +151,16 @@ class ModelLoader:
             verbose=False,
         )
         
+        # Create LoRA configuration for CLIP
+        clip_lora_config = DeepEncoderLoRAConfig(
+            enabled=self.config.get("clip_lora_enabled", True),
+            r=self.config["lora_r"],
+            lora_alpha=self.config["lora_alpha"],
+            lora_dropout=self.config["lora_dropout"],
+            bias="none",
+            target_modules=None,  # Let DeepEncoderRuntime infer automatically
+        )
+        
         # Initialize DeepEncoder
         runtime = DeepEncoderRuntime(
             sam_ckpt=self.config.get("sam_ckpt", None),
@@ -160,31 +168,33 @@ class ModelLoader:
             device=str(self.device),
             dtype=self.config["deep_dtype"],
             openclip_pretrained=self.config["openclip_pretrained"],
+            lora_config=clip_lora_config,
+            freeze_clip_backbone_when_lora_enabled=True,
         )
         
-        # Freeze SAM
+        # Freeze SAM (already done in DeepEncoderRuntime)
         for p in runtime.sam.parameters():
             p.requires_grad = False
         runtime.sam.eval()
         
-        # Apply LoRA to CLIP
-        clip_lora_targets = infer_clip_lora_targets(runtime.clip_vit)
-        clip_lora_cfg = LoraConfig(
-            r=self.config["lora_r"],
-            lora_alpha=self.config["lora_alpha"],
-            lora_dropout=self.config["lora_dropout"],
-            bias="none",
-            target_modules=clip_lora_targets,
-            task_type="FEATURE_EXTRACTION",
-        )
-        runtime.clip_vit = patch_clip_peft_forward(get_peft_model(runtime.clip_vit, clip_lora_cfg))
-        
-        # Load CLIP LoRA weights
-        clip_lora_path = self.checkpoint_dir / "clip_lora.pt"
+        # Load CLIP LoRA weights if they exist
+        # Note: The LoRA adapters are already applied by DeepEncoderRuntime
+        clip_lora_path = self.checkpoint_dir / "clip_lora_adapter_latest"
         if clip_lora_path.exists():
-            print(f"[loader] Loading CLIP LoRA weights from {clip_lora_path}")
-            clip_state = torch.load(clip_lora_path, map_location=self.device)
-            runtime.clip_vit.load_state_dict(clip_state, strict=False)
+            print(f"[loader] Loading CLIP LoRA adapter from {clip_lora_path}")
+            # PEFT's save_pretrained/from_pretrained handles loading
+            # The runtime already wrapped CLIP with LoRA, just need to load weights
+            try:
+                from peft import PeftModel
+                # Load the adapter weights into the existing PEFT model
+                runtime.clip_vit = PeftModel.from_pretrained(
+                    runtime.clip_vit.get_base_model(),
+                    clip_lora_path,
+                    is_trainable=False
+                )
+            except Exception as e:
+                print(f"[loader] Warning: Could not load CLIP LoRA adapter: {e}")
+                print("[loader] Continuing with initialized LoRA weights...")
         
         runtime.clip_vit.eval()
         
