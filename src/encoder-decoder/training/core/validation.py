@@ -32,6 +32,11 @@ def run_validation(dl, device, tok, base, vat_lidar, vat_vision, vision_adapter,
     Returns:
         Average validation loss
     """
+    # Log validation toggles
+    use_vision_validation = config.get("validation_use_vision", True)
+    use_lidar_validation = config.get("validation_use_lidar", True)
+    print(f"[validation] Component toggles: Vision={use_vision_validation}, LiDAR={use_lidar_validation}")
+    
     # Unwrap DDP if needed
     def unwrap(model):
         return model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model
@@ -64,8 +69,13 @@ def run_validation(dl, device, tok, base, vat_lidar, vat_vision, vision_adapter,
         a_ids = batch["answer_ids"].to(device)
         sample_tokens = batch["sample_tokens"]
 
+        # Check validation toggles
+        use_vision_in_validation = config.get("validation_use_vision", True)
+        use_lidar_in_validation = config.get("validation_use_lidar", True)
+
         # Vision pipeline
-        if config["use_vision"]:
+        vision_kv = None
+        if config["use_vision"] and use_vision_in_validation:
             vision_kvs = []
             for tok_str in sample_tokens:
                 mv = multiview_tokens_from_sample_token(
@@ -84,8 +94,6 @@ def run_validation(dl, device, tok, base, vat_lidar, vat_vision, vision_adapter,
                     kv = kv.unsqueeze(0)  # Add batch dimension: [1, 1536, 2048]
                 vision_kvs.append(kv)
             vision_kv = torch.cat(vision_kvs, dim=0)
-        else:
-            vision_kv = None
 
         with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=use_amp):
             E = base_model.get_input_embeddings()
@@ -94,14 +102,22 @@ def run_validation(dl, device, tok, base, vat_lidar, vat_vision, vision_adapter,
                 ids = tok([txt], add_special_tokens=False, return_tensors="pt").input_ids.to(device)
                 return E(ids)
 
-            prefix_lidar = vat_lidar_model(bev) * config["prefix_scale"]
-            prefix_vision = (
-                vat_vision_model(vision_kv) * config["prefix_scale"] if vision_kv is not None else None
-            )
+            # Process LiDAR (if enabled)
+            prefix_lidar = None
+            if use_lidar_in_validation:
+                prefix_lidar = vat_lidar_model(bev) * config["prefix_scale"]
+            
+            # Process vision (if enabled and available)
+            prefix_vision = None
+            if vision_kv is not None and use_vision_in_validation:
+                prefix_vision = vat_vision_model(vision_kv) * config["prefix_scale"]
 
             tok_emb = E(p_ids)
 
+            # Build input pieces based on toggles
             pieces = []
+            
+            # Add vision tokens if enabled
             if prefix_vision is not None:
                 pieces += [
                     emb_token("<vision_start>").expand(prefix_vision.size(0), -1, -1),
@@ -109,12 +125,16 @@ def run_validation(dl, device, tok, base, vat_lidar, vat_vision, vision_adapter,
                     emb_token("<vision_end>").expand(prefix_vision.size(0), -1, -1),
                 ]
 
-            pieces += [
-                emb_token("<lidar_start>").expand(prefix_lidar.size(0), -1, -1),
-                prefix_lidar,
-                emb_token("<lidar_end>").expand(prefix_lidar.size(0), -1, -1),
-                tok_emb,
-            ]
+            # Add LiDAR tokens if enabled
+            if prefix_lidar is not None:
+                pieces += [
+                    emb_token("<lidar_start>").expand(prefix_lidar.size(0), -1, -1),
+                    prefix_lidar,
+                    emb_token("<lidar_end>").expand(prefix_lidar.size(0), -1, -1),
+                ]
+            
+            # Always add text prompt
+            pieces.append(tok_emb)
 
             inp = torch.cat(pieces, dim=1)
             ans_emb = E(a_ids)
@@ -296,6 +316,13 @@ def run_inference_sampling(
     """
     print(f"\n[inference_sampling] Generating predictions at epoch {epoch}...")
     
+    # Log inference component toggles
+    use_vision_toggle = config.get("inference_use_vision", True)
+    use_lidar_toggle = config.get("inference_use_lidar", True)
+    use_system_toggle = config.get("inference_use_system", True)
+    
+    print(f"[inference_sampling] Component toggles: Vision={use_vision_toggle}, LiDAR={use_lidar_toggle}, System={use_system_toggle}")
+    
     # Unwrap DDP if needed
     def unwrap(model):
         return model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model
@@ -408,16 +435,31 @@ def run_inference_sampling(
                 except Exception as e:
                     print(f"[inference_sampling] Vision processing failed for {sample_token}: {e}")
             
-            # Format prompt with configurable system prompt
+            # Format prompt with configurable system prompt and toggles
             # CRITICAL: Match the exact order used during training!
-            system_prompt = config.get(
-                "system_prompt", 
-                "You are an expert autonomous driving assistant. Analyze the 3D LiDAR point cloud and camera images to understand the driving scene. Provide accurate, concise descriptions of objects, their locations, distances, and spatial relationships. Use directional terms like 'ahead', 'left', 'right', 'behind' and specify distances in meters when describing object locations."
-            )
-            msgs = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": question},
-            ]
+            # BUT allow toggling components for debugging/ablation studies
+            
+            # Check inference toggles (default to True for backward compatibility)
+            use_vision_in_inference = config.get("inference_use_vision", True)
+            use_lidar_in_inference = config.get("inference_use_lidar", True)
+            use_system_in_inference = config.get("inference_use_system", True)
+            
+            # Build prompt based on system toggle
+            if use_system_in_inference:
+                system_prompt = config.get(
+                    "system_prompt", 
+                    "You are an expert autonomous driving assistant. Analyze the 3D LiDAR point cloud and camera images to understand the driving scene. Provide accurate, concise descriptions of objects, their locations, distances, and spatial relationships. Use directional terms like 'ahead', 'left', 'right', 'behind' and specify distances in meters when describing object locations."
+                )
+                msgs = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": question},
+                ]
+            else:
+                # Skip system prompt, only user question
+                msgs = [
+                    {"role": "user", "content": question},
+                ]
+            
             prompt = tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
             
             # Build inputs_embeds using the SAME order as training
@@ -432,22 +474,30 @@ def run_inference_sampling(
             prompt_ids = tok(prompt, return_tensors="pt", add_special_tokens=False).input_ids.to(device)
             prompt_embeds = E(prompt_ids)  # [1, L, d_model]
             
-            # Build the full input in the SAME ORDER as training
+            # Build the full input with toggleable components
+            # Order matches training: VISION → LIDAR → TEXT
             embeds_list = []
             
-            # 1. Vision tokens (if available)
-            if prefix_vision is not None:
+            # 1. Vision tokens (if available AND enabled)
+            if prefix_vision is not None and use_vision_in_inference:
                 embeds_list.append(emb_token("<vision_start>"))
                 embeds_list.append(prefix_vision)
                 embeds_list.append(emb_token("<vision_end>"))
             
-            # 2. LiDAR tokens (always present)
-            embeds_list.append(emb_token("<lidar_start>"))
-            embeds_list.append(prefix_lidar)
-            embeds_list.append(emb_token("<lidar_end>"))
+            # 2. LiDAR tokens (if enabled)
+            if use_lidar_in_inference:
+                embeds_list.append(emb_token("<lidar_start>"))
+                embeds_list.append(prefix_lidar)
+                embeds_list.append(emb_token("<lidar_end>"))
             
-            # 3. Text prompt (system + user question + generation prompt)
+            # 3. Text prompt (user question + optional system prompt + generation prompt)
             embeds_list.append(prompt_embeds)
+            
+            # Safety check: ensure we have at least some embeddings
+            if not embeds_list:
+                print(f"[inference_sampling] Error: No components enabled for {sample_token}, skipping...")
+                print(f"[inference_sampling]   Check: inference_use_vision, inference_use_lidar, or ensure prompt is not empty")
+                continue
             
             # Concatenate all pieces
             inputs_embeds = torch.cat(embeds_list, dim=1)  # [1, total_len, d_model]

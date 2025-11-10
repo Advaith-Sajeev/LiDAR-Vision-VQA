@@ -290,6 +290,18 @@ class Trainer:
     
     def train(self):
         """Main training loop"""
+        # Log component toggles
+        if is_main_process():
+            use_vision_training = self.config.get("training_use_vision", True)
+            use_lidar_training = self.config.get("training_use_lidar", True)
+            use_vision_validation = self.config.get("validation_use_vision", True)
+            use_lidar_validation = self.config.get("validation_use_lidar", True)
+            print(f"\n[training_toggles] Vision={use_vision_training}, LiDAR={use_lidar_training}")
+            print(f"[validation_toggles] Vision={use_vision_validation}, LiDAR={use_lidar_validation}")
+            
+            if not use_vision_training or not use_lidar_training:
+                print("[WARNING] Training with disabled components will train a model that doesn't use them!")
+        
         # Set models to train mode
         self.base.train()
         self.vat_lidar.train()
@@ -398,8 +410,13 @@ class Trainer:
         a_ids = batch["answer_ids"].to(self.device)
         sample_tokens = batch["sample_tokens"]
         
+        # Check training toggles
+        use_vision_in_training = self.config.get("training_use_vision", True)
+        use_lidar_in_training = self.config.get("training_use_lidar", True)
+        
         # Vision pipeline
-        if self.config["use_vision"]:
+        vision_kv = None
+        if self.config["use_vision"] and use_vision_in_training:
             vision_kvs = []
             for tok_str in sample_tokens:
                 mv = multiview_tokens_from_sample_token(
@@ -422,8 +439,6 @@ class Trainer:
             
             # Concatenate along batch dimension: [B, 1536, 2048]
             vision_kv = torch.cat(vision_kvs, dim=0)
-        else:
-            vision_kv = None
         
         # Forward pass
         with torch.autocast(device_type=self.device.type, dtype=torch.float16, enabled=self.use_amp):
@@ -433,15 +448,22 @@ class Trainer:
                 ids = self.tok([txt], add_special_tokens=False, return_tensors="pt").input_ids.to(self.device)
                 return E(ids)
             
-            prefix_lidar = self.vat_lidar(bev) * self.config["prefix_scale"]
-            if vision_kv is not None:
+            # Process LiDAR (if enabled)
+            prefix_lidar = None
+            if use_lidar_in_training:
+                prefix_lidar = self.vat_lidar(bev) * self.config["prefix_scale"]
+            
+            # Process vision (if enabled and available)
+            prefix_vision = None
+            if vision_kv is not None and use_vision_in_training:
                 prefix_vision = self.vat_vision(vision_kv) * self.config["prefix_scale"]
-            else:
-                prefix_vision = None
             
             tok_emb = E(p_ids)
             
+            # Build input pieces based on toggles
             pieces = []
+            
+            # Add vision tokens if enabled
             if prefix_vision is not None:
                 pieces += [
                     emb("<vision_start>").expand(prefix_vision.size(0), -1, -1),
@@ -449,12 +471,16 @@ class Trainer:
                     emb("<vision_end>").expand(prefix_vision.size(0), -1, -1),
                 ]
             
-            pieces += [
-                emb("<lidar_start>").expand(prefix_lidar.size(0), -1, -1),
-                prefix_lidar,
-                emb("<lidar_end>").expand(prefix_lidar.size(0), -1, -1),
-                tok_emb,
-            ]
+            # Add LiDAR tokens if enabled
+            if prefix_lidar is not None:
+                pieces += [
+                    emb("<lidar_start>").expand(prefix_lidar.size(0), -1, -1),
+                    prefix_lidar,
+                    emb("<lidar_end>").expand(prefix_lidar.size(0), -1, -1),
+                ]
+            
+            # Always add text prompt
+            pieces.append(tok_emb)
             
             inp = torch.cat(pieces, dim=1)
             ans_emb = E(a_ids)

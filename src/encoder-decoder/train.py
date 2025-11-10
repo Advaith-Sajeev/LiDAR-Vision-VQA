@@ -106,6 +106,20 @@ def get_training_config() -> Dict:
         "inference_do_sample": True,
         "inference_num_beams": 1,
         
+        # Toggle components during training (for debugging/ablation studies)
+        # WARNING: Disabling components during training will train a model that doesn't use them!
+        "training_use_vision": True,    # Include vision tokens in training
+        "training_use_lidar": True,     # Include LiDAR tokens in training
+        
+        # Toggle components during validation (for debugging/ablation studies)
+        "validation_use_vision": True,  # Include vision tokens in validation
+        "validation_use_lidar": True,   # Include LiDAR tokens in validation
+        
+        # Toggle components during inference sampling (for debugging/ablation studies)
+        "inference_use_vision": True,   # Include vision tokens in inference
+        "inference_use_lidar": True,    # Include LiDAR tokens in inference
+        "inference_use_system": True,   # Include system prompt in inference
+        
         
         # ==================== Model Configuration ====================
         # Hugging Face model ID for base LLM
@@ -277,6 +291,60 @@ def main():
     # config["batch_size"] = 1
     # config["vat_queries"] = 12
     # config["vision_queries"] = 12
+    
+    # Ablation studies: Toggle components across training/validation/inference
+    # Useful for understanding which components contribute to performance
+    
+    # ===== Training Toggles =====
+    # WARNING: Disabling components during training trains a model that doesn't use them!
+    
+    # Example: Train LiDAR-only model (no vision)
+    # config["training_use_vision"] = False
+    # config["training_use_lidar"] = True
+    
+    # Example: Train vision-only model (no LiDAR)
+    # config["training_use_vision"] = True
+    # config["training_use_lidar"] = False
+    
+    # ===== Validation Toggles =====
+    # Test different component combinations during validation
+    
+    # Example: Validate without vision
+    # config["validation_use_vision"] = False
+    # config["validation_use_lidar"] = True
+    
+    # Example: Validate without LiDAR
+    # config["validation_use_vision"] = True
+    # config["validation_use_lidar"] = False
+    
+    # ===== Inference Sampling Toggles =====
+    # Test different component combinations during inference sampling
+    
+    # Example: Inference without vision tokens
+    # config["inference_use_vision"] = False
+    # config["inference_use_lidar"] = True
+    # config["inference_use_system"] = True
+    
+    # Example: Inference without LiDAR tokens
+    # config["inference_use_vision"] = True
+    # config["inference_use_lidar"] = False
+    # config["inference_use_system"] = True
+    
+    # Example: Inference without system prompt
+    # config["inference_use_vision"] = True
+    # config["inference_use_lidar"] = True
+    # config["inference_use_system"] = False
+    
+    # Example: Text-only inference (no multimodal inputs)
+    # config["inference_use_vision"] = False
+    # config["inference_use_lidar"] = False
+    # config["inference_use_system"] = True
+    
+    # ===== Complete Ablation Study Example =====
+    # Train with all modalities, test each individually
+    # config["training_use_vision"] = True
+    # config["training_use_lidar"] = True
+    # Then run multiple experiments with different inference toggles
     
     # Full training (production)
     # config["max_samples"] = None  # Use all data
