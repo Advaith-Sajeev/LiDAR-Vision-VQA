@@ -25,7 +25,7 @@ from ..utils import (
     plot_loss_curve,
 )
 from .model_setup import setup_models, create_vat_lidar, setup_optimizer_and_scheduler
-from .validation import run_validation, save_val_inference_samples
+from .validation import run_validation, run_inference_sampling
 from deepencoder.deepencoder_infer import DEFAULT_VIEW_ORDER, multiview_tokens_from_sample_token
 
 
@@ -352,22 +352,23 @@ class Trainer:
             if is_main_process():
                 self._save_checkpoint("latest", epoch, len(self.dl_train))
             
-            # Save inference samples
-            if is_main_process() and epoch % 5 == 0:
-                print(f"[inference] saving validation samples at epoch {epoch}")
-                save_val_inference_samples(
-                    self.ds_val,
-                    self.tok,
+            # Run inference sampling
+            if is_main_process() and epoch % self.config.get("inference_sampling_every", 3) == 0:
+                print(f"\n[inference_sampling] Running at epoch {epoch}")
+                run_inference_sampling(
                     self.base,
                     self.vat_lidar,
                     self.vat_vision if self.config["use_vision"] else None,
                     self.vision_adapter if self.config["use_vision"] else None,
                     self.runtime if self.config["use_vision"] else None,
                     self.nusc if self.config["use_vision"] else None,
+                    self.tok,
                     self.config,
                     self.out_dir,
                     epoch,
-                    n=self.config.get("val_inference_n", 10),
+                    self.device,
+                    self.ds_train.dataset.token2path,
+                    self.best_step,
                 )
             
             # Plot
@@ -410,12 +411,13 @@ class Trainer:
                     mv["grid"] = [20, 20]
                 
                 vt = [t.to(self.device) for t in mv["tokens"]]
-                grid_side = mv["grid"][0]
                 
                 with torch.autocast(device_type=self.device.type, dtype=torch.float16, enabled=self.use_amp):
-                    kv = self.vision_adapter(vt, grid_side)
+                    kv = self.vision_adapter(vt)  # [1536, 2048]
+                    kv = kv.unsqueeze(0)  # Add batch dimension: [1, 1536, 2048]
                 vision_kvs.append(kv)
             
+            # Concatenate along batch dimension: [B, 1536, 2048]
             vision_kv = torch.cat(vision_kvs, dim=0)
         else:
             vision_kv = None

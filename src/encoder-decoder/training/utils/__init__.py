@@ -13,6 +13,11 @@ from .checkpoints import (
     prune_checkpoints_steps,
 )
 from .plotting import plot_loss_curve, plot_step_curve
+from .metrics import (
+    calculate_caption_metrics,
+    calculate_grounding_metrics,
+    calculate_metrics_by_type,
+)
 
 __all__ = [
     # Distributed
@@ -31,4 +36,8 @@ __all__ = [
     # Plotting
     "plot_loss_curve",
     "plot_step_curve",
+    # Metrics
+    "calculate_caption_metrics",
+    "calculate_grounding_metrics",
+    "calculate_metrics_by_type",
 ]

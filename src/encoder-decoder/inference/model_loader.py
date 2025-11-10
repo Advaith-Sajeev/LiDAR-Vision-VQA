@@ -214,7 +214,7 @@ class ModelLoader:
         runtime.projector.eval()
         
         # Load Vision Adapter
-        vision_adapter = VisionAdapter(2048, d_model).to(self.device)
+        vision_adapter = VisionAdapter(d_in=2048, dropout=0.10).to(self.device)
         va_path = self.checkpoint_dir / "vision_adapter.pt"
         if va_path.exists():
             print(f"[loader] Loading vision adapter weights from {va_path}")
@@ -226,9 +226,24 @@ class ModelLoader:
         vision_adapter.eval()
         
         # Load Vision VAT
+        # Compute n_input_tokens and compression_factor from config
+        # n_input_tokens = num_views * tokens_per_view = 6 * 256 = 1536 (default)
+        n_input_tokens = 6 * 256  # Fixed for nuScenes 6 views with 16x16 grid
+        desired_n_queries = self.config["vision_queries"]
+        
+        if n_input_tokens % desired_n_queries == 0:
+            compression_factor = n_input_tokens // desired_n_queries
+        else:
+            # Fall back to compression_factor=2 (gives 768 queries)
+            compression_factor = 2
+            print(f"[loader] Warning: vision_queries={desired_n_queries} not compatible with n_input_tokens={n_input_tokens}")
+            print(f"[loader] Using compression_factor={compression_factor}, resulting in {n_input_tokens // compression_factor} queries")
+        
         vat_vision = VATVision(
-            d_model=d_model,
-            n_queries=self.config["vision_queries"],
+            d_in=2048,  # Input dimension from VisionAdapter
+            d_model=d_model,  # Target output dimension
+            n_input_tokens=n_input_tokens,
+            compression_factor=compression_factor,
             n_layers=self.config["vision_layers"],
             n_heads=self.config["vision_heads"],
             mlp_ratio=self.config["vision_mlp_ratio"],

@@ -3,10 +3,13 @@
 import json
 import random
 import torch
+import numpy as np
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, List
+from datetime import datetime
 
 from deepencoder.deepencoder_infer import DEFAULT_VIEW_ORDER, multiview_tokens_from_sample_token
+from ..utils import calculate_metrics_by_type
 
 
 @torch.no_grad()
@@ -75,10 +78,10 @@ def run_validation(dl, device, tok, base, vat_lidar, vat_vision, vision_adapter,
                     mv["grid"] = [20, 20]
 
                 vt_list = [t.to(device) for t in mv["tokens"]]
-                grid_side = mv["grid"][0]
 
                 with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=use_amp):
-                    kv = vision_adapter_model(vt_list, grid_side)
+                    kv = vision_adapter_model(vt_list)  # [1536, 2048]
+                    kv = kv.unsqueeze(0)  # Add batch dimension: [1, 1536, 2048]
                 vision_kvs.append(kv)
             vision_kv = torch.cat(vision_kvs, dim=0)
         else:
@@ -263,5 +266,278 @@ def save_val_inference_samples(
         vat_lidar_model.train()
     if was_training_vision:
         vat_vision_model.train()
+
+
+@torch.no_grad()
+def run_inference_sampling(
+    base, vat_lidar, vat_vision, vision_adapter, runtime, nusc,
+    tok, config, out_dir, epoch, device, token2path, best_step
+):
+    """
+    Generate predictions on validation samples with evaluation metrics.
+    
+    Samples n/2 from caption validation and n/2 from grounding validation,
+    generates predictions using the current best model, and calculates metrics.
+    
+    Args:
+        base: Base LLM model
+        vat_lidar: LiDAR VAT model
+        vat_vision: Vision VAT model (optional)
+        vision_adapter: Vision adapter (optional)
+        runtime: DeepEncoder runtime (optional)
+        nusc: NuScenes instance (optional)
+        tok: Tokenizer
+        config: Training configuration
+        out_dir: Output directory
+        epoch: Current epoch number
+        device: Device to run on
+        token2path: Mapping from sample_token to BEV feature path
+        best_step: Best step number so far
+    """
+    print(f"\n[inference_sampling] Generating predictions at epoch {epoch}...")
+    
+    # Unwrap DDP if needed
+    def unwrap(model):
+        return model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model
+    
+    base_model = unwrap(base)
+    vat_lidar_model = unwrap(vat_lidar)
+    
+    # Set to eval mode
+    was_training_base = base_model.training
+    was_training_lidar = vat_lidar_model.training
+    
+    base_model.eval()
+    vat_lidar_model.eval()
+    
+    if config["use_vision"]:
+        vat_vision_model = unwrap(vat_vision)
+        vision_adapter_model = unwrap(vision_adapter)
+        runtime_unwrapped = unwrap(runtime)
+        
+        was_training_vision = vat_vision_model.training
+        was_training_adapter = vision_adapter_model.training
+        
+        vat_vision_model.eval()
+        vision_adapter_model.eval()
+        runtime_unwrapped.eval()
+    else:
+        vat_vision_model = vision_adapter_model = None
+    
+    # Load validation JSONs
+    try:
+        with open(config["inference_caption_json"], "r") as f:
+            caption_data = json.load(f)
+        print(f"[inference_sampling] Loaded {len(caption_data)} caption samples")
+    except Exception as e:
+        print(f"[inference_sampling] Warning: Could not load caption JSON: {e}")
+        caption_data = []
+    
+    try:
+        with open(config["inference_grounding_json"], "r") as f:
+            grounding_data = json.load(f)
+        print(f"[inference_sampling] Loaded {len(grounding_data)} grounding samples")
+    except Exception as e:
+        print(f"[inference_sampling] Warning: Could not load grounding JSON: {e}")
+        grounding_data = []
+    
+    # Sample n/2 from each
+    n_per_type = config["inference_samples_n"] // 2
+    
+    # Filter for samples that have BEV features
+    caption_available = [s for s in caption_data if s.get("sample_token") in token2path]
+    grounding_available = [s for s in grounding_data if s.get("sample_token") in token2path]
+    
+    caption_samples = random.sample(caption_available, min(n_per_type, len(caption_available)))
+    grounding_samples = random.sample(grounding_available, min(n_per_type, len(grounding_available)))
+    
+    print(f"[inference_sampling] Selected {len(caption_samples)} caption + {len(grounding_samples)} grounding samples")
+    
+    all_samples = [
+        {**s, "dataset_type": "caption"} for s in caption_samples
+    ] + [
+        {**s, "dataset_type": "grounding"} for s in grounding_samples
+    ]
+    
+    # Generate predictions
+    results = []
+    
+    for sample in all_samples:
+        try:
+            sample_token = sample["sample_token"]
+            question = sample.get("question", "").strip()
+            ground_truth = sample.get(config["target_field"], "").strip()
+            dataset_type = sample["dataset_type"]
+            
+            # Load BEV feature
+            bev_path = token2path.get(sample_token)
+            if not bev_path:
+                print(f"[inference_sampling] Warning: No BEV feature for {sample_token}")
+                continue
+            
+            bev = np.load(bev_path)
+            bev = torch.from_numpy(bev).float().unsqueeze(0).to(device)  # [1, C, H, W]
+            
+            # Process LiDAR
+            prefix_lidar = vat_lidar_model(bev) * config["prefix_scale"]  # [1, n_queries, d_model]
+            
+            # Process vision
+            prefix_vision = None
+            if config["use_vision"] and nusc is not None:
+                try:
+                    mv = multiview_tokens_from_sample_token(
+                        sample_token, nusc, runtime=runtime, view_order=DEFAULT_VIEW_ORDER, strict=False
+                    )
+                    
+                    if mv.get("tokens") and len(mv["tokens"]) == 6:
+                        vt = [t.to(device) for t in mv["tokens"]]
+                        kv = vision_adapter_model(vt)  # [1536, 2048]
+                        kv = kv.unsqueeze(0)  # [1, 1536, 2048]
+                        prefix_vision = vat_vision_model(kv) * config["prefix_scale"]  # [1, n_queries, d_model]
+                except Exception as e:
+                    print(f"[inference_sampling] Vision processing failed for {sample_token}: {e}")
+            
+            # Format prompt
+            msgs = [
+                {"role": "system", "content": "You are a driving assistant. Use LiDAR and camera context provided via prefix tokens."},
+                {"role": "user", "content": question},
+            ]
+            prompt = tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
+            
+            # Build inputs_embeds
+            enc = tok(prompt, return_tensors="pt", add_special_tokens=False)
+            input_ids = enc["input_ids"].to(device)  # [1, L]
+            text_embeds = base_model.get_input_embeddings()(input_ids)  # [1, L, d_model]
+            
+            ids_flat = input_ids[0]
+            
+            # Find special token positions
+            lidar_start_id = tok.convert_tokens_to_ids("<lidar_start>")
+            lidar_end_id = tok.convert_tokens_to_ids("<lidar_end>")
+            vision_start_id = tok.convert_tokens_to_ids("<vision_start>")
+            vision_end_id = tok.convert_tokens_to_ids("<vision_end>")
+            
+            embeds_list = []
+            pos = 0
+            
+            # Handle vision tokens
+            if prefix_vision is not None:
+                vision_start_pos = (ids_flat == vision_start_id).nonzero(as_tuple=True)[0]
+                vision_end_pos = (ids_flat == vision_end_id).nonzero(as_tuple=True)[0]
+                
+                if len(vision_start_pos) > 0 and len(vision_end_pos) > 0:
+                    vs = vision_start_pos[0].item()
+                    ve = vision_end_pos[0].item()
+                    
+                    if vs > pos:
+                        embeds_list.append(text_embeds[:, pos:vs, :])
+                    embeds_list.append(text_embeds[:, vs:vs+1, :])
+                    embeds_list.append(prefix_vision)
+                    embeds_list.append(text_embeds[:, ve:ve+1, :])
+                    pos = ve + 1
+            
+            # Handle LiDAR tokens
+            lidar_start_pos = (ids_flat == lidar_start_id).nonzero(as_tuple=True)[0]
+            lidar_end_pos = (ids_flat == lidar_end_id).nonzero(as_tuple=True)[0]
+            
+            if len(lidar_start_pos) > 0 and len(lidar_end_pos) > 0:
+                ls = lidar_start_pos[0].item()
+                le = lidar_end_pos[0].item()
+                
+                if ls > pos:
+                    embeds_list.append(text_embeds[:, pos:ls, :])
+                embeds_list.append(text_embeds[:, ls:ls+1, :])
+                embeds_list.append(prefix_lidar)
+                embeds_list.append(text_embeds[:, le:le+1, :])
+                pos = le + 1
+            
+            # Remaining text
+            if pos < text_embeds.shape[1]:
+                embeds_list.append(text_embeds[:, pos:, :])
+            
+            # Concatenate
+            inputs_embeds = torch.cat(embeds_list, dim=1)  # [1, total_len, d_model]
+            attention_mask = torch.ones(1, inputs_embeds.shape[1], dtype=torch.long, device=device)
+            
+            # Generate
+            outputs = base_model.generate(
+                inputs_embeds=inputs_embeds,
+                attention_mask=attention_mask,
+                max_new_tokens=config.get("inference_max_tokens", 64),
+                temperature=config.get("inference_temperature", 0.7),
+                top_p=config.get("inference_top_p", 0.9),
+                top_k=config.get("inference_top_k", 50),
+                do_sample=config.get("inference_do_sample", True),
+                num_beams=config.get("inference_num_beams", 1),
+                pad_token_id=tok.pad_token_id,
+                eos_token_id=tok.eos_token_id,
+            )
+            
+            # Decode (skip prompt tokens)
+            generated_ids = outputs[0][inputs_embeds.shape[1]:]
+            prediction = tok.decode(generated_ids, skip_special_tokens=True).strip()
+            
+            results.append({
+                "sample_token": sample_token,
+                "dataset_type": dataset_type,
+                "question": question,
+                "ground_truth": ground_truth,
+                "prediction": prediction,
+            })
+            
+            print(f"[inference_sampling] {sample_token} ({dataset_type}): '{prediction[:50]}...'")
+        
+        except Exception as e:
+            print(f"[inference_sampling] Error processing {sample.get('sample_token', 'unknown')}: {e}")
+            import traceback
+            traceback.print_exc()
+            continue
+    
+    # Calculate metrics
+    print(f"\n[inference_sampling] Calculating metrics...")
+    metrics = calculate_metrics_by_type(results)
+    
+    # Save results
+    output = {
+        "epoch": epoch,
+        "best_step": best_step,
+        "timestamp": datetime.now().isoformat(),
+        "metrics": metrics,
+        "samples": results,
+    }
+    
+    output_file = out_dir / f"inference_sampling_epoch{epoch}.json"
+    with open(output_file, "w") as f:
+        json.dump(output, f, indent=2)
+    
+    print(f"\n[inference_sampling] Results saved to {output_file}")
+    print(f"\n{'='*60}")
+    print("INFERENCE SAMPLING METRICS")
+    print('='*60)
+    
+    if "caption_dashboard" in metrics:
+        print(f"\nCaption Dashboard ({metrics['caption_dashboard']['num_samples']} samples):")
+        print(f"  BLEU-4:       {metrics['caption_dashboard']['bleu4']:.4f}")
+        print(f"  CIDEr:        {metrics['caption_dashboard']['cider']:.4f}")
+        print(f"  SPICE:        {metrics['caption_dashboard']['spice']:.4f}")
+        print(f"  BERTScore-F1: {metrics['caption_dashboard']['bertscore_f1']:.4f}")
+    
+    if "grounding_dashboard" in metrics:
+        print(f"\nGrounding Dashboard ({metrics['grounding_dashboard']['num_samples']} samples):")
+        print(f"  Top-1 Acc:    {metrics['grounding_dashboard']['top1_accuracy']:.4f}")
+        print(f"  BEV IoU:      {metrics['grounding_dashboard']['bev_iou']:.4f}")
+    
+    print('='*60 + '\n')
+    
+    # Restore training mode
+    if was_training_base:
+        base_model.train()
+    if was_training_lidar:
+        vat_lidar_model.train()
+    if config["use_vision"]:
+        if was_training_vision:
+            vat_vision_model.train()
+        if was_training_adapter:
+            vision_adapter_model.train()
     if was_training_adapter:
         vision_adapter_model.train()

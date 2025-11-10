@@ -100,22 +100,31 @@ class InferenceEngine:
             return None
         
         with torch.no_grad():
-            # Get camera images for this sample
-            sample = self.nusc.get("sample", sample_token)
-            cam_tokens = [sample["data"][cam] for cam in [
-                "CAM_FRONT", "CAM_FRONT_RIGHT", "CAM_FRONT_LEFT",
-                "CAM_BACK", "CAM_BACK_RIGHT", "CAM_BACK_LEFT"
-            ]]
+            # Get camera images for this sample using DeepEncoder
+            from deepencoder.deepencoder_infer import multiview_tokens_from_sample_token, DEFAULT_VIEW_ORDER
             
-            # Process through DeepEncoder
-            kv_tokens = self.runtime.process_sample_token(
+            mv = multiview_tokens_from_sample_token(
                 sample_token=sample_token,
-                nusc=self.nusc
-            )  # [N_img_tokens, 1024]
+                nusc=self.nusc,
+                runtime=self.runtime,
+                view_order=DEFAULT_VIEW_ORDER,
+                strict=False
+            )
             
-            # Project to d_model
-            kv_tokens = self.runtime.projector(kv_tokens)  # [N_img_tokens, 2048]
-            kv_tokens = self.vision_adapter(kv_tokens.unsqueeze(0))  # [1, N_img_tokens, d_model]
+            # Check if we got valid tokens
+            if not mv.get("tokens") or len(mv["tokens"]) != 6:
+                print(f"[warn] Failed to extract 6 view tokens, using dummy...")
+                dummy_shape = (400, 1280)
+                mv["tokens"] = [torch.zeros(dummy_shape, device=self.device) for _ in range(6)]
+            
+            # Move tokens to device (they're already in d_in=2048 space from DeepEncoder)
+            vt = [t.to(self.device) for t in mv["tokens"]]  # List of [HW, 2048]
+            
+            # Process through VisionAdapter: list of [HW, 2048] -> [num_views*HW, 2048]
+            kv_tokens = self.vision_adapter(vt)  # [1536, 2048]
+            
+            # Add batch dimension for VAT
+            kv_tokens = kv_tokens.unsqueeze(0)  # [1, 1536, 2048]
             
             # Process through Vision VAT
             vision_prompts = self.vat_vision(kv_tokens)  # [1, n_queries, d_model]

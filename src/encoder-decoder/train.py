@@ -83,8 +83,25 @@ def get_training_config() -> Dict:
         # Run validation every N epochs
         "validate_every": 1,
         
-        # Number of validation samples to save for inference inspection
-        "val_inference_n": 10,
+        
+        # ==================== Inference Sampling Configuration ====================
+        # Generate predictions on validation samples every N epochs
+        "inference_sampling_every": 3,
+        
+        # Total number of samples to generate (must be even for balanced sampling)
+        "inference_samples_n": 10,
+        
+        # Validation JSON files for inference sampling
+        "inference_caption_json": "/home/j_bindu/fyp-26-grp-38/Datasets/LiDAR-LLM-Nu-Caption/val.json",
+        "inference_grounding_json": "/home/j_bindu/fyp-26-grp-38/Datasets/LiDAR-LLM-Nu-Grounding/LiDAR-LLM-Nu-Grounding-val.json",
+        
+        # Generation parameters for inference sampling
+        "inference_max_tokens": 64,
+        "inference_temperature": 0.7,
+        "inference_top_p": 0.9,
+        "inference_top_k": 50,
+        "inference_do_sample": True,
+        "inference_num_beams": 1,
         
         
         # ==================== Model Configuration ====================
