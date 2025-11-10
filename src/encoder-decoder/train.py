@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-LiDAR-Vision-LLM Training Script
-Comprehensive entry point with all configuration options
+LiDAR-Vision-LLM Training Script :: src/encoder-decoder/train.py 
 
-DEBUG MODE: To enable debug logging, set config["debug_mode"] = True in get_training_config()
-            See line ~30 for debug configuration and DEBUG_GUIDE.md for full documentation
+TODO :: improve doc string 
+
+Entry point for trainig 
+
 """
 
 import sys
 import os
+from datetime import datetime
+from pathlib import Path
 
 # Add the 'src' directory to the Python path BEFORE any local imports
 src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../src'))
@@ -25,7 +28,14 @@ def get_training_config() -> Dict:
     Get comprehensive training configuration with all available options.
     
     All options are explicitly shown here for easy customization.
-    Modify values directly or uncomment sections as needed.
+    Modify values as needed.
+    
+    IMPORTANT:
+    - If resume=False: Set out_dir to a base directory (e.g., "./checkpoints") 
+                      The system will create a timestamped subdirectory
+    - If resume=True:  Set out_dir to point to a specific run directory 
+                      (e.g., "./checkpoints/run_20251110_143052") OR set to base 
+                      directory and you'll be prompted to select a run
     """
     
     config = {
@@ -60,7 +70,7 @@ def get_training_config() -> Dict:
         # ────────────────────────────────────────────────────────────────
         
         "debug_mode": True,      # ← SET TO True TO ENABLE DEBUG LOGGING
-        "debug_level": 2,         # ← 1=INFO, 2=DEBUG (recommended), 3=TRACE
+        "debug_level": 3,         # ← 1=INFO, 2=DEBUG (recommended), 3=TRACE
         "debug_modules": [],      # ← [] = all modules, or ["trainer", "dataset"]
         
         
@@ -68,14 +78,16 @@ def get_training_config() -> Dict:
         # Directories containing BEV feature .npy files (one per sample_token)
         "feature_dirs": ["/home/j_bindu/fyp-26-grp-38/bev_feats"],
         
-        # JSON/JSONL files with QA pairs (nuCaption, nuGrounding, etc.)
+        # JSON/JSONL files with QA pairs for training and validation (nuCaption and nuGrounding)
         "jsons": [
             "/home/j_bindu/fyp-26-grp-38/Dataset_subset/external/nuCaption.json",
             "/home/j_bindu/fyp-26-grp-38/Dataset_subset/external/nuGrounding.json"
         ],
         
         # Output directory for checkpoints, logs, and plots
-        "out_dir": "./checkpoints_vat",
+        # If resume=False: Use base directory (e.g., "./checkpoints")
+        # If resume=True: Use specific run directory OR base directory (will prompt)
+        "out_dir": "./checkpoints",
         
         # Maximum number of samples to use (None = use all data)
         # Set to small number (e.g., 10) for quick testing
@@ -99,7 +111,7 @@ def get_training_config() -> Dict:
         "fp16": False,
         
         # Resume from checkpoint if available
-        "resume": True,
+        "resume": False,
         
         # Save checkpoint every N steps (0 = disable step-based saving)
         "save_every_steps": 1000,
@@ -132,7 +144,7 @@ def get_training_config() -> Dict:
         # Total number of samples to generate (must be even for balanced sampling)
         "inference_samples_n": 10,
         
-        # Validation JSON files for inference sampling
+        # Test JSON files for inference sampling
         "inference_caption_json": "/home/j_bindu/fyp-26-grp-38/Datasets/LiDAR-LLM-Nu-Caption/val.json",
         "inference_grounding_json": "/home/j_bindu/fyp-26-grp-38/Datasets/LiDAR-LLM-Nu-Grounding/LiDAR-LLM-Nu-Grounding-val.json",
         
@@ -165,7 +177,7 @@ def get_training_config() -> Dict:
         "model_id": "Qwen/Qwen2.5-0.5B",
         
         # Field name in JSON containing target answer
-        "target_field": "answer",
+        "target_field": "answer", # or answer_lidar
         
         # Maximum answer tokens (longer answers will be truncated)
         "max_ans_toks": 64,
@@ -310,6 +322,123 @@ def get_training_config() -> Dict:
     return config
 
 
+def setup_output_directory(config: Dict) -> str:
+    """
+    Setup output directory based on resume flag.
+    
+    If resume=True:
+        - If out_dir is a specific run directory with checkpoints, use it
+        - If out_dir is a base directory with run_* subdirectories, prompt user to choose
+        - User can select which run to resume from
+        - MUST point to a directory containing checkpoints
+    
+    If resume=False: 
+        - out_dir should be a base directory (not a specific run directory)
+        - Create a new timestamped directory inside out_dir
+        - MUST NOT point to an existing run directory
+    
+    Args:
+        config: Training configuration dictionary
+        
+    Returns:
+        Updated output directory path
+        
+    Raises:
+        AssertionError: If configuration is invalid
+    """
+    base_out_dir = Path(config["out_dir"])
+    resume = config.get("resume", False)
+    
+    # Validate configuration based on resume flag
+    is_run_directory = base_out_dir.name.startswith("run_") and "_" in base_out_dir.name
+    
+    if not resume:
+        # Assert: When resume=False, out_dir should NOT be a specific run directory
+        assert not is_run_directory, (
+            f"Configuration Error: resume=False but out_dir points to a run directory!\n"
+            f"  out_dir: {base_out_dir}\n"
+            f"  Expected: Base directory (e.g., './checkpoints')\n"
+            f"  Got: Run directory (e.g., './checkpoints/run_20251110_143052')\n"
+            f"\n"
+            f"Fix: Set out_dir to a base directory like './checkpoints'"
+        )
+    
+    if resume:
+        # Check if the specified directory itself contains checkpoints
+        if (base_out_dir / "training_state_latest.pt").exists() or \
+           list(base_out_dir.glob("training_state_step*.pt")):
+            print(f"[checkpoint] Resume mode: Found checkpoints in {base_out_dir}")
+            return str(base_out_dir)
+        
+        # Look for run_* subdirectories
+        run_dirs = sorted(base_out_dir.glob("run_*"), reverse=True)
+        
+        # Filter to only runs that have checkpoints
+        valid_runs = []
+        for run_dir in run_dirs:
+            if (run_dir / "training_state_latest.pt").exists() or \
+               list(run_dir.glob("training_state_step*.pt")):
+                valid_runs.append(run_dir)
+        
+        if valid_runs:
+            print("\n" + "=" * 80)
+            print("RESUME TRAINING: Select a run to resume from")
+            print("=" * 80)
+            for idx, run_dir in enumerate(valid_runs, start=1):
+                # Get checkpoint info
+                latest_ckpt = run_dir / "training_state_latest.pt"
+                if latest_ckpt.exists():
+                    import torch
+                    state = torch.load(latest_ckpt, map_location="cpu")
+                    epoch = state.get("epoch", "?")
+                    step = state.get("global_step", "?")
+                    loss = state.get("best_loss", "?")
+                    ckpt_info = f"epoch={epoch}, step={step}, best_loss={loss:.4f}" if isinstance(loss, float) else f"epoch={epoch}, step={step}"
+                else:
+                    ckpt_info = "step checkpoint available"
+                
+                print(f"  [{idx}] {run_dir.name} ({ckpt_info})")
+            
+            print("=" * 80)
+            
+            # Get user selection
+            while True:
+                try:
+                    choice = input(f"Enter your choice [1-{len(valid_runs)}] or 'q' to quit: ").strip()
+                    if choice.lower() == 'q':
+                        print("[checkpoint] Training cancelled by user")
+                        sys.exit(0)
+                    
+                    idx = int(choice)
+                    if 1 <= idx <= len(valid_runs):
+                        selected_run = valid_runs[idx - 1]
+                        print(f"[checkpoint] Selected: {selected_run}")
+                        return str(selected_run)
+                    else:
+                        print(f"Please enter a number between 1 and {len(valid_runs)}")
+                except ValueError:
+                    print("Invalid input. Please enter a number or 'q' to quit")
+        
+        # Assert: When resume=True, must have checkpoints available
+        raise AssertionError(
+            f"Configuration Error: resume=True but no checkpoints found!\n"
+            f"  out_dir: {base_out_dir}\n"
+            f"  Searched for: run_* subdirectories with checkpoints\n"
+            f"\n"
+            f"Options:\n"
+            f"  1. Set resume=False to start a new training run\n"
+            f"  2. Point out_dir to a directory that contains checkpoints\n"
+            f"  3. Check that checkpoint files exist (training_state_latest.pt or training_state_step*.pt)"
+        )
+    else:
+        # Create new timestamped directory
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        new_out_dir = base_out_dir / f"run_{timestamp}"
+        new_out_dir.mkdir(parents=True, exist_ok=True)
+        print(f"[checkpoint] New training run: Created directory: {new_out_dir}")
+        return str(new_out_dir)
+
+
 def main():
     """
     Main training entry point.
@@ -319,6 +448,9 @@ def main():
     
     # Get comprehensive configuration
     config = get_training_config()
+    
+    # Setup output directory based on resume flag
+    config["out_dir"] = setup_output_directory(config)
     
     # ╔════════════════════════════════════════════════════════════════╗
     # ║              QUICK DEBUG MODE TOGGLE (OVERRIDE)                ║
