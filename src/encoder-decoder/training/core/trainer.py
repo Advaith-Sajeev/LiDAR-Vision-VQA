@@ -157,7 +157,7 @@ class Trainer:
             sampler=sampler_train,
             num_workers=0,
             pin_memory=(self.device.type == "cuda"),
-            collate_fn=make_collate(self.tok, self.config["max_ans_toks"]),
+            collate_fn=make_collate(self.tok, self.config["max_ans_toks"], self.config.get("system_prompt", "")),
         )
         
         self.dl_val = DataLoader(
@@ -166,7 +166,7 @@ class Trainer:
             shuffle=False,
             num_workers=0,
             pin_memory=(self.device.type == "cuda"),
-            collate_fn=make_collate(self.tok, self.config["max_ans_toks"]),
+            collate_fn=make_collate(self.tok, self.config["max_ans_toks"], self.config.get("system_prompt", "")),
         )
         
         self.ds_val = ds_val

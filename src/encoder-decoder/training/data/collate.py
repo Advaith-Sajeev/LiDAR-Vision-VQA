@@ -4,17 +4,22 @@ from typing import Dict, List
 import torch
 
 
-def make_collate(tokenizer, max_ans_toks: int):
+def make_collate(tokenizer, max_ans_toks: int, system_prompt: str = ""):
     """
     Create collate function for DataLoader.
     
     Args:
         tokenizer: Hugging Face tokenizer
         max_ans_toks: Maximum answer tokens
+        system_prompt: System prompt to use in chat template
         
     Returns:
         Collate function that processes batch items
     """
+    # Use default if not provided
+    if not system_prompt:
+        system_prompt = "You are an expert autonomous driving assistant. Analyze the 3D LiDAR point cloud and camera images to understand the driving scene. Provide accurate, concise descriptions of objects, their locations, distances, and spatial relationships. Use directional terms like 'ahead', 'left', 'right', 'behind' and specify distances in meters when describing object locations."
+    
     def collate(items: List[Dict]):
         bevs = [it["bev"] for it in items]
         tokens = [it["token"] for it in items]
@@ -24,10 +29,7 @@ def make_collate(tokenizer, max_ans_toks: int):
         prompts = []
         for q in questions:
             msgs = [
-                {
-                    "role": "system",
-                    "content": "You are a driving assistant. Use LiDAR and camera context provided via prefix tokens."
-                },
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": q}
             ]
             prompts.append(

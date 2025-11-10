@@ -397,9 +397,13 @@ def run_inference_sampling(
                 except Exception as e:
                     print(f"[inference_sampling] Vision processing failed for {sample_token}: {e}")
             
-            # Format prompt
+            # Format prompt with configurable system prompt
+            system_prompt = config.get(
+                "system_prompt", 
+                "You are an expert autonomous driving assistant. Analyze the 3D LiDAR point cloud and camera images to understand the driving scene. Provide accurate, concise descriptions of objects, their locations, distances, and spatial relationships. Use directional terms like 'ahead', 'left', 'right', 'behind' and specify distances in meters when describing object locations."
+            )
             msgs = [
-                {"role": "system", "content": "You are a driving assistant. Use LiDAR and camera context provided via prefix tokens."},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": question},
             ]
             prompt = tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)

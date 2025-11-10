@@ -121,6 +121,14 @@ Examples:
         help="Number of input channels for BEV (auto-detect if not provided)"
     )
     
+    # System prompt
+    parser.add_argument(
+        "--system-prompt",
+        type=str,
+        default="",
+        help="System prompt to prepend to all questions (default: empty)"
+    )
+    
     # Generation parameters
     parser.add_argument(
         "--max-tokens",
@@ -349,6 +357,10 @@ def main():
         
         loader = ModelLoader(args.checkpoint, device=args.device)
         models = loader.load_all(c_in=args.c_in)
+        
+        # Override system_prompt if provided
+        if args.system_prompt:
+            models["config"]["system_prompt"] = args.system_prompt
         
         # Create inference engine
         engine = InferenceEngine(models)

@@ -40,6 +40,7 @@ class InferenceEngine:
         
         self.use_vision = self.config.get("use_vision", False) and self.vat_vision is not None
         self.prefix_scale = self.config.get("prefix_scale", 0.2)
+        self.system_prompt = self.config.get("system_prompt", "")
         
         # Special token IDs
         self.lidar_start_id = self.tokenizer.convert_tokens_to_ids("<lidar_start>")
@@ -61,6 +62,10 @@ class InferenceEngine:
         Returns:
             Formatted prompt string
         """
+        # Prepend system prompt if configured
+        if self.system_prompt:
+            question = f"{self.system_prompt}\n\n{question}"
+        
         if self.use_vision and include_vision:
             return f"<vision_start><vision_end><lidar_start><lidar_end>{question}\nAnswer:"
         else:

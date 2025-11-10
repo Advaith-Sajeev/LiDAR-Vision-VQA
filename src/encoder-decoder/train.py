@@ -83,6 +83,9 @@ def get_training_config() -> Dict:
         # Run validation every N epochs
         "validate_every": 1,
         
+        # System prompt for the model (used in chat template)
+        "system_prompt": "You are an expert autonomous driving assistant. Analyze the 3D LiDAR point cloud and camera images to understand the driving scene. Provide accurate, concise descriptions for the question asked.",
+        
         
         # ==================== Inference Sampling Configuration ====================
         # Generate predictions on validation samples every N epochs
@@ -376,6 +379,7 @@ def main():
     print(f"\n{'='*30} Validation {'='*30}")
     print(f"Val split: {config['val_split']*100:.1f}%")
     print(f"Validate every: {config['validate_every']} epochs")
+    print(f"System prompt: {config.get('system_prompt', 'None')}")
     
     print("\n" + "=" * 80)
     print("Starting training...")
