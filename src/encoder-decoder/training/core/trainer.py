@@ -132,6 +132,9 @@ class Trainer:
             ds_full, [train_size, val_size], generator=torch.Generator().manual_seed(self.config["seed"])
         )
         
+        # Store reference to full dataset for token2path access
+        self.ds_full = ds_full
+        
         if is_main_process():
             print(f"[dataset] train={train_size}  val={val_size}")
         
@@ -367,7 +370,7 @@ class Trainer:
                     self.out_dir,
                     epoch,
                     self.device,
-                    self.dl_train.dataset.token2path,
+                    self.ds_full.token2path,
                     self.best_step,
                 )
             
