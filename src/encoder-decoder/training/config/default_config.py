@@ -50,6 +50,7 @@ DEFAULT_CONFIG: Dict = {
     "vision_dropout": 0.10,
     "vision_post_dropout": 0.10,
     "vision_per_view_query": True,
+    "vision_strict_per_view": False,            # If True, error when per-view not feasible; if False, auto-disable
 
     # LoRA
     "lora_r": 2,

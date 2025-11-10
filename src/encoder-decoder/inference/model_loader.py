@@ -235,6 +235,7 @@ class ModelLoader:
             dropout=self.config["vision_dropout"],
             post_dropout=self.config["vision_post_dropout"],
             use_per_view_query=self.config["vision_per_view_query"],
+            strict_per_view=self.config.get("vision_strict_per_view", False),
         ).to(self.device)
         
         vat_vision_path = self.checkpoint_dir / "vat_vision.pt"

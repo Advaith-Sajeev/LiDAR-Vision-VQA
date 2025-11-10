@@ -21,6 +21,19 @@ class VATVision(nn.Module):
       Input:  [B, N_img_tokens (1536), d_in (2048)]
       After VAT: [B, n_queries (768), d_in (2048)]
       Output: [B, n_queries (768), d_model (e.g., 512)]
+    
+    Args:
+        d_in: Input dimension from VisionAdapter (e.g., 2048)
+        d_model: Target output dimension (e.g., 512)
+        n_input_tokens: Total tokens from VisionAdapter (6 * 256 = 1536)
+        compression_factor: Reduce tokens by this factor (e.g., 2 gives 768 queries)
+        n_layers: Number of VAT transformer blocks
+        n_heads: Number of attention heads per block
+        mlp_ratio: MLP hidden dimension expansion ratio
+        dropout: Dropout rate in transformer blocks
+        post_dropout: Dropout rate in final projection
+        use_per_view_query: Enable view-specific query embeddings (requires n_queries divisible by NUM_VIEWS)
+        strict_per_view: If True, raise error when per-view not feasible; if False, auto-disable with warning
     """
     
     def __init__(
@@ -35,6 +48,7 @@ class VATVision(nn.Module):
         dropout: float = 0.10,
         post_dropout: float = 0.10,
         use_per_view_query: bool = False,
+        strict_per_view: bool = False,  # If True, raise error when per-view not feasible; if False, auto-disable
     ):
         super().__init__()
         
@@ -48,13 +62,33 @@ class VATVision(nn.Module):
         self.compression_factor = compression_factor
         self.n_queries = n_input_tokens // compression_factor  # e.g., 1536 // 2 = 768
         
+        # Check if per-view queries are feasible
+        per_view_feasible = (
+            NUM_VIEWS > 0 and 
+            self.n_queries >= NUM_VIEWS and 
+            self.n_queries % NUM_VIEWS == 0
+        )
+        
+        if use_per_view_query and not per_view_feasible:
+            if strict_per_view:
+                # Strict mode: raise error
+                raise ValueError(
+                    f"Per-view queries requested but not feasible: "
+                    f"n_queries={self.n_queries}, NUM_VIEWS={NUM_VIEWS}. "
+                    f"Either increase n_queries to be divisible by {NUM_VIEWS}, "
+                    f"or set use_per_view_query=False, or set strict_per_view=False for auto-disable."
+                )
+            else:
+                # Auto-disable mode: print warning and continue
+                print(f"[VATVision] Warning: use_per_view_query=True requested but not feasible:")
+                print(f"             n_queries={self.n_queries}, NUM_VIEWS={NUM_VIEWS}")
+                print(f"             Automatically disabling per-view queries.")
+                use_per_view_query = False
+        
         self.use_per_view_query = use_per_view_query
 
-        # Only enforce view divisibility when grouping by view
+        # Only compute nq_per_view when using per-view queries
         if self.use_per_view_query:
-            assert NUM_VIEWS > 0, "NUM_VIEWS must be > 0 when use_per_view_query=True"
-            assert self.n_queries % NUM_VIEWS == 0, \
-                f"n_queries ({self.n_queries}) must be divisible by NUM_VIEWS ({NUM_VIEWS})"
             self.nq_per_view = self.n_queries // NUM_VIEWS
         else:
             self.nq_per_view = 0  # not used

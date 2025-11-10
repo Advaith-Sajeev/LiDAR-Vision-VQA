@@ -152,6 +152,9 @@ def get_training_config() -> Dict:
         # Use separate query embeddings for each camera view
         "vision_per_view_query": True,
         
+        # If True, error when per-view not feasible; if False, auto-disable with warning
+        "vision_strict_per_view": False,
+        
         
         # ==================== LoRA Configuration ====================
         # LoRA rank (higher = more parameters, more expressive)

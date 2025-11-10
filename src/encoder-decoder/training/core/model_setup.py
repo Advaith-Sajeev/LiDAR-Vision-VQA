@@ -157,6 +157,7 @@ def setup_models(config: Dict, device: torch.device, is_main: bool):
             dropout=config["vision_dropout"],
             post_dropout=config["vision_post_dropout"],
             use_per_view_query=config["vision_per_view_query"],
+            strict_per_view=config.get("vision_strict_per_view", False),
         ).to(device)
     else:
         nusc = runtime = vision_adapter = vat_vision = None
