@@ -73,7 +73,7 @@ def get_training_config() -> Dict:
         "plot_every": 1,
         
         # Print tensor shapes during forward pass (for debugging)
-        "debug_shapes": False,
+        "debug_shapes": False, 
         
         
         # ==================== Validation Configuration ====================
@@ -108,16 +108,16 @@ def get_training_config() -> Dict:
         
         # Toggle components during training (for debugging/ablation studies)
         # WARNING: Disabling components during training will train a model that doesn't use them!
-        "training_use_vision": True,    # Include vision tokens in training
-        "training_use_lidar": True,     # Include LiDAR tokens in training
+        "training_use_vision": False,    # Include vision tokens in training
+        "training_use_lidar": False,     # Include LiDAR tokens in training
         
         # Toggle components during validation (for debugging/ablation studies)
-        "validation_use_vision": True,  # Include vision tokens in validation
-        "validation_use_lidar": True,   # Include LiDAR tokens in validation
+        "validation_use_vision": False,  # Include vision tokens in validation
+        "validation_use_lidar": False,   # Include LiDAR tokens in validation
         
         # Toggle components during inference sampling (for debugging/ablation studies)
-        "inference_use_vision": True,   # Include vision tokens in inference
-        "inference_use_lidar": True,    # Include LiDAR tokens in inference
+        "inference_use_vision": False,   # Include vision tokens in inference
+        "inference_use_lidar": False,    # Include LiDAR tokens in inference
         "inference_use_system": True,   # Include system prompt in inference
         
         
@@ -400,6 +400,28 @@ def main():
     # config["max_samples"] = 5
     # config["epochs"] = 1
     
+    
+    # ==================== Validate Configuration ====================
+    # Check for problematic configurations
+    training_vision = config.get("training_use_vision", True)
+    training_lidar = config.get("training_use_lidar", True)
+    
+    if not training_vision and not training_lidar:
+        print("\n" + "!" * 80)
+        print("CRITICAL WARNING: Both Vision and LiDAR are DISABLED during training!")
+        print("!" * 80)
+        print("This configuration will train a model that only processes text prompts.")
+        print("The model will NOT learn to use multimodal inputs (LiDAR/vision).")
+        print("")
+        print("If this is intentional for a text-only baseline, proceed.")
+        print("Otherwise, enable at least one modality:")
+        print("  - Set config['training_use_vision'] = True  (for vision)")
+        print("  - Set config['training_use_lidar'] = True   (for LiDAR)")
+        print("!" * 80)
+        
+        # Give user a chance to see this
+        import time
+        time.sleep(3)
     
     # ==================== Print Configuration ====================
     print("=" * 80)
