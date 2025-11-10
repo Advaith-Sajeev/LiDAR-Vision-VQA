@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """
-DeepEncoder inference (SAM ViT-B + CLIP ViT-L/14) with a fixed **global-only** view.
+DeepEncoder inference (SAM ViT-B + CLIP ViT-L/14) with a fixed **global-only** view (no local tiles).
 Changes vs OG DeepSeek-OCR vLLM path (and the earlier version of this script):
-  • Image is always resized/letterboxed to **1024×1024**.
+  • Image is always **padded (no resize) to 1600×1600** to preserve all information.
   • **OG normalization** is applied: x = (x - 0.5) / 0.5  (RGB channels, after [0,1] scaling).
   • No local tiles/crops; **global view only**.
   • Projector now maps **2048 → 2048** (kept for modality-mixing; downstream MLP will map to decoder d_model).
-  • Encoder returns **[HW, 2048]** tokens with grid (16,16); row/newline + final separator are added **downstream**.
+  • Encoder returns **[HW, 2048]** tokens with grid (25,25) for 1600×1600; row/newline + final separator are added **downstream**.
 
 Usage:
     python deepencoder_infer.py
 
 Notes:
-  • If you integrate with a downstream LLM: after you receive tokens of shape [256, 2048],
-    insert 16 row-delimiters (one after each 16 tokens) and an optional final view-separator downstream.
+  • If you integrate with a downstream LLM: after you receive tokens of shape [625, 2048],
+    insert 25 row-delimiters (one after each 25 tokens) and an optional final view-separator downstream.
     If your delimiter embeddings live in d_model space, map 2048→d_model first (with your downstream MLP),
     then append delimiters; or append 2048-dim delimiters and map everything together—be consistent.
 """
@@ -83,9 +83,9 @@ CONFIG = {
 SAM_VIT_B_URL = "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth"
 SAM_DEFAULT_NAME = "sam_vit_b_01ec64.pth"
 
-# Fixed target grid for 1024×1024 global-only pipeline
-FIXED_IMAGE_SIZE = 1024
-FIXED_GRID_SIDE = 16  # 1024 / (16*4) = 16  (patch=16, downsample=4)
+# Fixed target grid for 1600×1600 global-only pipeline
+FIXED_IMAGE_SIZE = 1600
+FIXED_GRID_SIDE = 25  # 1600 / (16*4) = 25  (patch=16, downsample=4)
 
 
 # ------------------------------
@@ -144,21 +144,34 @@ def download_sam_if_needed(sam_ckpt: str | None, auto_download: bool = True) -> 
 
 
 # ------------------------------
-# Utility: resize / pad to fixed 1024×1024 (letterbox)
+# Utility: pad (no resize) to fixed 1600×1600
 # ------------------------------
-def _resize_pad_square_1024(im: Image.Image) -> Image.Image:
-    """Letterbox to 1024×1024 preserving aspect (center padding)."""
+def _pad_to_square_1600_no_resize(im: Image.Image) -> Image.Image:
+    """
+    Pad to 1600×1600 WITHOUT resizing, preserving all input pixels.
+    Images are centered on a black canvas.
+
+    Assumes inputs are not larger than 1600 in either dimension.
+    For the common case of 1600×900:
+      - no horizontal padding
+      - vertical padding of (1600-900)/2 = 350 on top and bottom
+    """
     target = FIXED_IMAGE_SIZE
+
     if im.mode != "RGB":
         im = im.convert("RGB")
+
     w, h = im.size
-    scale = min(target / w, target / h)
-    new_w, new_h = int(round(w * scale)), int(round(h * scale))
-    im_resized = im.resize((new_w, new_h), Image.BICUBIC)
+    if w > target or h > target:
+        raise ValueError(
+            f"Input image {w}x{h} exceeds target {target}x{target} and this pipeline "
+            "is configured to never resize; please downscale beforehand or adjust logic."
+        )
+
     canvas = Image.new(im.mode, (target, target), color=0)
-    pad_left = (target - new_w) // 2
-    pad_top = (target - new_h) // 2
-    canvas.paste(im_resized, (pad_left, pad_top))
+    pad_left = (target - w) // 2
+    pad_top = (target - h) // 2
+    canvas.paste(im, (pad_left, pad_top))
     return canvas
 
 
@@ -276,10 +289,10 @@ def deepencoder_infer(
     dtype: torch.dtype = torch.bfloat16,
     openclip_pretrained: str = "openai",
 ):
-    # 1) Load and prep image → fixed 1024×1024 with OG normalization
+    # 1) Load and prep image → fixed 1600×1600 with OG normalization (via padding only)
     img = Image.open(image_path)
-    img = _resize_pad_square_1024(img)
-    x = _pil_to_tensor_og_norm(img).to(device=device, dtype=dtype)  # [1,3,1024,1024], [-1,1]
+    img = _pad_to_square_1600_no_resize(img)
+    x = _pil_to_tensor_og_norm(img).to(device=device, dtype=dtype)  # [1,3,1600,1600], [-1,1]
 
     # 2) Build SAM ViT-B and load checkpoint
     sam = build_sam_vit_b(checkpoint=sam_ckpt).to(device=device, dtype=dtype)
@@ -308,11 +321,11 @@ def deepencoder_infer(
     fused = torch.cat([clip_tokens, sam_tokens], dim=-1)      # [B, HW, 2048]
     vision_tokens = projector(fused)                          # [B, HW, 2048]
 
-    side = FIXED_GRID_SIDE  # 16
+    side = FIXED_GRID_SIDE  # 25
     return {
-        "vision_tokens": vision_tokens,     # [B, 256, 2048]
-        "grid": (side, side),               # (16, 16)
-        "image_size": FIXED_IMAGE_SIZE,     # 1024
+        "vision_tokens": vision_tokens,     # [B, 625, 2048] for 1600×1600
+        "grid": (side, side),               # (25, 25)
+        "image_size": FIXED_IMAGE_SIZE,     # 1600
         "normalization": "og_0.5_mean_0.5_std",
     }
 
@@ -423,19 +436,6 @@ class DeepEncoderRuntime:
                 task_type="FEATURE_EXTRACTION",
             )
             self.clip_vit = get_peft_model(self.clip_vit, lcfg)
-            
-            # Patch PEFT forward to handle VitModel's custom signature
-            # PEFT's default wrapper expects typical kwargs, but VitModel.forward(x, patch_embeds)
-            # needs explicit positional/keyword handling
-            import types
-            original_base_model = self.clip_vit.base_model
-            
-            def _peft_forward_wrapper(self_peft, x, patch_embeds):
-                """Custom forward that correctly passes args to VitModel"""
-                return original_base_model(x, patch_embeds)
-            
-            self.clip_vit.forward = types.MethodType(_peft_forward_wrapper, self.clip_vit)
-            
             # Optionally freeze the non-LoRA CLIP backbone params:
             if self.freeze_clip_backbone_when_lora_enabled:
                 for n, p in self.clip_vit.named_parameters():
@@ -480,8 +480,8 @@ class DeepEncoderRuntime:
     def encode_image(self, image_path: str) -> dict:
         """Returns tokens for a single image (train-ready; grads flow through CLIP+projector)."""
         img = Image.open(image_path)
-        img = _resize_pad_square_1024(img)
-        x = _pil_to_tensor_og_norm(img).to(device=self.device, dtype=self.dtype)  # [1,3,1024,1024]
+        img = _pad_to_square_1600_no_resize(img)
+        x = _pil_to_tensor_og_norm(img).to(device=self.device, dtype=self.dtype)  # [1,3,1600,1600]
 
         # SAM features (frozen)
         sam_feats = self._sam_features(x)
@@ -595,7 +595,7 @@ if __name__ == "__main__":
         openclip_pretrained=openclip_pretrained,
     )
 
-    vt = out["vision_tokens"].squeeze(0)  # [256, 2048]
+    vt = out["vision_tokens"].squeeze(0)  # [625, 2048] for 1600×1600 (25×25 grid)
     print(
         f"[OK] Vision tokens: shape={tuple(vt.shape)} grid={out['grid']} image_size={out['image_size']} norm={out['normalization']}"
     )
