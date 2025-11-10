@@ -34,7 +34,7 @@ class VATVision(nn.Module):
         mlp_ratio: float = 4.0,
         dropout: float = 0.10,
         post_dropout: float = 0.10,
-        use_per_view_query: bool = True,
+        use_per_view_query: bool = False,
     ):
         super().__init__()
         
