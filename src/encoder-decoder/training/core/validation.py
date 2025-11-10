@@ -42,13 +42,12 @@ def run_validation(dl, device, tok, base, vat_lidar, vat_vision, vision_adapter,
     if config["use_vision"]:
         vat_vision_model = unwrap(vat_vision)
         vision_adapter_model = unwrap(vision_adapter)
-        projector_model = unwrap(runtime.projector)
-        clip_model = unwrap(runtime.clip_vit)
+        # Use runtime.eval() to properly set all components to eval mode
+        runtime_unwrapped = unwrap(runtime)
 
         vat_vision_model.eval()
         vision_adapter_model.eval()
-        projector_model.eval()
-        clip_model.eval()
+        runtime_unwrapped.eval()
     else:
         vat_vision_model = vision_adapter_model = None
 
@@ -134,8 +133,8 @@ def run_validation(dl, device, tok, base, vat_lidar, vat_vision, vision_adapter,
     if config["use_vision"]:
         vat_vision_model.train()
         vision_adapter_model.train()
-        projector_model.train()
-        clip_model.train()
+        # Use runtime.train() to properly restore training mode
+        runtime_unwrapped.train()
 
     return total_loss / max(1, count)
 

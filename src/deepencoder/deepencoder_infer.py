@@ -423,6 +423,19 @@ class DeepEncoderRuntime:
                 task_type="FEATURE_EXTRACTION",
             )
             self.clip_vit = get_peft_model(self.clip_vit, lcfg)
+            
+            # Patch PEFT forward to handle VitModel's custom signature
+            # PEFT's default wrapper expects typical kwargs, but VitModel.forward(x, patch_embeds)
+            # needs explicit positional/keyword handling
+            import types
+            original_base_model = self.clip_vit.base_model
+            
+            def _peft_forward_wrapper(self_peft, x, patch_embeds):
+                """Custom forward that correctly passes args to VitModel"""
+                return original_base_model(x, patch_embeds)
+            
+            self.clip_vit.forward = types.MethodType(_peft_forward_wrapper, self.clip_vit)
+            
             # Optionally freeze the non-LoRA CLIP backbone params:
             if self.freeze_clip_backbone_when_lora_enabled:
                 for n, p in self.clip_vit.named_parameters():

@@ -293,8 +293,9 @@ class Trainer:
         if self.config["use_vision"]:
             self.vision_adapter.train()
             self.vat_vision.train()
-            self.runtime.projector.train()
-            self.runtime.clip_vit.train()
+            # Use runtime.train() to properly set CLIP/Projector to train mode
+            # while keeping SAM frozen in eval mode
+            self.runtime.train()
         
         pbar = tqdm(
             total=self.total_steps,
@@ -478,6 +479,9 @@ class Trainer:
             torch.nn.utils.clip_grad_norm_(self.vision_adapter.parameters(), self.config["clip_norm"])
             torch.nn.utils.clip_grad_norm_(
                 [p for p in self.runtime.projector.parameters() if p.requires_grad], self.config["clip_norm"]
+            )
+            torch.nn.utils.clip_grad_norm_(
+                [p for p in self.runtime.clip_vit.parameters() if p.requires_grad], self.config["clip_norm"]
             )
             torch.nn.utils.clip_grad_norm_(self.vat_vision.parameters(), self.config["clip_norm"])
         

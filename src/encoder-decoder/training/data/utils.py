@@ -43,6 +43,7 @@ def collect_feature_tokens(feature_dirs: List[str]) -> Dict[str, str]:
             if is_main_process():
                 print(f"[warn] feature root missing: {root}")
             continue
-        for npy in r.glob("*.npy"):
+        # Use recursive glob to find .npy files in subdirectories (e.g., train/, val/)
+        for npy in r.glob("**/*.npy"):
             token2path.setdefault(npy.stem, str(npy))
     return token2path
