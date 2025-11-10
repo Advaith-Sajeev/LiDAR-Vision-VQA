@@ -367,7 +367,7 @@ class Trainer:
                     self.out_dir,
                     epoch,
                     self.device,
-                    self.ds_train.dataset.token2path,
+                    self.dl_train.dataset.token2path,
                     self.best_step,
                 )
             
