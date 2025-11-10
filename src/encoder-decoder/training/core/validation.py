@@ -1,9 +1,10 @@
 """Validation and inference utilities
 
-Key fixes for text-only generation (when Vision/LiDAR disabled):
-1. Set max_length explicitly when using inputs_embeds with generate()
-2. Use greedy decoding (do_sample=False) for more stable early training
-3. Calculate target_max_length = input_length + max_new_tokens to prevent truncation
+Key fixes for generation with inputs_embeds:
+1. generate() with inputs_embeds returns ONLY generated tokens (not input+generated)
+2. Use greedy decoding (do_sample=False) when both modalities disabled for stability
+3. Decode outputs directly as they are already the generated portion
+4. Only set max_new_tokens (not max_length) to avoid HuggingFace warnings
 """
 
 import json
@@ -526,7 +527,7 @@ def run_inference_sampling(
             input_length = inputs_embeds.shape[1]
             max_new_tokens_config = config.get("inference_max_tokens", 64)
             
-            # Calculate safe max_new_tokens
+            # Calculate safe max_new_tokens to avoid exceeding model's context length
             max_new_tokens = min(max_new_tokens_config, max_position_embeddings - input_length - 10)
             
             if max_new_tokens < 10:
@@ -534,12 +535,8 @@ def run_inference_sampling(
                 print(f"[inference_sampling]   Input: {input_length}, Max pos: {max_position_embeddings}, Max new: {max_new_tokens}")
                 max_new_tokens = max(1, max_new_tokens)  # Force at least 1 token
             
-            # CRITICAL FIX: When using inputs_embeds with generate(), we must explicitly set max_length
-            # to override the default behavior that causes truncation
-            target_max_length = input_length + max_new_tokens
-            
             if config.get("debug_shapes", False):
-                print(f"[inference_sampling] Generation params: input_len={input_length}, max_new={max_new_tokens}, target_max_len={target_max_length}")
+                print(f"[inference_sampling] Generation params: input_len={input_length}, max_new={max_new_tokens}")
             
             # Use greedy decoding if both modalities are disabled (for debugging/early training)
             # This is more stable for untrained models
@@ -549,7 +546,6 @@ def run_inference_sampling(
                     "inputs_embeds": inputs_embeds,
                     "attention_mask": attention_mask,
                     "max_new_tokens": max_new_tokens,
-                    "max_length": target_max_length,
                     "do_sample": False,  # Greedy decoding
                     "num_beams": 1,
                     "pad_token_id": tok.pad_token_id,
@@ -561,7 +557,6 @@ def run_inference_sampling(
                     "inputs_embeds": inputs_embeds,
                     "attention_mask": attention_mask,
                     "max_new_tokens": max_new_tokens,
-                    "max_length": target_max_length,
                     "temperature": config.get("inference_temperature", 0.7),
                     "top_p": config.get("inference_top_p", 0.9),
                     "top_k": config.get("inference_top_k", 50),
@@ -577,38 +572,24 @@ def run_inference_sampling(
             try:
                 outputs = base_model.generate(**generation_kwargs)
                 
-                # Decode (skip prompt tokens)
-                # outputs shape: [1, total_input_len + generated_len]
-                actual_output_length = outputs.shape[1]
-                expected_min_length = inputs_embeds.shape[1] + 1  # At least 1 new token
+                # CRITICAL: generate() with inputs_embeds behavior:
+                # - Returns ONLY the generated tokens (not input + generated)
+                # - The output length will be <= max_new_tokens
+                # - We decode the entire output as the prediction
                 
-                if actual_output_length < expected_min_length:
-                    print(f"[inference_sampling] ERROR: No new tokens generated for {sample_token}")
-                    print(f"[inference_sampling]   Input: {inputs_embeds.shape[1]}, Output: {actual_output_length}, Expected: >={expected_min_length}")
-                    print(f"[inference_sampling]   Max new tokens: {max_new_tokens}, Target max length: {target_max_length}")
-                    print(f"[inference_sampling]   Components: Vision={use_vision_in_inference and prefix_vision is not None}, LiDAR={use_lidar_in_inference}")
-                    
-                    # Decode what we got
-                    if actual_output_length > 0:
-                        all_tokens = tok.decode(outputs[0], skip_special_tokens=False)
-                        print(f"[inference_sampling]   Full output (with special tokens): '{all_tokens}'")
-                    prediction = ""
+                actual_output_length = outputs.shape[1]
+                
+                # Decode the generated tokens directly
+                prediction = tok.decode(outputs[0], skip_special_tokens=True).strip()
+                
+                if prediction:
+                    print(f"[inference_sampling] ✓ Generated {actual_output_length} tokens for {sample_token}")
+                    print(f"[inference_sampling]   '{prediction[:100]}{'...' if len(prediction) > 100 else ''}'")
                 else:
-                    # Successfully generated new tokens
-                    generated_ids = outputs[0][inputs_embeds.shape[1]:]
-                    num_generated = len(generated_ids)
-                    prediction = tok.decode(generated_ids, skip_special_tokens=True).strip()
-                    
-                    # Log successful generation
-                    if num_generated > 0:
-                        print(f"[inference_sampling] Generated {num_generated} tokens for {sample_token}")
-                    
-                    # Additional debug if prediction is empty despite having tokens
-                    if not prediction and num_generated > 0:
-                        print(f"[inference_sampling] Warning: Generated {num_generated} tokens but empty after decoding")
-                        print(f"[inference_sampling]   Token IDs: {generated_ids.tolist()[:20]}")
-                        raw_decoded = tok.decode(generated_ids, skip_special_tokens=False)
-                        print(f"[inference_sampling]   Raw decoded: '{raw_decoded}'")
+                    # Empty after decoding - likely only special tokens
+                    print(f"[inference_sampling] Warning: Generated {actual_output_length} tokens but empty after decoding")
+                    raw_decoded = tok.decode(outputs[0], skip_special_tokens=False)
+                    print(f"[inference_sampling]   Raw: '{raw_decoded[:100]}...'")
                 
             except Exception as gen_error:
                 print(f"[inference_sampling] Generation failed for {sample_token}: {gen_error}")
@@ -623,8 +604,6 @@ def run_inference_sampling(
                 "ground_truth": ground_truth,
                 "prediction": prediction,
             })
-            
-            print(f"[inference_sampling] {sample_token} ({dataset_type}): '{prediction[:50] if prediction else '[EMPTY]'}...'")
         
         except Exception as e:
             print(f"[inference_sampling] Error processing {sample.get('sample_token', 'unknown')}: {e}")
