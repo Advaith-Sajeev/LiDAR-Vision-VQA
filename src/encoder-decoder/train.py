@@ -170,10 +170,10 @@ def get_training_config() -> Dict:
         "vision_post_dropout": 0.10,
         
         # Use separate query embeddings for each camera view
-        "vision_per_view_query": True,
+        "vision_per_view_query": False, # keep False 
         
         # If True, error when per-view not feasible; if False, auto-disable with warning
-        "vision_strict_per_view": False,
+        "vision_strict_per_view": False, # keep False
         
         
         # ==================== LoRA Configuration ====================

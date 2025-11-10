@@ -310,6 +310,17 @@ def run_inference_sampling(
     base_model.eval()
     vat_lidar_model.eval()
     
+    # Disable gradient checkpointing for generation (important!)
+    if hasattr(base_model, 'gradient_checkpointing_disable'):
+        base_model.gradient_checkpointing_disable()
+        gradient_checkpointing_was_enabled = True
+    else:
+        gradient_checkpointing_was_enabled = False
+    
+    # Enable cache for generation (important for performance and correctness)
+    original_use_cache = base_model.config.use_cache
+    base_model.config.use_cache = True
+    
     if config["use_vision"]:
         vat_vision_model = unwrap(vat_vision)
         vision_adapter_model = unwrap(vision_adapter)
@@ -322,7 +333,7 @@ def run_inference_sampling(
         vision_adapter_model.eval()
         runtime_unwrapped.eval()
     else:
-        vat_vision_model = vision_adapter_model = None
+        vat_vision_model = vision_adapter_model = runtime_unwrapped = None
     
     # Load validation JSONs
     try:
@@ -386,7 +397,7 @@ def run_inference_sampling(
             if config["use_vision"] and nusc is not None:
                 try:
                     mv = multiview_tokens_from_sample_token(
-                        sample_token, nusc, runtime=runtime, view_order=DEFAULT_VIEW_ORDER, strict=False
+                        sample_token, nusc, runtime=runtime_unwrapped, view_order=DEFAULT_VIEW_ORDER, strict=False
                     )
                     
                     if mv.get("tokens") and len(mv["tokens"]) == 6:
@@ -421,6 +432,7 @@ def run_inference_sampling(
             vision_start_id = tok.convert_tokens_to_ids("<vision_start>")
             vision_end_id = tok.convert_tokens_to_ids("<vision_end>")
             
+            # Initialize embeds list and position tracker
             embeds_list = []
             pos = 0
             
@@ -459,27 +471,47 @@ def run_inference_sampling(
             if pos < text_embeds.shape[1]:
                 embeds_list.append(text_embeds[:, pos:, :])
             
+            # Safety check: ensure we have embeddings to concatenate
+            if not embeds_list:
+                print(f"[inference_sampling] Warning: No embeddings found for {sample_token}, skipping...")
+                continue
+            
             # Concatenate
             inputs_embeds = torch.cat(embeds_list, dim=1)  # [1, total_len, d_model]
             attention_mask = torch.ones(1, inputs_embeds.shape[1], dtype=torch.long, device=device)
             
-            # Generate
-            outputs = base_model.generate(
-                inputs_embeds=inputs_embeds,
-                attention_mask=attention_mask,
-                max_new_tokens=config.get("inference_max_tokens", 64),
-                temperature=config.get("inference_temperature", 0.7),
-                top_p=config.get("inference_top_p", 0.9),
-                top_k=config.get("inference_top_k", 50),
-                do_sample=config.get("inference_do_sample", True),
-                num_beams=config.get("inference_num_beams", 1),
-                pad_token_id=tok.pad_token_id,
-                eos_token_id=tok.eos_token_id,
-            )
+            # Debug logging
+            if config.get("debug_shapes", False):
+                print(f"[inference_sampling] inputs_embeds shape: {inputs_embeds.shape}")
+                print(f"[inference_sampling] attention_mask shape: {attention_mask.shape}")
             
-            # Decode (skip prompt tokens)
-            generated_ids = outputs[0][inputs_embeds.shape[1]:]
-            prediction = tok.decode(generated_ids, skip_special_tokens=True).strip()
+            # Generate
+            try:
+                outputs = base_model.generate(
+                    inputs_embeds=inputs_embeds,
+                    attention_mask=attention_mask,
+                    max_new_tokens=config.get("inference_max_tokens", 64),
+                    temperature=config.get("inference_temperature", 0.7),
+                    top_p=config.get("inference_top_p", 0.9),
+                    top_k=config.get("inference_top_k", 50),
+                    do_sample=config.get("inference_do_sample", True),
+                    num_beams=config.get("inference_num_beams", 1),
+                    pad_token_id=tok.pad_token_id,
+                    eos_token_id=tok.eos_token_id,
+                )
+                
+                # Decode (skip prompt tokens)
+                # outputs shape: [1, total_input_len + generated_len]
+                if outputs.shape[1] <= inputs_embeds.shape[1]:
+                    print(f"[inference_sampling] Warning: No new tokens generated for {sample_token}")
+                    prediction = ""
+                else:
+                    generated_ids = outputs[0][inputs_embeds.shape[1]:]
+                    prediction = tok.decode(generated_ids, skip_special_tokens=True).strip()
+                
+            except Exception as gen_error:
+                print(f"[inference_sampling] Generation failed for {sample_token}: {gen_error}")
+                prediction = ""
             
             results.append({
                 "sample_token": sample_token,
@@ -489,7 +521,7 @@ def run_inference_sampling(
                 "prediction": prediction,
             })
             
-            print(f"[inference_sampling] {sample_token} ({dataset_type}): '{prediction[:50]}...'")
+            print(f"[inference_sampling] {sample_token} ({dataset_type}): '{prediction[:50] if prediction else '[EMPTY]'}...'")
         
         except Exception as e:
             print(f"[inference_sampling] Error processing {sample.get('sample_token', 'unknown')}: {e}")
@@ -498,8 +530,13 @@ def run_inference_sampling(
             continue
     
     # Calculate metrics
-    print(f"\n[inference_sampling] Calculating metrics...")
-    metrics = calculate_metrics_by_type(results)
+    print(f"\n[inference_sampling] Calculating metrics for {len(results)} samples...")
+    
+    if not results:
+        print("[inference_sampling] Warning: No results generated, skipping metrics calculation")
+        metrics = {}
+    else:
+        metrics = calculate_metrics_by_type(results)
     
     # Save results
     output = {
@@ -533,11 +570,19 @@ def run_inference_sampling(
     
     print('='*60 + '\n')
     
-    # Restore training mode
+    # Restore training mode and gradient checkpointing
     if was_training_base:
         base_model.train()
     if was_training_lidar:
         vat_lidar_model.train()
+    
+    # Re-enable gradient checkpointing if it was enabled
+    if gradient_checkpointing_was_enabled and hasattr(base_model, 'gradient_checkpointing_enable'):
+        base_model.gradient_checkpointing_enable()
+    
+    # Restore use_cache setting
+    base_model.config.use_cache = original_use_cache
+    
     if config["use_vision"]:
         if was_training_vision:
             vat_vision_model.train()
