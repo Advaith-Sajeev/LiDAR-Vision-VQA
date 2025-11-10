@@ -107,7 +107,7 @@ def get_training_config() -> Dict:
         # Number of learnable query tokens for LiDAR VAT
         # MUST be divisible by 6 (for 6 spatial sectors)
         # Recommended: 12 (testing), 576 (medium), 768 (large)
-        "vat_queries": 2,
+        "vat_queries": 6,
         
         # Number of transformer layers in LiDAR VAT
         "vat_layers": 1,
