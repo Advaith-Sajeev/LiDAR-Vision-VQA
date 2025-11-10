@@ -62,6 +62,7 @@ class MixedNuDataset(Dataset):
         total = 0
         no_feature = 0
         no_qa = 0
+        filtered_grounding = 0  # Track filtered grounding samples
         rng = random.Random(seed)
         
         if DEBUG_AVAILABLE:
@@ -72,12 +73,23 @@ class MixedNuDataset(Dataset):
             if DEBUG_AVAILABLE:
                 debug.debug("dataset", f"Loading: {jp_name}")
             
+            # Check if this is nuGrounding dataset
+            is_grounding = "grounding" in jp_name.lower()
+            
             for r in load_json_any(jp):
                 total += 1
                 tok = r.get("sample_token")
                 if not tok or tok not in self.token2path:
                     no_feature += 1
                     continue
+                
+                # Filter nuGrounding: only keep det_area template_type
+                # This prevents data leakage from det_object which contains coordinates in questions
+                if is_grounding:
+                    template_type = r.get("template_type", "")
+                    if template_type != "det_area":
+                        filtered_grounding += 1
+                        continue
                     
                 ans = (r.get(self.target_field) or "").strip()
                 if not ans:
@@ -102,9 +114,11 @@ class MixedNuDataset(Dataset):
         
         if is_main_process():
             print(f"[dataset] total={total}  kept={len(self.rows)}  no_feature/qa={no_feature}/{no_qa}")
+            if filtered_grounding > 0:
+                print(f"[dataset] filtered {filtered_grounding} nuGrounding samples (kept only det_area, removed det_object to prevent data leakage)")
             if DEBUG_AVAILABLE:
                 debug.info("dataset", f"Dataset ready: {len(self.rows)} samples")
-                debug.debug("dataset", f"Dropped: no_feature={no_feature}, no_qa={no_qa}")
+                debug.debug("dataset", f"Dropped: no_feature={no_feature}, no_qa={no_qa}, filtered_grounding={filtered_grounding}")
             
         if not self.rows:
             raise RuntimeError("No usable rows; check feature dirs and jsons.")

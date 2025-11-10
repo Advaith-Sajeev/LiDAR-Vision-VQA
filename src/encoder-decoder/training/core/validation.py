@@ -670,3 +670,6 @@ def run_inference_sampling(
             vat_vision_model.train()
         if was_training_adapter:
             vision_adapter_model.train()
+    
+    # Return metrics for live plotting
+    return metrics

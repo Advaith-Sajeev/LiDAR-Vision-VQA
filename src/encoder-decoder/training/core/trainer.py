@@ -23,6 +23,7 @@ from ..utils import (
     try_load_state,
     prune_checkpoints_steps,
     plot_loss_curve,
+    plot_all_metrics,
     debug,
     set_debug_mode,
     set_log_file,
@@ -125,6 +126,19 @@ class Trainer:
         self.val_epochs = []
         self.best_val_loss = float("inf")
         self.best_step = None
+        
+        # Metric tracking for live plotting
+        self.caption_metrics_history = {
+            "bleu4": [],
+            "cider": [],
+            "spice": [],
+            "bertscore_f1": []
+        }
+        self.grounding_metrics_history = {
+            "top1_accuracy": [],
+            "bev_iou": []
+        }
+        self.metrics_epochs = []
         
         # Resume if configured
         if config["resume"]:
@@ -412,7 +426,7 @@ class Trainer:
             # Run inference sampling
             if is_main_process() and epoch % self.config.get("inference_sampling_every", 3) == 0:
                 print(f"\n[inference_sampling] Running at epoch {epoch}")
-                run_inference_sampling(
+                metrics = run_inference_sampling(
                     self.base,
                     self.vat_lidar,
                     self.vat_vision if self.config["use_vision"] else None,
@@ -427,6 +441,39 @@ class Trainer:
                     self.ds_full.token2path,
                     self.best_step,
                 )
+                
+                # Store metrics for live plotting
+                if metrics:
+                    self.metrics_epochs.append(epoch)
+                    
+                    # Store caption metrics if available
+                    if "caption_dashboard" in metrics:
+                        cap_dash = metrics["caption_dashboard"]
+                        self.caption_metrics_history["bleu4"].append(cap_dash.get("bleu4", 0.0))
+                        self.caption_metrics_history["cider"].append(cap_dash.get("cider", 0.0))
+                        self.caption_metrics_history["spice"].append(cap_dash.get("spice", 0.0))
+                        self.caption_metrics_history["bertscore_f1"].append(cap_dash.get("bertscore_f1", 0.0))
+                        print(f"[trainer] Stored caption metrics for epoch {epoch}")
+                    
+                    # Store grounding metrics if available
+                    if "grounding_dashboard" in metrics:
+                        ground_dash = metrics["grounding_dashboard"]
+                        self.grounding_metrics_history["top1_accuracy"].append(ground_dash.get("top1_accuracy", 0.0))
+                        self.grounding_metrics_history["bev_iou"].append(ground_dash.get("bev_iou", 0.0))
+                        print(f"[trainer] Stored grounding metrics for epoch {epoch}")
+                    
+                    # Generate live plots
+                    try:
+                        plot_all_metrics(
+                            self.caption_metrics_history,
+                            self.grounding_metrics_history,
+                            self.metrics_epochs,
+                            self.out_dir
+                        )
+                        print(f"[trainer] Updated metric plots at epoch {epoch}")
+                    except Exception as plot_error:
+                        print(f"[trainer] Warning: Failed to generate plots: {plot_error}")
+
             
             # Plot
             if is_main_process():

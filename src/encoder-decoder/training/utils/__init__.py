@@ -12,7 +12,7 @@ from .checkpoints import (
     try_load_state,
     prune_checkpoints_steps,
 )
-from .plotting import plot_loss_curve, plot_step_curve
+from .plotting import plot_loss_curve, plot_step_curve, plot_metric_curves, plot_all_metrics
 from .metrics import (
     calculate_caption_metrics,
     calculate_grounding_metrics,
@@ -49,6 +49,8 @@ __all__ = [
     # Plotting
     "plot_loss_curve",
     "plot_step_curve",
+    "plot_metric_curves",
+    "plot_all_metrics",
     # Metrics
     "calculate_caption_metrics",
     "calculate_grounding_metrics",
