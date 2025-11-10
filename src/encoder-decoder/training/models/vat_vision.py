@@ -48,20 +48,23 @@ class VATVision(nn.Module):
         self.compression_factor = compression_factor
         self.n_queries = n_input_tokens // compression_factor  # e.g., 1536 // 2 = 768
         
-        assert self.n_queries % NUM_VIEWS == 0, \
-            f"n_queries ({self.n_queries}) must be divisible by NUM_VIEWS ({NUM_VIEWS})"
-        
-        self.nq_per_view = self.n_queries // NUM_VIEWS  # e.g., 768 // 6 = 128
         self.use_per_view_query = use_per_view_query
+
+        # Only enforce view divisibility when grouping by view
+        if self.use_per_view_query:
+            assert NUM_VIEWS > 0, "NUM_VIEWS must be > 0 when use_per_view_query=True"
+            assert self.n_queries % NUM_VIEWS == 0, \
+                f"n_queries ({self.n_queries}) must be divisible by NUM_VIEWS ({NUM_VIEWS})"
+            self.nq_per_view = self.n_queries // NUM_VIEWS
+        else:
+            self.nq_per_view = 0  # not used
 
         # Learnable query tokens (in d_in space for cross-attention)
         self.query = nn.Parameter(torch.randn(self.n_queries, d_in) * 0.02)
 
-        # Per-view query embeddings (optional, in d_in space)
-        if use_per_view_query:
-            self.view_query_embed = nn.Parameter(
-                torch.zeros(NUM_VIEWS, d_in), requires_grad=True
-            )
+        # Optional per-view query embeddings
+        if self.use_per_view_query:
+            self.view_query_embed = nn.Parameter(torch.zeros(NUM_VIEWS, d_in))
             nn.init.trunc_normal_(self.view_query_embed, std=0.02)
         else:
             self.view_query_embed = None
