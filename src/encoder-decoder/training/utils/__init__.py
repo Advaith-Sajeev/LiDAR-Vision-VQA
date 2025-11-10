@@ -18,6 +18,19 @@ from .metrics import (
     calculate_grounding_metrics,
     calculate_metrics_by_type,
 )
+from .debug_logger import (
+    debug,
+    set_debug_mode,
+    set_debug_level,
+    set_module_filter,
+    set_log_file,
+    is_debug_enabled,
+    get_debug_level,
+    DEBUG_DISABLED,
+    DEBUG_INFO,
+    DEBUG_DEBUG,
+    DEBUG_TRACE,
+)
 
 __all__ = [
     # Distributed
@@ -40,4 +53,16 @@ __all__ = [
     "calculate_caption_metrics",
     "calculate_grounding_metrics",
     "calculate_metrics_by_type",
+    # Debug logging
+    "debug",
+    "set_debug_mode",
+    "set_debug_level",
+    "set_module_filter",
+    "set_log_file",
+    "is_debug_enabled",
+    "get_debug_level",
+    "DEBUG_DISABLED",
+    "DEBUG_INFO",
+    "DEBUG_DEBUG",
+    "DEBUG_TRACE",
 ]

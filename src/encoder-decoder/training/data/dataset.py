@@ -10,6 +10,14 @@ from typing import Dict, List, Optional
 from .utils import load_json_any, collect_feature_tokens
 
 
+# Import debug logger
+try:
+    from ..utils import debug
+    DEBUG_AVAILABLE = True
+except ImportError:
+    DEBUG_AVAILABLE = False
+
+
 class MixedNuDataset(Dataset):
     """
     Dataset for nuScenes with BEV features and QA pairs.
@@ -28,7 +36,18 @@ class MixedNuDataset(Dataset):
         max_samples: Optional[int] = None,
         seed: int = 42,
     ):
+        if DEBUG_AVAILABLE:
+            debug.info("dataset", "Initializing MixedNuDataset")
+            debug.debug("dataset", f"JSON paths: {json_paths}")
+            debug.debug("dataset", f"Feature dirs: {feature_dirs}")
+            debug.debug("dataset", f"Target field: {target_field}")
+            debug.debug("dataset", f"Max samples: {max_samples}")
+        
         self.target_field = target_field
+        
+        if DEBUG_AVAILABLE:
+            debug.data_flow("dataset", "feature_indexing", "Scanning feature directories")
+        
         self.token2path = collect_feature_tokens(feature_dirs)
         
         from ..utils.distributed import is_main_process
@@ -36,6 +55,8 @@ class MixedNuDataset(Dataset):
         if is_main_process():
             print("[features] scanning roots...")
             print(f"[features] unique tokens indexed: {len(self.token2path)}")
+            if DEBUG_AVAILABLE:
+                debug.info("dataset", f"Indexed {len(self.token2path)} BEV feature files")
 
         rows = []
         total = 0
@@ -43,8 +64,14 @@ class MixedNuDataset(Dataset):
         no_qa = 0
         rng = random.Random(seed)
         
+        if DEBUG_AVAILABLE:
+            debug.data_flow("dataset", "json_loading", f"Loading from {len(json_paths)} JSON files")
+        
         for jp in json_paths:
             jp_name = Path(jp).stem  # Extract filename for source tracking
+            if DEBUG_AVAILABLE:
+                debug.debug("dataset", f"Loading: {jp_name}")
+            
             for r in load_json_any(jp):
                 total += 1
                 tok = r.get("sample_token")
@@ -66,6 +93,8 @@ class MixedNuDataset(Dataset):
                 rows.append(r)
 
         if max_samples is not None and len(rows) > max_samples:
+            if DEBUG_AVAILABLE:
+                debug.debug("dataset", f"Sampling {max_samples} from {len(rows)} rows")
             rng.shuffle(rows)
             rows = rows[:max_samples]
 
@@ -73,6 +102,9 @@ class MixedNuDataset(Dataset):
         
         if is_main_process():
             print(f"[dataset] total={total}  kept={len(self.rows)}  no_feature/qa={no_feature}/{no_qa}")
+            if DEBUG_AVAILABLE:
+                debug.info("dataset", f"Dataset ready: {len(self.rows)} samples")
+                debug.debug("dataset", f"Dropped: no_feature={no_feature}, no_qa={no_qa}")
             
         if not self.rows:
             raise RuntimeError("No usable rows; check feature dirs and jsons.")
@@ -81,9 +113,20 @@ class MixedNuDataset(Dataset):
         return len(self.rows)
         
     def __getitem__(self, idx):
+        if DEBUG_AVAILABLE and debug.get_debug_level() >= 3:  # TRACE level
+            debug.trace("dataset", f"Loading sample {idx}")
+        
         r = self.rows[idx]
         tok = r["sample_token"]
+        
+        if DEBUG_AVAILABLE and debug.get_debug_level() >= 3:
+            debug.trace("dataset", f"Sample token: {tok}")
+        
         bev = np.load(self.token2path[tok])  # [C,H,W]
+        
+        if DEBUG_AVAILABLE and debug.get_debug_level() >= 3:
+            debug.shape("dataset", f"bev_{idx}", bev)
+        
         return {
             "token": tok,
             "bev": torch.from_numpy(bev).float(),

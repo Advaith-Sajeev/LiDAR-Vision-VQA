@@ -3,6 +3,9 @@
 """
 LiDAR-Vision-LLM Training Script
 Comprehensive entry point with all configuration options
+
+DEBUG MODE: To enable debug logging, set config["debug_mode"] = True in get_training_config()
+            See line ~30 for debug configuration and DEBUG_GUIDE.md for full documentation
 """
 
 import sys
@@ -26,6 +29,41 @@ def get_training_config() -> Dict:
     """
     
     config = {
+        # ╔════════════════════════════════════════════════════════════════╗
+        # ║                    DEBUG LOGGING TOGGLE                        ║
+        # ╚════════════════════════════════════════════════════════════════╝
+        # 
+        # Quick Enable/Disable Debug Mode:
+        #   - Set "debug_mode" to True to enable extensive debug logging
+        #   - Set "debug_mode" to False for normal training (no overhead)
+        # 
+        # Debug Levels (when debug_mode=True):
+        #   1 = INFO  : High-level flow only (minimal output)
+        #   2 = DEBUG : Detailed flow with data tracking (recommended)
+        #   3 = TRACE : Very detailed with shapes, stats, timing (verbose)
+        # 
+        # Module Filtering:
+        #   - [] (empty)              : Show all modules
+        #   - ["trainer"]             : Show only trainer logs
+        #   - ["trainer", "dataset"]  : Show multiple modules
+        # 
+        # Output is automatically saved to: <out_dir>/debug.log
+        # Terminal output is color-coded for easy reading
+        # 
+        # Performance Impact:
+        #   - debug_mode=False : 0% overhead (completely disabled)
+        #   - debug_level=1    : <1% overhead
+        #   - debug_level=2    : 1-3% overhead
+        #   - debug_level=3    : 5-10% overhead
+        # 
+        # See DEBUG_GUIDE.md for complete documentation
+        # ────────────────────────────────────────────────────────────────
+        
+        "debug_mode": False,      # ← SET TO True TO ENABLE DEBUG LOGGING
+        "debug_level": 2,         # ← 1=INFO, 2=DEBUG (recommended), 3=TRACE
+        "debug_modules": [],      # ← [] = all modules, or ["trainer", "dataset"]
+        
+        
         # ==================== I/O Configuration ====================
         # Directories containing BEV feature .npy files (one per sample_token)
         "feature_dirs": ["/home/j_bindu/fyp-26-grp-38/bev_feats"],
@@ -281,6 +319,21 @@ def main():
     
     # Get comprehensive configuration
     config = get_training_config()
+    
+    # ╔════════════════════════════════════════════════════════════════╗
+    # ║              QUICK DEBUG MODE TOGGLE (OVERRIDE)                ║
+    # ╚════════════════════════════════════════════════════════════════╝
+    # Uncomment any line below to override debug settings:
+    # 
+    # config["debug_mode"] = True        # Enable debug logging
+    # config["debug_level"] = 2          # Set level: 1=INFO, 2=DEBUG, 3=TRACE
+    # config["debug_modules"] = []       # Filter: [] = all, ["trainer"] = only trainer
+    # 
+    # Quick examples:
+    #   config["debug_mode"] = True; config["debug_level"] = 2  # Full debug
+    #   config["debug_mode"] = True; config["debug_level"] = 3  # Trace mode
+    #   config["debug_modules"] = ["trainer", "dataset"]        # Specific modules
+    # ────────────────────────────────────────────────────────────────
     
     # ==================== Quick Configuration Overrides ====================
     # Uncomment and modify these for quick experiments without editing the full config

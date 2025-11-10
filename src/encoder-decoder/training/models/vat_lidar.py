@@ -28,6 +28,14 @@ import torch.nn as nn
 from .vat_blocks import VATBlock
 
 
+# Import debug logger
+try:
+    from ..utils import debug
+    DEBUG_AVAILABLE = True
+except ImportError:
+    DEBUG_AVAILABLE = False
+
+
 NUM_VIEWS = 6 # front, front_right, front_left, back, back_right, back_left
 
 
@@ -185,27 +193,69 @@ class VATLiDAR(nn.Module):
             queries: [B, n_queries, d_model]
                 View-aware latent tokens; n_queries is split evenly across 6 views.
         """
+        if DEBUG_AVAILABLE:
+            debug.trace("vat_lidar", "=" * 40)
+            debug.trace("vat_lidar", "LiDAR VAT Forward Pass")
+            debug.trace("vat_lidar", "=" * 40)
+            debug.shape("vat_lidar", "input_bev", bev)
+        
         B, C, H, W = bev.shape
         dev = bev.device
+        
+        if DEBUG_AVAILABLE:
+            debug.debug("vat_lidar", f"Input: B={B}, C={C}, H={H}, W={W}")
 
         # 1) Local refinement.
+        if DEBUG_AVAILABLE:
+            debug.start_timer("vat_lidar", "refinement")
+        
         x = self.refine(bev)  # [B, C_in, H, W]
+        
+        if DEBUG_AVAILABLE:
+            debug.shape("vat_lidar", "refined", x)
+            debug.end_timer("vat_lidar", "refinement")
 
         # 2) Project to d_model tokens.
+        if DEBUG_AVAILABLE:
+            debug.start_timer("vat_lidar", "projection")
+        
         x = self.proj(x)                      # [B, d_model, H, W]
         x = x.permute(0, 2, 3, 1)             # [B, H, W, d_model]
         x = x.reshape(B, H * W, self.d_model) # [B, HW, d_model]
         x = self.norm_tokens(x)
+        
+        if DEBUG_AVAILABLE:
+            debug.shape("vat_lidar", "projected_tokens", x)
+            debug.end_timer("vat_lidar", "projection")
 
         # 3) Add geometric PE.
+        if DEBUG_AVAILABLE:
+            debug.start_timer("vat_lidar", "geometric_pe")
+        
         geom, sid = self._grid(H, W, dev)         # geom: [HW,5], sid: [HW]
         geo_pe = self.geo_mlp(geom)               # [HW, d_model]
         x = x + geo_pe.unsqueeze(0)               # [B, HW, d_model]
+        
+        if DEBUG_AVAILABLE:
+            debug.shape("vat_lidar", "with_geo_pe", x)
+            debug.tensor_stats("vat_lidar", "geometric_pe", geo_pe)
+            debug.end_timer("vat_lidar", "geometric_pe")
 
         # 4) Add view embeddings to BEV tokens.
+        if DEBUG_AVAILABLE:
+            debug.start_timer("vat_lidar", "view_embedding")
+        
         x = x + self.view_embed[sid].unsqueeze(0)  # [B, HW, d_model]
+        
+        if DEBUG_AVAILABLE:
+            debug.shape("vat_lidar", "with_view_embed", x)
+            debug.debug("vat_lidar", f"View sectors: {len(torch.unique(sid))} unique sectors")
+            debug.end_timer("vat_lidar", "view_embedding")
 
         # 5) Initialize queries and make them view-aware.
+        if DEBUG_AVAILABLE:
+            debug.start_timer("vat_lidar", "query_init")
+        
         q = self.query.unsqueeze(0).expand(B, -1, -1)  # [B, n_queries, d_model]
 
         if self.nq_per_view > 0:
@@ -218,13 +268,37 @@ class VATLiDAR(nn.Module):
                 ],
                 dim=1,
             )  # [B, n_queries, d_model]
+        
+        if DEBUG_AVAILABLE:
+            debug.shape("vat_lidar", "initialized_queries", q)
+            debug.debug("vat_lidar", f"Queries per view: {self.nq_per_view}")
+            debug.end_timer("vat_lidar", "query_init")
 
         # 6) VAT blocks: queries attend over BEV tokens.
-        for blk in self.blocks:
+        if DEBUG_AVAILABLE:
+            debug.start_timer("vat_lidar", "vat_blocks")
+            debug.debug("vat_lidar", f"Processing {len(self.blocks)} VAT blocks")
+        
+        for i, blk in enumerate(self.blocks):
+            if DEBUG_AVAILABLE:
+                debug.trace("vat_lidar", f"Block {i+1}/{len(self.blocks)}")
             q = blk(q, x)  # [B, n_queries, d_model]
+        
+        if DEBUG_AVAILABLE:
+            debug.shape("vat_lidar", "after_blocks", q)
+            debug.end_timer("vat_lidar", "vat_blocks")
 
         # 7) Final normalization + MLP head.
+        if DEBUG_AVAILABLE:
+            debug.start_timer("vat_lidar", "final_projection")
+        
         q = self.final_ln(q)
         q = self.post(q)  # [B, n_queries, d_model]
+        
+        if DEBUG_AVAILABLE:
+            debug.shape("vat_lidar", "output", q)
+            debug.tensor_stats("vat_lidar", "output", q)
+            debug.end_timer("vat_lidar", "final_projection")
+            debug.trace("vat_lidar", "LiDAR VAT Complete")
 
         return q

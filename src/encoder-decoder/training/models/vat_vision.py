@@ -6,6 +6,14 @@ import torch.nn as nn
 from .vat_blocks import VATBlock
 
 
+# Import debug logger
+try:
+    from ..utils import debug
+    DEBUG_AVAILABLE = True
+except ImportError:
+    DEBUG_AVAILABLE = False
+
+
 NUM_VIEWS = 6
 
 
@@ -139,7 +147,16 @@ class VATVision(nn.Module):
         Returns:
             Compressed and projected tokens [B, 768, d_model]
         """
+        if DEBUG_AVAILABLE:
+            debug.trace("vat_vision", "=" * 40)
+            debug.trace("vat_vision", "Vision VAT Forward Pass")
+            debug.trace("vat_vision", "=" * 40)
+            debug.shape("vat_vision", "input_kv_tokens", kv_tokens)
+        
         B, N, D = kv_tokens.shape
+        
+        if DEBUG_AVAILABLE:
+            debug.debug("vat_vision", f"Input: B={B}, N={N}, D={D}")
         
         # Validate input shape
         assert N == self.n_input_tokens, \
@@ -148,10 +165,20 @@ class VATVision(nn.Module):
             f"Expected d_in={self.d_in}, got {D}"
         
         # Initialize query tokens [B, n_queries, d_in]
+        if DEBUG_AVAILABLE:
+            debug.start_timer("vat_vision", "query_init")
+        
         q = self.query.unsqueeze(0).expand(B, -1, -1)  # [B, 768, 2048]
+        
+        if DEBUG_AVAILABLE:
+            debug.shape("vat_vision", "initialized_queries", q)
+            debug.debug("vat_vision", f"Target queries: {self.n_queries} (compression: {self.compression_factor}x)")
 
         # Add per-view query embeddings if enabled
         if self.use_per_view_query and self.nq_per_view > 0:
+            if DEBUG_AVAILABLE:
+                debug.debug("vat_vision", f"Adding per-view embeddings ({self.nq_per_view} queries/view)")
+            
             # Split queries into 6 view-specific chunks
             chunks = q.split(self.nq_per_view, dim=1)  # 6 chunks of [B, 128, 2048]
             
@@ -161,18 +188,48 @@ class VATVision(nn.Module):
                  for k, ch in enumerate(chunks)],
                 dim=1,
             )  # [B, 768, 2048]
+            
+            if DEBUG_AVAILABLE:
+                debug.shape("vat_vision", "queries_with_view_embed", q)
+        
+        if DEBUG_AVAILABLE:
+            debug.end_timer("vat_vision", "query_init")
 
         # Apply VAT blocks (cross-attention: queries attend to KV tokens)
         # This reduces the number of tokens: 1536 -> 768
-        for blk in self.blocks:
+        if DEBUG_AVAILABLE:
+            debug.start_timer("vat_vision", "vat_blocks")
+            debug.debug("vat_vision", f"Processing {len(self.blocks)} VAT blocks")
+        
+        for i, blk in enumerate(self.blocks):
+            if DEBUG_AVAILABLE:
+                debug.trace("vat_vision", f"Block {i+1}/{len(self.blocks)}")
             q = blk(q, kv_tokens)  # [B, 768, 2048]
+        
+        if DEBUG_AVAILABLE:
+            debug.shape("vat_vision", "after_blocks", q)
+            debug.end_timer("vat_vision", "vat_blocks")
             
         # Final normalization and projection in d_in space
+        if DEBUG_AVAILABLE:
+            debug.start_timer("vat_vision", "final_processing")
+        
         q = self.final_ln(q)
         q = self.post(q)  # [B, 768, 2048]
+        
+        if DEBUG_AVAILABLE:
+            debug.shape("vat_vision", "after_post", q)
+            debug.tensor_stats("vat_vision", "before_projection", q)
         
         # Project to target dimension: d_in -> d_model
         # This reduces the embedding dimension: 2048 -> d_model
         q = self.proj(q)  # [B, 768, d_model]
+        
+        if DEBUG_AVAILABLE:
+            debug.shape("vat_vision", "output", q)
+            debug.tensor_stats("vat_vision", "output", q)
+            debug.debug("vat_vision", f"Dimension reduction: {self.d_in} → {self.d_model}")
+            debug.end_timer("vat_vision", "final_processing")
+            debug.trace("vat_vision", "Vision VAT Complete")
         
         return q
