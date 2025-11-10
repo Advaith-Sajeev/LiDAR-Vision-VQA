@@ -89,7 +89,7 @@ def get_training_config() -> Dict:
         
         # ==================== Inference Sampling Configuration ====================
         # Generate predictions on validation samples every N epochs
-        "inference_sampling_every": 3,
+        "inference_sampling_every": 1,
         
         # Total number of samples to generate (must be even for balanced sampling)
         "inference_samples_n": 10,
@@ -116,7 +116,7 @@ def get_training_config() -> Dict:
         "target_field": "answer",
         
         # Maximum answer tokens (longer answers will be truncated)
-        "max_ans_toks": 32,
+        "max_ans_toks": 64,
         
         # Scale factor applied to VAT prompts before feeding to LLM
         # Smaller values (0.1-0.2) help stabilize training

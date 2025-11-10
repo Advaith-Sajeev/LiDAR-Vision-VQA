@@ -337,7 +337,7 @@ def run_inference_sampling(
     
     # Load validation JSONs
     try:
-        with open(config["inference_caption_json"], "r") as f:
+        with open(config["inference_caption_json"], "r", encoding="utf-8") as f:
             caption_data = json.load(f)
         print(f"[inference_sampling] Loaded {len(caption_data)} caption samples")
     except Exception as e:
@@ -345,7 +345,7 @@ def run_inference_sampling(
         caption_data = []
     
     try:
-        with open(config["inference_grounding_json"], "r") as f:
+        with open(config["inference_grounding_json"], "r", encoding="utf-8") as f:
             grounding_data = json.load(f)
         print(f"[inference_sampling] Loaded {len(grounding_data)} grounding samples")
     except Exception as e:
@@ -409,6 +409,7 @@ def run_inference_sampling(
                     print(f"[inference_sampling] Vision processing failed for {sample_token}: {e}")
             
             # Format prompt with configurable system prompt
+            # CRITICAL: Match the exact order used during training!
             system_prompt = config.get(
                 "system_prompt", 
                 "You are an expert autonomous driving assistant. Analyze the 3D LiDAR point cloud and camera images to understand the driving scene. Provide accurate, concise descriptions of objects, their locations, distances, and spatial relationships. Use directional terms like 'ahead', 'left', 'right', 'behind' and specify distances in meters when describing object locations."
@@ -419,64 +420,36 @@ def run_inference_sampling(
             ]
             prompt = tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
             
-            # Build inputs_embeds
-            enc = tok(prompt, return_tensors="pt", add_special_tokens=False)
-            input_ids = enc["input_ids"].to(device)  # [1, L]
-            text_embeds = base_model.get_input_embeddings()(input_ids)  # [1, L, d_model]
+            # Build inputs_embeds using the SAME order as training
+            # Training order: VISION → LIDAR → SYSTEM+QUESTION
+            E = base_model.get_input_embeddings()
             
-            ids_flat = input_ids[0]
+            def emb_token(txt):
+                ids = tok([txt], add_special_tokens=False, return_tensors="pt").input_ids.to(device)
+                return E(ids)
             
-            # Find special token positions
-            lidar_start_id = tok.convert_tokens_to_ids("<lidar_start>")
-            lidar_end_id = tok.convert_tokens_to_ids("<lidar_end>")
-            vision_start_id = tok.convert_tokens_to_ids("<vision_start>")
-            vision_end_id = tok.convert_tokens_to_ids("<vision_end>")
+            # Tokenize the prompt (system + user + generation prompt)
+            prompt_ids = tok(prompt, return_tensors="pt", add_special_tokens=False).input_ids.to(device)
+            prompt_embeds = E(prompt_ids)  # [1, L, d_model]
             
-            # Initialize embeds list and position tracker
+            # Build the full input in the SAME ORDER as training
             embeds_list = []
-            pos = 0
             
-            # Handle vision tokens
+            # 1. Vision tokens (if available)
             if prefix_vision is not None:
-                vision_start_pos = (ids_flat == vision_start_id).nonzero(as_tuple=True)[0]
-                vision_end_pos = (ids_flat == vision_end_id).nonzero(as_tuple=True)[0]
-                
-                if len(vision_start_pos) > 0 and len(vision_end_pos) > 0:
-                    vs = vision_start_pos[0].item()
-                    ve = vision_end_pos[0].item()
-                    
-                    if vs > pos:
-                        embeds_list.append(text_embeds[:, pos:vs, :])
-                    embeds_list.append(text_embeds[:, vs:vs+1, :])
-                    embeds_list.append(prefix_vision)
-                    embeds_list.append(text_embeds[:, ve:ve+1, :])
-                    pos = ve + 1
+                embeds_list.append(emb_token("<vision_start>"))
+                embeds_list.append(prefix_vision)
+                embeds_list.append(emb_token("<vision_end>"))
             
-            # Handle LiDAR tokens
-            lidar_start_pos = (ids_flat == lidar_start_id).nonzero(as_tuple=True)[0]
-            lidar_end_pos = (ids_flat == lidar_end_id).nonzero(as_tuple=True)[0]
+            # 2. LiDAR tokens (always present)
+            embeds_list.append(emb_token("<lidar_start>"))
+            embeds_list.append(prefix_lidar)
+            embeds_list.append(emb_token("<lidar_end>"))
             
-            if len(lidar_start_pos) > 0 and len(lidar_end_pos) > 0:
-                ls = lidar_start_pos[0].item()
-                le = lidar_end_pos[0].item()
-                
-                if ls > pos:
-                    embeds_list.append(text_embeds[:, pos:ls, :])
-                embeds_list.append(text_embeds[:, ls:ls+1, :])
-                embeds_list.append(prefix_lidar)
-                embeds_list.append(text_embeds[:, le:le+1, :])
-                pos = le + 1
+            # 3. Text prompt (system + user question + generation prompt)
+            embeds_list.append(prompt_embeds)
             
-            # Remaining text
-            if pos < text_embeds.shape[1]:
-                embeds_list.append(text_embeds[:, pos:, :])
-            
-            # Safety check: ensure we have embeddings to concatenate
-            if not embeds_list:
-                print(f"[inference_sampling] Warning: No embeddings found for {sample_token}, skipping...")
-                continue
-            
-            # Concatenate
+            # Concatenate all pieces
             inputs_embeds = torch.cat(embeds_list, dim=1)  # [1, total_len, d_model]
             attention_mask = torch.ones(1, inputs_embeds.shape[1], dtype=torch.long, device=device)
             
@@ -498,19 +471,29 @@ def run_inference_sampling(
                     num_beams=config.get("inference_num_beams", 1),
                     pad_token_id=tok.pad_token_id,
                     eos_token_id=tok.eos_token_id,
+                    # CRITICAL: Prevent premature stopping
+                    min_new_tokens=1,  # Force at least 1 token generation
                 )
                 
                 # Decode (skip prompt tokens)
                 # outputs shape: [1, total_input_len + generated_len]
                 if outputs.shape[1] <= inputs_embeds.shape[1]:
                     print(f"[inference_sampling] Warning: No new tokens generated for {sample_token}")
+                    print(f"[inference_sampling]   Input length: {inputs_embeds.shape[1]}, Output length: {outputs.shape[1]}")
                     prediction = ""
                 else:
                     generated_ids = outputs[0][inputs_embeds.shape[1]:]
                     prediction = tok.decode(generated_ids, skip_special_tokens=True).strip()
+                    
+                    # Additional debug info
+                    if not prediction:
+                        print(f"[inference_sampling] Warning: Empty prediction after decoding for {sample_token}")
+                        print(f"[inference_sampling]   Generated {len(generated_ids)} tokens: {generated_ids.tolist()[:10]}...")
                 
             except Exception as gen_error:
                 print(f"[inference_sampling] Generation failed for {sample_token}: {gen_error}")
+                import traceback
+                traceback.print_exc()
                 prediction = ""
             
             results.append({
