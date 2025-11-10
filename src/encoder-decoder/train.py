@@ -59,7 +59,7 @@ def get_training_config() -> Dict:
         # See DEBUG_GUIDE.md for complete documentation
         # ────────────────────────────────────────────────────────────────
         
-        "debug_mode": False,      # ← SET TO True TO ENABLE DEBUG LOGGING
+        "debug_mode": True,      # ← SET TO True TO ENABLE DEBUG LOGGING
         "debug_level": 2,         # ← 1=INFO, 2=DEBUG (recommended), 3=TRACE
         "debug_modules": [],      # ← [] = all modules, or ["trainer", "dataset"]
         
@@ -146,16 +146,16 @@ def get_training_config() -> Dict:
         
         # Toggle components during training (for debugging/ablation studies)
         # WARNING: Disabling components during training will train a model that doesn't use them!
-        "training_use_vision": False,    # Include vision tokens in training
-        "training_use_lidar": False,     # Include LiDAR tokens in training
+        "training_use_vision": True,    # Include vision tokens in training
+        "training_use_lidar": True,     # Include LiDAR tokens in training
         
         # Toggle components during validation (for debugging/ablation studies)
-        "validation_use_vision": False,  # Include vision tokens in validation
-        "validation_use_lidar": False,   # Include LiDAR tokens in validation
+        "validation_use_vision": True,  # Include vision tokens in validation
+        "validation_use_lidar": True,   # Include LiDAR tokens in validation
         
         # Toggle components during inference sampling (for debugging/ablation studies)
-        "inference_use_vision": False,   # Include vision tokens in inference
-        "inference_use_lidar": False,    # Include LiDAR tokens in inference
+        "inference_use_vision": True,   # Include vision tokens in inference
+        "inference_use_lidar": True,    # Include LiDAR tokens in inference
         "inference_use_system": True,   # Include system prompt in inference
         
         
