@@ -480,10 +480,14 @@ class DeepEncoderRuntime:
         params += list(self.projector.parameters())
         return params
 
-    @torch.no_grad()
     def _sam_features(self, x: torch.Tensor) -> torch.Tensor:
-        """Private helper: SAM forward under no_grad()."""
-        return self.sam(x)  # [B, 1024, Hs, Ws]
+        """
+        Private helper: forward pass through SAM.
+        Backbone params have requires_grad=False (frozen);
+        net_2/net_3 keep requires_grad=True and are trainable.
+        """
+        return self.sam(x)
+
 
     def encode_image(self, image_path: str) -> dict:
         """Returns tokens for a single image (train-ready; grads flow through CLIP+projector)."""
