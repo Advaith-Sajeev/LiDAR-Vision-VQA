@@ -144,11 +144,13 @@ class CLIPVisionEmbeddings(nn.Module):
         self.register_buffer("position_ids", torch.arange(self.num_positions).expand((1, -1)),
                              persistent=False)
 
-    def forward(self, pixel_values: torch.Tensor, patch_embeds: Optional[torch.Tensor]):
+    def forward(self, pixel_values: torch.Tensor, patch_embeds: Optional[torch.Tensor] = None, **kwargs):
         """
         pixel_values: [B,3,H,W]
         patch_embeds: [B, C=1024, Hs, Ws] from SAM (preferred) or None to use CLIP's own patcher
         Returns: token embeddings [B, 1+HW, C]
+        
+        Note: Accepts **kwargs to be compatible with PEFT wrappers that may pass extra arguments.
         """
         B = pixel_values.shape[0]
 
@@ -312,12 +314,51 @@ class VitModel(nn.Module):
     def __str__(self) -> str:
         return "open_clip"
 
-    def forward(self, x: torch.Tensor, patch_embeds: Optional[torch.Tensor]):
+    def forward(self, *args, x: Optional[torch.Tensor] = None, patch_embeds: Optional[torch.Tensor] = None, 
+                pixel_values: Optional[torch.Tensor] = None, **kwargs):
         """
-        x: [B,3,H,W]
-        patch_embeds: [B, 1024, Hs, Ws] from SAM (preferred) or None
-        returns: [B, 1+HW, 1024]
+        Dual-interface forward pass:
+        1. Custom interface: forward(x, patch_embeds) where:
+           - x: [B,3,H,W] pixel values
+           - patch_embeds: [B, 1024, Hs, Ws] from SAM (preferred) or None
+        
+        2. PEFT-compatible interface: forward(pixel_values=..., patch_embeds=...) where:
+           - pixel_values: [B,3,H,W] pixel values (alternative name for x)
+           - patch_embeds: [B, 1024, Hs, Ws] from SAM (preferred) or None
+        
+        Returns: [B, 1+HW, 1024]
+        
+        Note: PEFT may pass positional args or 'input_ids' and other kwargs which we handle.
         """
+        # Debug: Log what we received (uncomment for troubleshooting)
+        # print(f"[VitModel.forward] args={len(args)}, x={x is not None}, patch_embeds={patch_embeds is not None}, pixel_values={pixel_values is not None}, kwargs={list(kwargs.keys())}")
+        
+        # Handle positional arguments (when called as clip_vit(x, sam_feats))
+        if len(args) >= 1 and x is None and pixel_values is None:
+            x = args[0]
+        if len(args) >= 2 and patch_embeds is None:
+            patch_embeds = args[1]
+        
+        # Handle keyword argument interface
+        if x is None and pixel_values is not None:
+            x = pixel_values
+        
+        # PEFT may pass 'inputs_embeds' - extract pixel_values if available
+        if x is None and 'inputs_embeds' in kwargs:
+            # In PEFT wrapper context, the actual image may be in a different key
+            # Try to find the image tensor in kwargs
+            if 'pixel_values' in kwargs and kwargs['pixel_values'] is not None:
+                x = kwargs['pixel_values']
+        
+        if x is None:
+            raise ValueError(
+                f"Either 'x' or 'pixel_values' must be provided. "
+                f"Received: args_len={len(args)}, x={x is not None}, "
+                f"pixel_values={pixel_values is not None}, "
+                f"patch_embeds={patch_embeds is not None}, "
+                f"kwargs_keys={list(kwargs.keys())}"
+            )
+        
         tokens = self.embeddings(x, patch_embeds)     # [B, 1+HW, 1024]
         hidden_states = self.pre_layrnorm(tokens)
         output = self.transformer(hidden_states)      # [B, 1+HW, 1024]
