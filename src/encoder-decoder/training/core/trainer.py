@@ -352,11 +352,13 @@ class Trainer:
             use_lidar_training = self.config.get("training_use_lidar", True)
             use_vision_validation = self.config.get("validation_use_vision", True)
             use_lidar_validation = self.config.get("validation_use_lidar", True)
+            
             print(f"\n[training_toggles] Vision={use_vision_training}, LiDAR={use_lidar_training}")
             print(f"[validation_toggles] Vision={use_vision_validation}, LiDAR={use_lidar_validation}")
             
             if not use_vision_training or not use_lidar_training:
-                print("[WARNING] Training with disabled components will train a model that doesn't use them!")
+                # show which components are disabled
+                print(f"[WARNING] Training with disabled components {' '.join([comp for comp, enabled in zip(['VISION', 'LiDAR'], [use_vision_training, use_lidar_training]) if not enabled])} will train a model that doesn't use them!")
         
         # Set models to train mode
         self.base.train()
@@ -554,7 +556,7 @@ class Trainer:
             vision_kv = torch.cat(vision_kvs, dim=0)
             debug.shape("trainer", "vision_kv_batch", vision_kv)
             debug.tensor_stats("trainer", "vision_kv", vision_kv)
-            debug.data_flow("trainer", "vision_complete", f"shape={tuple(vision_kv.shape)}")
+            debug.data_flow("trainer", "vision_complete", f"shape={tuple(vision_kv.shape)}") 
             debug.end_timer("trainer", "vision_processing")
         else:
             debug.debug("trainer", "Vision processing skipped (disabled or not configured)")
