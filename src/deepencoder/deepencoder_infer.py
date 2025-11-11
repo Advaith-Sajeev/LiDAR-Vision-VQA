@@ -495,7 +495,9 @@ class DeepEncoderRuntime:
         sam_feats = self._sam_features(x)
 
         # CLIP tokens conditioned on SAM (trainable)
-        clip_y = self.clip_vit(x, sam_feats)                # [B, 1+HW, 1024]
+        # When PEFT wraps the model, we need to access the base model directly for custom forward signature
+        clip_model = self.clip_vit.base_model.model if hasattr(self.clip_vit, 'base_model') else self.clip_vit
+        clip_y = clip_model(x, sam_feats)                # [B, 1+HW, 1024]
         clip_tokens = clip_y[:, 1:, :]                      # [B, HW, 1024]
         sam_tokens  = sam_feats.flatten(2).permute(0, 2, 1) # [B, HW, 1024]
 
