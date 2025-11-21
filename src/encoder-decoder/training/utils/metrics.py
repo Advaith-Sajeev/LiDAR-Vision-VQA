@@ -306,23 +306,24 @@ def calculate_grounding_metrics(
 
 def calculate_metrics_by_type(results: List[Dict]) -> Dict:
     """
-    Calculate metrics grouped by dataset type (caption vs grounding).
+    Calculate metrics grouped by dataset type.
     
     Args:
         results: List of result dictionaries with keys:
                  - prediction
                  - ground_truth
-                 - dataset_type ("caption" or "grounding")
+                 - dataset_type ("caption", "grounding_det_area", or "grounding_det_object")
     
     Returns:
-        Dictionary with metrics for each type and overall
+        Dictionary with metrics for each type
     """
     caption_results = [r for r in results if r.get("dataset_type") == "caption"]
-    grounding_results = [r for r in results if r.get("dataset_type") == "grounding"]
+    det_area_results = [r for r in results if r.get("dataset_type") == "grounding_det_area"]
+    det_object_results = [r for r in results if r.get("dataset_type") == "grounding_det_object"]
     
     metrics = {}
     
-    # Caption metrics
+    # Caption metrics (text quality only)
     if caption_results:
         cap_preds = [r["prediction"] for r in caption_results]
         cap_refs = [r["ground_truth"] for r in caption_results]
@@ -333,20 +334,48 @@ def calculate_metrics_by_type(results: List[Dict]) -> Dict:
             "bleu4": 0.0, "cider": 0.0, "spice": 0.0, "bertscore_f1": 0.0, "num_samples": 0
         }
     
-    # Grounding metrics  
-    # Note: Using det_area samples (descriptive spatial answers without bbox coordinates)
-    # Evaluate using text similarity metrics instead of bbox IoU
-    if grounding_results:
-        gnd_preds = [r["prediction"] for r in grounding_results]
-        gnd_refs = [r["ground_truth"] for r in grounding_results]
-        # Use caption metrics for det_area (descriptive text comparison)
-        metrics["grounding_dashboard"] = calculate_caption_metrics(gnd_preds, gnd_refs)
-        metrics["grounding_dashboard"]["num_samples"] = len(grounding_results)
-        metrics["grounding_dashboard"]["note"] = "Using text similarity metrics (det_area samples)"
+    # Grounding det_area metrics (text quality + bbox accuracy)
+    if det_area_results:
+        area_preds = [r["prediction"] for r in det_area_results]
+        area_refs = [r["ground_truth"] for r in det_area_results]
+        
+        # Text quality metrics
+        text_metrics = calculate_caption_metrics(area_preds, area_refs)
+        
+        # Bbox accuracy metrics
+        bbox_metrics = calculate_grounding_metrics(area_preds, area_refs)
+        
+        metrics["grounding_det_area_dashboard"] = {
+            **text_metrics,
+            "top1_accuracy": bbox_metrics["top1_accuracy"],
+            "bev_iou": bbox_metrics["bev_iou"],
+            "bbox_valid_samples": bbox_metrics["valid_samples"],
+            "num_samples": len(det_area_results),
+            "note": "Text quality + bbox accuracy"
+        }
     else:
-        metrics["grounding_dashboard"] = {
-            "bleu4": 0.0, "cider": 0.0, "spice": 0.0, "bertscore_f1": 0.0, 
-            "num_samples": 0, "note": "No grounding samples"
+        metrics["grounding_det_area_dashboard"] = {
+            "bleu4": 0.0, "cider": 0.0, "spice": 0.0, "bertscore_f1": 0.0,
+            "top1_accuracy": 0.0, "bev_iou": 0.0, "bbox_valid_samples": 0,
+            "num_samples": 0, "note": "No det_area samples"
+        }
+    
+    # Grounding det_object metrics (text quality only)
+    if det_object_results:
+        obj_preds = [r["prediction"] for r in det_object_results]
+        obj_refs = [r["ground_truth"] for r in det_object_results]
+        
+        text_metrics = calculate_caption_metrics(obj_preds, obj_refs)
+        
+        metrics["grounding_det_object_dashboard"] = {
+            **text_metrics,
+            "num_samples": len(det_object_results),
+            "note": "Text quality only (coords in question)"
+        }
+    else:
+        metrics["grounding_det_object_dashboard"] = {
+            "bleu4": 0.0, "cider": 0.0, "spice": 0.0, "bertscore_f1": 0.0,
+            "num_samples": 0, "note": "No det_object samples"
         }
     
     return metrics

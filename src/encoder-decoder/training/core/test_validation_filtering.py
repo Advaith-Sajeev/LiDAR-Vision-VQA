@@ -217,9 +217,11 @@ def test_sample_selection():
     
     print("\n💡 Strategy:")
     print("  - Using det_area for grounding evaluation")
-    print("  - Questions: descriptive (e.g., 'What's ahead?', 'Describe left side')")
-    print("  - Answers: descriptive text without bbox coordinates")
-    print("  - Tests: spatial understanding via text similarity metrics")
+    print("  - Questions: descriptive, NO coordinates (e.g., 'Where is the pedestrian?')")
+    print("  - Answers: contain bbox coordinates for evaluation")
+    print("  - Tests: spatial understanding via bbox metrics (Top-1 Acc, BEV IoU)")
+    print("  - Model CANNOT copy coordinates from question (they're not there)")
+    print("  - Must actually predict object locations from spatial understanding")
     
     # Show examples of both types
     if det_area_all:
@@ -295,10 +297,12 @@ if __name__ == "__main__":
         print("✓ All tests passed! The filtering logic is correct.")
         print("\nSummary:")
         print("  - Using det_area questions for grounding evaluation")
-        print("  - det_area: Descriptive spatial questions (e.g., 'What's ahead?')")
-        print("  - Answers: Descriptive text without bbox coordinates")
-        print("  - Evaluation: Text similarity metrics (BLEU, BERTScore, etc.)")
-        print("  - det_object questions (with coordinates) skipped for eval")
+        print("  - det_area: Descriptive spatial questions (no coords in Q)")
+        print("  - Answers: Contain bbox coordinates")
+        print("  - Evaluation: BOTH text quality AND bbox accuracy")
+        print("    * Text metrics: BLEU, CIDEr, SPICE, BERTScore")
+        print("    * Bbox metrics: Top-1 Accuracy, BEV IoU")
+        print("  - det_object questions (coords in Q) skipped to prevent copying")
     else:
         print("✗ Some tests failed. Review the filtering logic.")
     

@@ -399,41 +399,54 @@ def run_inference_sampling(
     # Filter for samples that have BEV features
     caption_available = [s for s in caption_data if s.get("sample_token") in token2path]
     
-    # For grounding: Use det_area samples (descriptive questions without coordinates)
-    # det_area questions ask about spatial regions descriptively (e.g., "What's ahead?")
-    # and have descriptive answers without bbox coordinates
-    # This tests spatial understanding rather than object recognition at given coordinates
-    grounding_available = [
+    # For grounding: Use BOTH types for comprehensive evaluation
+    # det_area: Descriptive questions (no coords in Q) → Text quality + Bbox accuracy
+    # det_object: Coordinate questions (coords in Q) → Text quality only (skip bbox to avoid copying)
+    grounding_det_area = [
         s for s in grounding_data 
         if s.get("sample_token") in token2path 
         and s.get("template_type") == "det_area"
     ]
     
+    grounding_det_object = [
+        s for s in grounding_data 
+        if s.get("sample_token") in token2path 
+        and s.get("template_type") == "det_object"
+    ]
+    
     # Log filtering statistics
     total_grounding_with_bev = len([s for s in grounding_data if s.get("sample_token") in token2path])
-    det_area_count = len(grounding_available)
-    det_object_count = len([s for s in grounding_data if s.get("sample_token") in token2path and s.get("template_type") == "det_object"])
     
-    print(f"[inference_sampling] Grounding filtering: {total_grounding_with_bev} total → {det_area_count} det_area (descriptive)")
-    print(f"[inference_sampling]   Note: Skipping {det_object_count} det_object samples (coordinates in questions)")
+    print(f"[inference_sampling] Grounding filtering: {total_grounding_with_bev} total")
+    print(f"[inference_sampling]   det_area: {len(grounding_det_area)} samples → text quality + bbox accuracy")
+    print(f"[inference_sampling]   det_object: {len(grounding_det_object)} samples → text quality only")
     
-    # Sample from the filtered pools
-    # If not enough samples after filtering, we'll just get what's available
-    caption_samples = random.sample(caption_available, min(n_per_type, len(caption_available)))
-    grounding_samples = random.sample(grounding_available, min(n_per_type, len(grounding_available)))
+    # Sample from both types
+    # Split grounding samples between det_area and det_object
+    n_caption = n_per_type
+    n_det_area = n_per_type // 2
+    n_det_object = n_per_type // 2
+    
+    caption_samples = random.sample(caption_available, min(n_caption, len(caption_available)))
+    det_area_samples = random.sample(grounding_det_area, min(n_det_area, len(grounding_det_area)))
+    det_object_samples = random.sample(grounding_det_object, min(n_det_object, len(grounding_det_object)))
     
     # Warn if we couldn't get enough samples
-    if len(caption_samples) < n_per_type:
-        print(f"[inference_sampling] Warning: Only {len(caption_samples)}/{n_per_type} caption samples available")
-    if len(grounding_samples) < n_per_type:
-        print(f"[inference_sampling] Warning: Only {len(grounding_samples)}/{n_per_type} grounding samples available")
+    if len(caption_samples) < n_caption:
+        print(f"[inference_sampling] Warning: Only {len(caption_samples)}/{n_caption} caption samples available")
+    if len(det_area_samples) < n_det_area:
+        print(f"[inference_sampling] Warning: Only {len(det_area_samples)}/{n_det_area} det_area samples available")
+    if len(det_object_samples) < n_det_object:
+        print(f"[inference_sampling] Warning: Only {len(det_object_samples)}/{n_det_object} det_object samples available")
     
-    print(f"[inference_sampling] Selected {len(caption_samples)} caption + {len(grounding_samples)} grounding samples")
+    print(f"[inference_sampling] Selected {len(caption_samples)} caption + {len(det_area_samples)} det_area + {len(det_object_samples)} det_object")
     
     all_samples = [
         {**s, "dataset_type": "caption"} for s in caption_samples
     ] + [
-        {**s, "dataset_type": "grounding"} for s in grounding_samples
+        {**s, "dataset_type": "grounding_det_area"} for s in det_area_samples
+    ] + [
+        {**s, "dataset_type": "grounding_det_object"} for s in det_object_samples
     ]
     
     # Generate predictions
@@ -670,21 +683,29 @@ def run_inference_sampling(
         print(f"  SPICE:        {metrics['caption_dashboard']['spice']:.4f}")
         print(f"  BERTScore-F1: {metrics['caption_dashboard']['bertscore_f1']:.4f}")
     
-    if "grounding_dashboard" in metrics:
-        gnd = metrics['grounding_dashboard']
-        print(f"\nGrounding Dashboard ({gnd['num_samples']} samples - det_area):")
-        if 'bleu4' in gnd:
-            # Text similarity metrics for det_area
-            print(f"  BLEU-4:       {gnd['bleu4']:.4f}")
-            print(f"  CIDEr:        {gnd['cider']:.4f}")
-            print(f"  SPICE:        {gnd['spice']:.4f}")
-            print(f"  BERTScore-F1: {gnd['bertscore_f1']:.4f}")
-            if 'note' in gnd:
-                print(f"  Note: {gnd['note']}")
-        else:
-            # Legacy bbox metrics (shouldn't happen with det_area)
-            print(f"  Top-1 Acc:    {gnd.get('top1_accuracy', 0.0):.4f}")
-            print(f"  BEV IoU:      {gnd.get('bev_iou', 0.0):.4f}")
+    if "grounding_det_area_dashboard" in metrics:
+        gnd = metrics['grounding_det_area_dashboard']
+        print(f"\nGrounding det_area Dashboard ({gnd['num_samples']} samples):")
+        print(f"  Text Quality:")
+        print(f"    BLEU-4:       {gnd['bleu4']:.4f}")
+        print(f"    CIDEr:        {gnd['cider']:.4f}")
+        print(f"    SPICE:        {gnd['spice']:.4f}")
+        print(f"    BERTScore-F1: {gnd['bertscore_f1']:.4f}")
+        
+        bbox_valid = gnd.get('bbox_valid_samples', gnd['num_samples'])
+        print(f"  Bbox Accuracy ({bbox_valid} valid bbox parses):")
+        print(f"    Top-1 Acc:    {gnd['top1_accuracy']:.4f}")
+        print(f"    BEV IoU:      {gnd['bev_iou']:.4f}")
+    
+    if "grounding_det_object_dashboard" in metrics:
+        obj = metrics['grounding_det_object_dashboard']
+        print(f"\nGrounding det_object Dashboard ({obj['num_samples']} samples):")
+        print(f"  Text Quality:")
+        print(f"    BLEU-4:       {obj['bleu4']:.4f}")
+        print(f"    CIDEr:        {obj['cider']:.4f}")
+        print(f"    SPICE:        {obj['spice']:.4f}")
+        print(f"    BERTScore-F1: {obj['bertscore_f1']:.4f}")
+        print(f"  Note: Bbox evaluation skipped (coords in question)")
     
     print('='*60 + '\n')
     

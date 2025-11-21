@@ -126,16 +126,26 @@ class Trainer:
         self.best_val_loss = float("inf")
         self.best_step = None
         
-        # Metric tracking for live plotting
+        # Metric tracking for live plotting (three dashboards)
         self.caption_metrics_history = {
             "bleu4": [],
             "cider": [],
             "spice": [],
             "bertscore_f1": []
         }
-        self.grounding_metrics_history = {
+        self.grounding_det_area_metrics_history = {
+            "bleu4": [],
+            "cider": [],
+            "spice": [],
+            "bertscore_f1": [],
             "top1_accuracy": [],
             "bev_iou": []
+        }
+        self.grounding_det_object_metrics_history = {
+            "bleu4": [],
+            "cider": [],
+            "spice": [],
+            "bertscore_f1": []
         }
         self.metrics_epochs = []
         
@@ -454,18 +464,32 @@ class Trainer:
                         self.caption_metrics_history["bertscore_f1"].append(cap_dash.get("bertscore_f1", 0.0))
                         print(f"[trainer] Stored caption metrics for epoch {epoch}")
                     
-                    # Store grounding metrics if available
-                    if "grounding_dashboard" in metrics:
-                        ground_dash = metrics["grounding_dashboard"]
-                        self.grounding_metrics_history["top1_accuracy"].append(ground_dash.get("top1_accuracy", 0.0))
-                        self.grounding_metrics_history["bev_iou"].append(ground_dash.get("bev_iou", 0.0))
-                        print(f"[trainer] Stored grounding metrics for epoch {epoch}")
+                    # Store grounding det_area metrics (text + bbox)
+                    if "grounding_det_area_dashboard" in metrics:
+                        area_dash = metrics["grounding_det_area_dashboard"]
+                        self.grounding_det_area_metrics_history["bleu4"].append(area_dash.get("bleu4", 0.0))
+                        self.grounding_det_area_metrics_history["cider"].append(area_dash.get("cider", 0.0))
+                        self.grounding_det_area_metrics_history["spice"].append(area_dash.get("spice", 0.0))
+                        self.grounding_det_area_metrics_history["bertscore_f1"].append(area_dash.get("bertscore_f1", 0.0))
+                        self.grounding_det_area_metrics_history["top1_accuracy"].append(area_dash.get("top1_accuracy", 0.0))
+                        self.grounding_det_area_metrics_history["bev_iou"].append(area_dash.get("bev_iou", 0.0))
+                        print(f"[trainer] Stored grounding det_area metrics for epoch {epoch}")
+                    
+                    # Store grounding det_object metrics (text only)
+                    if "grounding_det_object_dashboard" in metrics:
+                        obj_dash = metrics["grounding_det_object_dashboard"]
+                        self.grounding_det_object_metrics_history["bleu4"].append(obj_dash.get("bleu4", 0.0))
+                        self.grounding_det_object_metrics_history["cider"].append(obj_dash.get("cider", 0.0))
+                        self.grounding_det_object_metrics_history["spice"].append(obj_dash.get("spice", 0.0))
+                        self.grounding_det_object_metrics_history["bertscore_f1"].append(obj_dash.get("bertscore_f1", 0.0))
+                        print(f"[trainer] Stored grounding det_object metrics for epoch {epoch}")
                     
                     # Generate live plots
                     try:
                         plot_all_metrics(
                             self.caption_metrics_history,
-                            self.grounding_metrics_history,
+                            self.grounding_det_area_metrics_history,
+                            self.grounding_det_object_metrics_history,
                             self.metrics_epochs,
                             self.out_dir
                         )
