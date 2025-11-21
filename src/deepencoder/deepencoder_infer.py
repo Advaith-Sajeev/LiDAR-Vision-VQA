@@ -192,7 +192,7 @@ def load_openclip_vitl14_into_vitmodel(
 
     print("[INFO] Loading CLIP ViT-L/14 (OpenCLIP, pretrained=%s)..." % openclip_pretrained)
     model, _, _ = open_clip.create_model_and_transforms(
-        "ViT-L-14", pretrained=openclip_pretrained, device=device
+        "ViT-L-14-quickgelu", pretrained=openclip_pretrained, device=device
     )
     sd = model.visual.state_dict()
 
