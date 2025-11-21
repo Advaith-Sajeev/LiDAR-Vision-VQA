@@ -73,12 +73,11 @@ class Trainer:
             self.out_dir.mkdir(parents=True, exist_ok=True)
             self.tee = Tee(self.out_dir / "train.log")
             sys.stdout = self.tee
+            sys.stderr = self.tee  # Also capture stderr (warnings, etc.)
             
-            # Enable debug file logging if debug mode is on
-            if debug_mode:
-                debug_log_file = self.out_dir / "debug.log"
-                set_log_file(debug_log_file)
-                debug.info("trainer", f"Debug logging to: {debug_log_file}")
+            # Debug logger outputs to terminal (captured by Tee)
+            # No separate debug.log file needed
+            debug.info("system", f"Logging to: {self.out_dir / 'train.log'}")
         
         print(f"[device] {self.device.type}  fp16={config['fp16']}  GPUs={self.world_size}")
         
@@ -490,6 +489,7 @@ class Trainer:
                 orig = sys.stdout.stdout
                 tee = sys.stdout
                 sys.stdout = orig
+                sys.stderr = orig  # Restore stderr as well
                 tee.close()
     
     def _train_step(self, batch):
