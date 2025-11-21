@@ -152,10 +152,10 @@ def test_vision_pipeline():
     
     # Test 1: VisionAdapter
     print("\n" + "="*70)
-    print("Test 1: VisionAdapter (Add View Embeddings + Concatenate)")
+    print("Test 1: VisionAdapter (Add View Embeddings + Concatenate + Project)")
     print("="*70)
     
-    adapter = VisionAdapter(d_in=d_in, dropout=0.1)
+    adapter = VisionAdapter(d_in=d_in, d_model=d_model, dropout=0.1)
     print(f"✓ VisionAdapter initialized")
     
     # Create input: list of 6 views, each [hw, d_in]
@@ -165,8 +165,8 @@ def test_vision_pipeline():
     adapter_output = adapter(views_tokens)
     expected_tokens = num_views * hw  # 1536
     print(f"Output shape: {adapter_output.shape}")
-    print(f"Expected: [{expected_tokens}, {d_in}]")
-    assert adapter_output.shape == (expected_tokens, d_in)
+    print(f"Expected: [{expected_tokens}, {d_model}]")
+    assert adapter_output.shape == (expected_tokens, d_model)
     print("✓ VisionAdapter output shape correct!")
     
     # Test 2: VATVision with Projection
@@ -175,7 +175,7 @@ def test_vision_pipeline():
     print("="*70)
     
     vat = VATVision(
-        d_in=d_in,
+        d_in=d_model,  # VATVision receives d_model from VisionAdapter
         d_model=d_model,
         n_input_tokens=1536,
         compression_factor=2,
@@ -229,8 +229,8 @@ def test_vision_pipeline():
     
     print(f"\nStep 2: VisionAdapter output")
     print(f"  Shape: {adapter_batched.shape}")
-    print(f"  Description: [{batch_size}, {num_views * hw}, {d_in}]")
-    print(f"  → Concatenated all views, added view embeddings")
+    print(f"  Description: [{batch_size}, {num_views * hw}, {d_model}]")
+    print(f"  → Concatenated all views, added view embeddings, projected to d_model")
     
     # Process through VAT
     final_output = vat(adapter_batched)
@@ -242,7 +242,7 @@ def test_vision_pipeline():
     print(f"  → Projected embeddings via MLP")
     
     print(f"\n✓ Token reduction: {num_views * hw} → {(num_views * hw) // 2} (50% compression)")
-    print(f"✓ Embedding dimension reduction: {d_in} → {d_model} ({(1-d_model/d_in)*100:.1f}% reduction)")
+    print(f"✓ Embedding dimension: {d_in} (DeepEncoder) → {d_model} (VisionAdapter) → {d_model} (VATVision)")
     
     # Test 4: Gradient flow
     print("\n" + "="*70)
@@ -258,9 +258,11 @@ def test_vision_pipeline():
     print(f"  VATVision view_query_embed has grad: {vat.view_query_embed.grad is not None}")
     
     # Check projection layer gradients
-    proj_has_grad = any(p.grad is not None for p in vat.proj.parameters() if p.requires_grad)
-    print(f"  VATVision projection layer has grad: {proj_has_grad}")
-    print("✓ Gradients flow through the entire pipeline including projection!")
+    adapter_proj_has_grad = any(p.grad is not None for p in adapter.proj.parameters() if p.requires_grad)
+    print(f"  VisionAdapter projection layer has grad: {adapter_proj_has_grad}")
+    vat_proj_has_grad = any(p.grad is not None for p in vat.proj.parameters() if p.requires_grad)
+    print(f"  VATVision projection layer has grad: {vat_proj_has_grad}")
+    print("✓ Gradients flow through the entire pipeline including both projection layers!")
     
     # Test 5: Parameter count
     print("\n" + "="*70)
@@ -269,12 +271,14 @@ def test_vision_pipeline():
     
     adapter_params = sum(p.numel() for p in adapter.parameters())
     vat_params = sum(p.numel() for p in vat.parameters())
-    proj_params = sum(p.numel() for p in vat.proj.parameters())
+    adapter_proj_params = sum(p.numel() for p in adapter.proj.parameters())
+    vat_proj_params = sum(p.numel() for p in vat.proj.parameters())
     total_params = adapter_params + vat_params
     
     print(f"VisionAdapter parameters: {adapter_params:,}")
+    print(f"  - Projection layer: {adapter_proj_params:,}")
     print(f"VATVision parameters: {vat_params:,}")
-    print(f"  - Projection layer: {proj_params:,}")
+    print(f"  - Projection layer: {vat_proj_params:,}")
     print(f"Total pipeline parameters: {total_params:,}")
     
     # Test 6: Different d_model values
@@ -283,18 +287,19 @@ def test_vision_pipeline():
     print("="*70)
     
     for target_dim in [256, 512, 768, 1024]:
+        adapter_test = VisionAdapter(d_in=d_in, d_model=target_dim, dropout=0.1)
         vat_test = VATVision(
-            d_in=d_in,
+            d_in=target_dim,
             d_model=target_dim,
             n_input_tokens=1536,
             compression_factor=2,
             n_layers=2,
             n_heads=8,
         )
-        test_input = torch.randn(batch_size, 1536, d_in)
-        test_output = vat_test(test_input)
-        reduction = (1 - target_dim/d_in) * 100
-        print(f"d_model={target_dim}: {test_input.shape} → {test_output.shape} ({reduction:.1f}% dim reduction)")
+        test_views = [torch.randn(256, d_in) for _ in range(6)]
+        adapter_out = adapter_test(test_views)
+        test_output = vat_test(adapter_out.unsqueeze(0).expand(batch_size, -1, -1))
+        print(f"d_model={target_dim}: {d_in} → {adapter_out.shape[-1]} (adapter) → {test_output.shape}")
         assert test_output.shape == (batch_size, 768, target_dim)
     print("✓ Multiple target dimensions work correctly!")
     

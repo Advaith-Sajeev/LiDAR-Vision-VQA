@@ -128,7 +128,7 @@ def try_load_state(out_dir: Path):
     """
     p_latest = out_dir / "training_state_latest.pt"
     if p_latest.exists():
-        st = torch.load(p_latest, map_location="cpu")
+        st = torch.load(p_latest, map_location="cpu", weights_only=False)
         return st, "latest"
         
     steps = []
@@ -140,7 +140,7 @@ def try_load_state(out_dir: Path):
             
     if steps:
         stp = max(steps)
-        st = torch.load(out_dir / f"training_state_step{stp}.pt", map_location="cpu")
+        st = torch.load(out_dir / f"training_state_step{stp}.pt", map_location="cpu", weights_only=False)
         return st, f"step{stp}"
         
     return None, ""

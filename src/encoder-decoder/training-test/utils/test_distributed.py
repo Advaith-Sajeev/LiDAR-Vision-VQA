@@ -42,8 +42,8 @@ def test_init_dist_if_needed_no_init_when_world_size_1(monkeypatch):
     def _bad_set_device(*args, **kwargs):
         raise AssertionError("set_device should not be called when WORLD_SIZE == 1")
 
-    monkeypatch.setattr(distributed.torch.distributed, "init_process_group", _bad_init_process_group, raising=True)
-    monkeypatch.setattr(distributed.torch.cuda, "set_device", _bad_set_device, raising=True)
+    monkeypatch.setattr(distributed.torch.distributed, "init_process_group", _bad_init_process_group)
+    monkeypatch.setattr(distributed.torch.cuda, "set_device", _bad_set_device)
 
     rank, local_rank, world_size = distributed.init_dist_if_needed()
     assert rank == 0
@@ -68,9 +68,9 @@ def test_init_dist_if_needed_initializes_when_world_size_gt_1(monkeypatch):
     def _fake_init_process_group(backend, init_method):
         calls["init_pg"] = {"backend": backend, "init_method": init_method}
 
-    monkeypatch.setattr(distributed.torch.distributed, "is_initialized", _fake_is_initialized, raising=True)
-    monkeypatch.setattr(distributed.torch.cuda, "set_device", _fake_set_device, raising=True)
-    monkeypatch.setattr(distributed.torch.distributed, "init_process_group", _fake_init_process_group, raising=True)
+    monkeypatch.setattr(distributed.torch.distributed, "is_initialized", _fake_is_initialized)
+    monkeypatch.setattr(distributed.torch.cuda, "set_device", _fake_set_device)
+    monkeypatch.setattr(distributed.torch.distributed, "init_process_group", _fake_init_process_group)
 
     rank, local_rank, world_size = distributed.init_dist_if_needed()
 
@@ -94,9 +94,9 @@ def test_init_dist_if_needed_skips_when_already_initialized(monkeypatch):
     def _bad_init_process_group(*args, **kwargs):
         raise AssertionError("init_process_group should not be called when already initialized")
 
-    monkeypatch.setattr(distributed.torch.distributed, "is_initialized", _fake_is_initialized, raising=True)
-    monkeypatch.setattr(distributed.torch.cuda, "set_device", _bad_set_device, raising=True)
-    monkeypatch.setattr(distributed.torch.distributed, "init_process_group", _bad_init_process_group, raising=True)
+    monkeypatch.setattr(distributed.torch.distributed, "is_initialized", _fake_is_initialized)
+    monkeypatch.setattr(distributed.torch.cuda, "set_device", _bad_set_device)
+    monkeypatch.setattr(distributed.torch.distributed, "init_process_group", _bad_init_process_group)
 
     rank, local_rank, world_size = distributed.init_dist_if_needed()
     assert (rank, local_rank, world_size) == (1, 0, 4)

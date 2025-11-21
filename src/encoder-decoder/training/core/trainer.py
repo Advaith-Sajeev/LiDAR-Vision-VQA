@@ -159,13 +159,11 @@ class Trainer:
         (
             self.tok,
             self.base,
-            _,  # vat_lidar created later
             self.vat_vision,
             self.vision_adapter,
             self.runtime,
             self.nusc,
             self.d_model,
-            _,  # c_in
         ) = setup_models(self.config, self.device, is_main_process())
     
     def _setup_datasets(self):

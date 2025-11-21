@@ -19,14 +19,16 @@ def test_vision_adapter():
     
     # Configuration
     d_in = 2048
+    d_model = 1024  # Output dimension
     num_views = 6
     hw = 256  # Number of tokens per view
     
     # Initialize adapter
-    adapter = VisionAdapter(d_in=d_in, dropout=0.1)
-    print(f"\n✓ VisionAdapter initialized with d_in={d_in}")
+    adapter = VisionAdapter(d_in=d_in, d_model=d_model, dropout=0.1)
+    print(f"\n✓ VisionAdapter initialized with d_in={d_in}, d_model={d_model}")
     print(f"  Number of views: {adapter.num_views}")
     print(f"  View embeddings shape: {adapter.view_embed.shape}")
+    print(f"  Output projection: {d_in} -> {d_model}")
     print(f"  Camera views order: {CAM_VIEWS}")
     
     # Test 1: Basic forward pass with correct input
@@ -43,9 +45,9 @@ def test_vision_adapter():
     output = adapter(views_tokens)
     expected_total_hw = num_views * hw
     print(f"\nOutput shape: {output.shape}")
-    print(f"Expected shape: [{expected_total_hw}, {d_in}]")
-    assert output.shape == (expected_total_hw, d_in), f"Shape mismatch! Got {output.shape}"
-    print("✓ Output shape correct! (All views concatenated)")
+    print(f"Expected shape: [{expected_total_hw}, {d_model}]")
+    assert output.shape == (expected_total_hw, d_model), f"Shape mismatch! Got {output.shape}"
+    print("✓ Output shape correct! (All views concatenated and projected)")
     
     # Test 2: Check that view embeddings are learnable
     print("\n" + "="*60)
@@ -97,7 +99,7 @@ def test_vision_adapter():
     print("Test 5: Error handling - wrong number of views")
     print("="*60)
     
-    adapter_clean = VisionAdapter(d_in=d_in, dropout=0.1)
+    adapter_clean = VisionAdapter(d_in=d_in, d_model=d_model, dropout=0.1)
     wrong_views = [torch.randn(hw, d_in) for _ in range(4)]  # Only 4 views
     try:
         output = adapter_clean(wrong_views)
@@ -110,7 +112,7 @@ def test_vision_adapter():
     print("Test 6: Error handling - wrong tensor dimensions")
     print("="*60)
     
-    adapter_clean = VisionAdapter(d_in=d_in, dropout=0.1)
+    adapter_clean = VisionAdapter(d_in=d_in, d_model=d_model, dropout=0.1)
     wrong_dim_views = [torch.randn(hw, d_in, 1) for _ in range(num_views)]  # 3D instead of 2D
     try:
         output = adapter_clean(wrong_dim_views)
@@ -123,7 +125,7 @@ def test_vision_adapter():
     print("Test 7: Error handling - inconsistent HW across views")
     print("="*60)
     
-    adapter_clean = VisionAdapter(d_in=d_in, dropout=0.1)
+    adapter_clean = VisionAdapter(d_in=d_in, d_model=d_model, dropout=0.1)
     inconsistent_views = [torch.randn(hw, d_in) for _ in range(5)]
     inconsistent_views.append(torch.randn(hw + 10, d_in))  # Different HW
     try:
@@ -137,7 +139,7 @@ def test_vision_adapter():
     print("Test 8: Verify concatenation order")
     print("="*60)
     
-    adapter_clean = VisionAdapter(d_in=d_in, dropout=0.0)  # No dropout for this test
+    adapter_clean = VisionAdapter(d_in=d_in, d_model=d_model, dropout=0.0)  # No dropout for this test
     adapter_clean.eval()  # Evaluation mode
     
     # Create unique tokens for each view (filled with view index)
@@ -177,12 +179,12 @@ def test_vision_adapter():
     print("="*60)
     
     for test_hw in [64, 256, 1024]:
-        adapter_test = VisionAdapter(d_in=d_in, dropout=0.1)
+        adapter_test = VisionAdapter(d_in=d_in, d_model=d_model, dropout=0.1)
         views_tokens = [torch.randn(test_hw, d_in) for _ in range(num_views)]
         output = adapter_test(views_tokens)
         expected_total = num_views * test_hw
-        print(f"HW={test_hw}: Output shape = {output.shape} (expected [{expected_total}, {d_in}])")
-        assert output.shape == (expected_total, d_in)
+        print(f"HW={test_hw}: Output shape = {output.shape} (expected [{expected_total}, {d_model}])")
+        assert output.shape == (expected_total, d_model)
     print("✓ Works with different HW sizes!")
     
     # Test 11: Check view embedding initialization
@@ -190,7 +192,7 @@ def test_vision_adapter():
     print("Test 11: View embedding initialization")
     print("="*60)
     
-    adapter_init = VisionAdapter(d_in=d_in, dropout=0.1)
+    adapter_init = VisionAdapter(d_in=d_in, d_model=d_model, dropout=0.1)
     embed_mean = adapter_init.view_embed.mean().item()
     embed_std = adapter_init.view_embed.std().item()
     embed_max = adapter_init.view_embed.abs().max().item()
@@ -207,7 +209,7 @@ def test_vision_adapter():
     print("Test 12: Each view receives its unique embedding")
     print("="*60)
     
-    adapter_clean = VisionAdapter(d_in=d_in, dropout=0.0)
+    adapter_clean = VisionAdapter(d_in=d_in, d_model=d_model, dropout=0.0)
     adapter_clean.eval()
     
     # Create identical input for all views

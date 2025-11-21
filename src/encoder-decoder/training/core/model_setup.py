@@ -29,7 +29,7 @@ def setup_models(config: Dict, device: torch.device, is_main: bool):
         is_main: Whether this is the main process
         
     Returns:
-        Tuple of (tokenizer, base_model, vat_lidar, vat_vision, vision_adapter, runtime, nusc, d_model, c_in)
+        Tuple of (tokenizer, base_model, vat_vision, vision_adapter, runtime, nusc, d_model)
     """
     # Tokenizer
     tok = AutoTokenizer.from_pretrained(config["model_id"], use_fast=True)
@@ -110,24 +110,17 @@ def setup_models(config: Dict, device: torch.device, is_main: bool):
         for p in runtime.sam.parameters():
             p.requires_grad = False
 
-        # Verify projector dimension
-        # Projector expects 2048-dim input (CLIP 1024 + SAM 1024 concatenated)
-        test_input = torch.randn(1, 2048, device=device)
-        test_output = runtime.projector(test_input)
-        projector_out_dim = test_output.shape[-1]
-        if projector_out_dim != 2048:
-            raise ValueError(
-                f"DeepEncoder projector output dimension {projector_out_dim} "
-                f"does not match VisionAdapter expected input 2048"
-            )
+        # Verify projector dimension (2048 -> 2048)
+        assert runtime.projector.out_features == 2048, \
+            f"DeepEncoder projector output dimension {runtime.projector.out_features} != 2048"
 
         # Enable gradients for projector
         for p in runtime.projector.parameters():
             p.requires_grad = True
 
         # Vision models
-        # VisionAdapter expects (d_in, dropout) - d_in=2048 from DeepEncoder projector
-        vision_adapter = VisionAdapter(2048, dropout=0.10).to(device)
+        # VisionAdapter expects (d_in, d_model, dropout) - projects from 2048 to d_model
+        vision_adapter = VisionAdapter(2048, d_model, dropout=0.10).to(device)
         
         # VATVision new signature: takes d_in, d_model, n_input_tokens, compression_factor
         # n_input_tokens = 6 views * 256 tokens/view = 1536
@@ -147,7 +140,7 @@ def setup_models(config: Dict, device: torch.device, is_main: bool):
                 print(f"[VATVision] Using compression_factor={compression_factor}, resulting in {n_input_tokens // compression_factor} queries")
         
         vat_vision = VATVision(
-            d_in=2048,  # Input dimension from VisionAdapter
+            d_in=d_model,  # Input dimension from VisionAdapter (already projected to d_model)
             d_model=d_model,  # Target output dimension
             n_input_tokens=n_input_tokens,
             compression_factor=compression_factor,
@@ -162,9 +155,8 @@ def setup_models(config: Dict, device: torch.device, is_main: bool):
     else:
         nusc = runtime = vision_adapter = vat_vision = None
 
-    # LiDAR VAT (need to probe BEV shape first, handled by caller)
-    # Return None for now, will be created after dataset is loaded
-    return tok, base, None, vat_vision, vision_adapter, runtime, nusc, d_model, None
+    # LiDAR VAT created later after probing BEV shape from dataset
+    return tok, base, vat_vision, vision_adapter, runtime, nusc, d_model
 
 
 def create_vat_lidar(c_in: int, d_model: int, config: Dict, device: torch.device):

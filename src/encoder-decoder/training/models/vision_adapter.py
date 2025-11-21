@@ -43,14 +43,15 @@ class VisionAdapter(nn.Module):
             corresponding to one camera view in CAM_VIEWS order.
 
     Output:
-        Tensor of shape [num_views * HW, d_in], where:
+        Tensor of shape [num_views * HW, d_model], where:
             - num_views * HW = total number of tokens (e.g., 6 * 256 = 1536)
-            - d_in = original token dimension (unchanged)
+            - d_model = output dimension after projection
     """
 
-    def __init__(self, d_in: int, dropout: float = 0.10):
+    def __init__(self, d_in: int, d_model: int, dropout: float = 0.10):
         super().__init__()
         self.d_in = d_in
+        self.d_model = d_model
         self.num_views = len(CAM_VIEWS)
 
         # Per-token normalization + regularization
@@ -64,6 +65,9 @@ class VisionAdapter(nn.Module):
 
         # Init view embeddings (small random values)
         nn.init.trunc_normal_(self.view_embed, std=0.02)
+        
+        # Output projection to d_model
+        self.proj = nn.Linear(d_in, d_model)
 
     def forward(self, views_tokens: List[torch.Tensor]) -> torch.Tensor:
         """
@@ -72,7 +76,7 @@ class VisionAdapter(nn.Module):
                           each of shape [HW, d_in].
 
         Returns:
-            out: tensor of shape [num_views * HW, d_in]
+            out: tensor of shape [num_views * HW, d_model]
         """
         if DEBUG_AVAILABLE:
             debug.trace("vision_adapt", "=" * 40)
@@ -138,8 +142,16 @@ class VisionAdapter(nn.Module):
         
         if DEBUG_AVAILABLE:
             debug.shape("vision_adapt", "concatenated_output", out)
+            debug.tensor_stats("vision_adapt", "before_projection", out)
+        
+        # Project to d_model: [num_views * HW, d_in] -> [num_views * HW, d_model]
+        out = self.proj(out)
+        
+        if DEBUG_AVAILABLE:
+            debug.shape("vision_adapt", "final_output", out)
             debug.tensor_stats("vision_adapt", "output", out)
             debug.debug("vision_adapt", f"Total tokens: {out.shape[0]} ({self.num_views} views × {expected_hw} tokens/view)")
+            debug.debug("vision_adapt", f"Projected from {self.d_in} to {self.d_model}")
             debug.trace("vision_adapt", "Vision Adapter Complete")
         
         return out
