@@ -83,13 +83,9 @@ class MixedNuDataset(Dataset):
                     no_feature += 1
                     continue
                 
-                # Filter nuGrounding: only keep det_area template_type
-                # This prevents data leakage from det_object which contains coordinates in questions
-                if is_grounding:
-                    template_type = r.get("template_type", "")
-                    if template_type != "det_area":
-                        filtered_grounding += 1
-                        continue
+                # Keep both det_area and det_object for training
+                # det_object samples are needed for bbox evaluation metrics
+                # No filtering needed - both types help the model learn
                     
                 ans = (r.get(self.target_field) or "").strip()
                 if not ans:
@@ -114,11 +110,9 @@ class MixedNuDataset(Dataset):
         
         if is_main_process():
             print(f"[dataset] total={total}  kept={len(self.rows)}  no_feature/qa={no_feature}/{no_qa}")
-            if filtered_grounding > 0:
-                print(f"[dataset] filtered {filtered_grounding} nuGrounding samples (kept only det_area, removed det_object to prevent data leakage)")
             if DEBUG_AVAILABLE:
                 debug.info("dataset", f"Dataset ready: {len(self.rows)} samples")
-                debug.debug("dataset", f"Dropped: no_feature={no_feature}, no_qa={no_qa}, filtered_grounding={filtered_grounding}")
+                debug.debug("dataset", f"Dropped: no_feature={no_feature}, no_qa={no_qa}")
             
         if not self.rows:
             raise RuntimeError("No usable rows; check feature dirs and jsons.")

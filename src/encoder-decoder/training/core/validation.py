@@ -399,17 +399,18 @@ def run_inference_sampling(
     # Filter for samples that have BEV features
     caption_available = [s for s in caption_data if s.get("sample_token") in token2path]
     
-    # Filter grounding samples: only keep det_area to prevent data leakage
+    # For grounding: use det_object samples for bbox evaluation (they have coordinate answers)
+    # det_area samples don't have bbox coordinates, so only det_object is suitable for bbox metrics
     grounding_available = [
         s for s in grounding_data 
-        if s.get("sample_token") in token2path and s.get("template_type") == "det_area"
+        if s.get("sample_token") in token2path and s.get("template_type") == "det_object"
     ]
     
     # Log filtering statistics
     total_grounding = len([s for s in grounding_data if s.get("sample_token") in token2path])
     filtered_out = total_grounding - len(grounding_available)
     if filtered_out > 0:
-        print(f"[inference_sampling] Filtered {filtered_out} grounding samples (kept only det_area, removed det_object to prevent data leakage)")
+        print(f"[inference_sampling] Using {len(grounding_available)} det_object samples for bbox evaluation (filtered {filtered_out} det_area samples)")
     
     caption_samples = random.sample(caption_available, min(n_per_type, len(caption_available)))
     grounding_samples = random.sample(grounding_available, min(n_per_type, len(grounding_available)))
