@@ -1,0 +1,24 @@
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Model weights and data
+*.pth
+*.ckpt
+*.pt
+
+
