@@ -111,8 +111,9 @@ def setup_models(config: Dict, device: torch.device, is_main: bool):
             p.requires_grad = False
 
         # Verify projector dimension (2048 -> 2048)
-        assert runtime.projector.out_features == 2048, \
-            f"DeepEncoder projector output dimension {runtime.projector.out_features} != 2048"
+        projector_out_dim = runtime.projector.cfg.n_embed
+        assert projector_out_dim == 2048, \
+            f"DeepEncoder projector output dimension {projector_out_dim} != 2048"
 
         # Enable gradients for projector
         for p in runtime.projector.parameters():
