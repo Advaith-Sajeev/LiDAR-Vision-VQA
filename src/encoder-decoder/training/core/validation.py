@@ -399,18 +399,32 @@ def run_inference_sampling(
     # Filter for samples that have BEV features
     caption_available = [s for s in caption_data if s.get("sample_token") in token2path]
     
-    # For grounding: use det_object samples for bbox evaluation (they have coordinate answers)
-    # det_area samples don't have bbox coordinates, so only det_object is suitable for bbox metrics
+    # For grounding: ONLY use det_object samples that DON'T have coordinates in the question
+    # If the question contains coordinates like [x,y,z,...], the model can just copy them
+    # This ensures we're testing actual spatial understanding, not pattern matching
+    def has_coordinates_in_question(sample):
+        """Check if question contains coordinate arrays like [1.2, 3.4, 5.6]"""
+        question = sample.get("question", "")
+        # Simple heuristic: check for pattern like [number, number, ...]
+        import re
+        # Match patterns like [25.67,28.0,32.6,...] in the question
+        coord_pattern = r'\[\s*-?\d+\.?\d*\s*,\s*-?\d+\.?\d*'
+        return bool(re.search(coord_pattern, question))
+    
     grounding_available = [
         s for s in grounding_data 
-        if s.get("sample_token") in token2path and s.get("template_type") == "det_object"
+        if s.get("sample_token") in token2path 
+        and s.get("template_type") == "det_object"
+        and not has_coordinates_in_question(s)  # Exclude questions with coordinates
     ]
     
     # Log filtering statistics
-    total_grounding = len([s for s in grounding_data if s.get("sample_token") in token2path])
-    filtered_out = total_grounding - len(grounding_available)
+    total_grounding_with_bev = len([s for s in grounding_data if s.get("sample_token") in token2path])
+    det_object_count = len([s for s in grounding_data if s.get("sample_token") in token2path and s.get("template_type") == "det_object"])
+    filtered_out = det_object_count - len(grounding_available)
+    print(f"[inference_sampling] Grounding filtering: {total_grounding_with_bev} total → {det_object_count} det_object → {len(grounding_available)} without coords in question")
     if filtered_out > 0:
-        print(f"[inference_sampling] Using {len(grounding_available)} det_object samples for bbox evaluation (filtered {filtered_out} det_area samples)")
+        print(f"[inference_sampling]   Filtered {filtered_out} det_object samples with coordinates in question (would allow copying)")
     
     caption_samples = random.sample(caption_available, min(n_per_type, len(caption_available)))
     grounding_samples = random.sample(grounding_available, min(n_per_type, len(grounding_available)))
