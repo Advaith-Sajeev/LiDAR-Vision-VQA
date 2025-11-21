@@ -147,17 +147,22 @@ def extract_object_class(text: str) -> Optional[str]:
     return None
 
 
-def calculate_caption_metrics(predictions: List[str], references: List[str]) -> Dict[str, float]:
+def calculate_caption_metrics(predictions: List[str], references: List[str], config: Optional[Dict] = None) -> Dict[str, float]:
     """
     Calculate caption evaluation metrics: BLEU-4, CIDEr, SPICE, BERTScore
     
     Args:
         predictions: List of predicted captions
         references: List of ground truth captions
+        config: Optional config dict with metric toggles (eval_caption_*, eval_det_area_*, eval_det_object_*)
         
     Returns:
         Dictionary with metric scores
     """
+    # Default: compute all metrics if no config provided
+    if config is None:
+        config = {}
+    
     try:
         from pycocoevalcap.bleu.bleu import Bleu
         from pycocoevalcap.cider.cider import Cider
@@ -304,7 +309,7 @@ def calculate_grounding_metrics(
 
 
 
-def calculate_metrics_by_type(results: List[Dict]) -> Dict:
+def calculate_metrics_by_type(results: List[Dict], config: Optional[Dict] = None) -> Dict:
     """
     Calculate metrics grouped by dataset type.
     
@@ -313,10 +318,15 @@ def calculate_metrics_by_type(results: List[Dict]) -> Dict:
                  - prediction
                  - ground_truth
                  - dataset_type ("caption", "grounding_det_area", or "grounding_det_object")
+        config: Optional config dict with metric toggles
     
     Returns:
         Dictionary with metrics for each type
     """
+    # Default config: enable all metrics
+    if config is None:
+        config = {}
+    
     caption_results = [r for r in results if r.get("dataset_type") == "caption"]
     det_area_results = [r for r in results if r.get("dataset_type") == "grounding_det_area"]
     det_object_results = [r for r in results if r.get("dataset_type") == "grounding_det_object"]
@@ -327,12 +337,22 @@ def calculate_metrics_by_type(results: List[Dict]) -> Dict:
     if caption_results:
         cap_preds = [r["prediction"] for r in caption_results]
         cap_refs = [r["ground_truth"] for r in caption_results]
-        metrics["caption_dashboard"] = calculate_caption_metrics(cap_preds, cap_refs)
+        text_metrics = calculate_caption_metrics(cap_preds, cap_refs, config)
+        
+        # Filter metrics based on config toggles
+        metrics["caption_dashboard"] = {}
+        if config.get("eval_caption_bleu4", True):
+            metrics["caption_dashboard"]["bleu4"] = text_metrics["bleu4"]
+        if config.get("eval_caption_cider", True):
+            metrics["caption_dashboard"]["cider"] = text_metrics["cider"]
+        if config.get("eval_caption_spice", True):
+            metrics["caption_dashboard"]["spice"] = text_metrics["spice"]
+        if config.get("eval_caption_bertscore", True):
+            metrics["caption_dashboard"]["bertscore_f1"] = text_metrics["bertscore_f1"]
+        
         metrics["caption_dashboard"]["num_samples"] = len(caption_results)
     else:
-        metrics["caption_dashboard"] = {
-            "bleu4": 0.0, "cider": 0.0, "spice": 0.0, "bertscore_f1": 0.0, "num_samples": 0
-        }
+        metrics["caption_dashboard"] = {"num_samples": 0}
     
     # Grounding det_area metrics (text quality + bbox accuracy)
     if det_area_results:
@@ -340,24 +360,34 @@ def calculate_metrics_by_type(results: List[Dict]) -> Dict:
         area_refs = [r["ground_truth"] for r in det_area_results]
         
         # Text quality metrics
-        text_metrics = calculate_caption_metrics(area_preds, area_refs)
+        text_metrics = calculate_caption_metrics(area_preds, area_refs, config)
         
         # Bbox accuracy metrics
         bbox_metrics = calculate_grounding_metrics(area_preds, area_refs)
         
-        metrics["grounding_det_area_dashboard"] = {
-            **text_metrics,
-            "top1_accuracy": bbox_metrics["top1_accuracy"],
-            "bev_iou": bbox_metrics["bev_iou"],
-            "bbox_valid_samples": bbox_metrics["valid_samples"],
-            "num_samples": len(det_area_results),
-            "note": "Text quality + bbox accuracy"
-        }
+        # Filter metrics based on config toggles
+        metrics["grounding_det_area_dashboard"] = {}
+        if config.get("eval_det_area_bleu4", True):
+            metrics["grounding_det_area_dashboard"]["bleu4"] = text_metrics["bleu4"]
+        if config.get("eval_det_area_cider", True):
+            metrics["grounding_det_area_dashboard"]["cider"] = text_metrics["cider"]
+        if config.get("eval_det_area_spice", True):
+            metrics["grounding_det_area_dashboard"]["spice"] = text_metrics["spice"]
+        if config.get("eval_det_area_bertscore", True):
+            metrics["grounding_det_area_dashboard"]["bertscore_f1"] = text_metrics["bertscore_f1"]
+        if config.get("eval_det_area_top1_acc", True):
+            metrics["grounding_det_area_dashboard"]["top1_accuracy"] = bbox_metrics["top1_accuracy"]
+        if config.get("eval_det_area_bev_iou", True):
+            metrics["grounding_det_area_dashboard"]["bev_iou"] = bbox_metrics["bev_iou"]
+        
+        metrics["grounding_det_area_dashboard"]["bbox_valid_samples"] = bbox_metrics["valid_samples"]
+        metrics["grounding_det_area_dashboard"]["num_samples"] = len(det_area_results)
+        metrics["grounding_det_area_dashboard"]["note"] = "Text quality + bbox accuracy"
     else:
         metrics["grounding_det_area_dashboard"] = {
-            "bleu4": 0.0, "cider": 0.0, "spice": 0.0, "bertscore_f1": 0.0,
-            "top1_accuracy": 0.0, "bev_iou": 0.0, "bbox_valid_samples": 0,
-            "num_samples": 0, "note": "No det_area samples"
+            "bbox_valid_samples": 0,
+            "num_samples": 0, 
+            "note": "No det_area samples"
         }
     
     # Grounding det_object metrics (text quality only)
@@ -365,17 +395,25 @@ def calculate_metrics_by_type(results: List[Dict]) -> Dict:
         obj_preds = [r["prediction"] for r in det_object_results]
         obj_refs = [r["ground_truth"] for r in det_object_results]
         
-        text_metrics = calculate_caption_metrics(obj_preds, obj_refs)
+        text_metrics = calculate_caption_metrics(obj_preds, obj_refs, config)
         
-        metrics["grounding_det_object_dashboard"] = {
-            **text_metrics,
-            "num_samples": len(det_object_results),
-            "note": "Text quality only (coords in question)"
-        }
+        # Filter metrics based on config toggles
+        metrics["grounding_det_object_dashboard"] = {}
+        if config.get("eval_det_object_bleu4", True):
+            metrics["grounding_det_object_dashboard"]["bleu4"] = text_metrics["bleu4"]
+        if config.get("eval_det_object_cider", True):
+            metrics["grounding_det_object_dashboard"]["cider"] = text_metrics["cider"]
+        if config.get("eval_det_object_spice", True):
+            metrics["grounding_det_object_dashboard"]["spice"] = text_metrics["spice"]
+        if config.get("eval_det_object_bertscore", True):
+            metrics["grounding_det_object_dashboard"]["bertscore_f1"] = text_metrics["bertscore_f1"]
+        
+        metrics["grounding_det_object_dashboard"]["num_samples"] = len(det_object_results)
+        metrics["grounding_det_object_dashboard"]["note"] = "Text quality only (coords in question)"
     else:
         metrics["grounding_det_object_dashboard"] = {
-            "bleu4": 0.0, "cider": 0.0, "spice": 0.0, "bertscore_f1": 0.0,
-            "num_samples": 0, "note": "No det_object samples"
+            "num_samples": 0, 
+            "note": "No det_object samples"
         }
     
     return metrics

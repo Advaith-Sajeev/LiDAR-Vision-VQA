@@ -157,6 +157,28 @@ def get_training_config() -> Dict:
         "inference_do_sample": True,
         "inference_num_beams": 1,
         
+        # ==================== Evaluation Metrics Toggles ====================
+        # Enable/disable specific metrics for each dashboard
+        # Caption Dashboard Metrics (text quality only)
+        "eval_caption_bleu4": True,
+        "eval_caption_cider": True,
+        "eval_caption_spice": True,
+        "eval_caption_bertscore": True,
+        
+        # Grounding Det Area Dashboard Metrics (text quality + bbox accuracy)
+        "eval_det_area_bleu4": True,
+        "eval_det_area_cider": True,
+        "eval_det_area_spice": True,
+        "eval_det_area_bertscore": True,
+        "eval_det_area_top1_acc": True,      # Object class identification accuracy
+        "eval_det_area_bev_iou": True,       # 2D Bird's Eye View IoU
+        
+        # Grounding Det Object Dashboard Metrics (text quality only)
+        "eval_det_object_bleu4": True,
+        "eval_det_object_cider": True,
+        "eval_det_object_spice": True,
+        "eval_det_object_bertscore": True,
+        
         # Toggle components during training (for debugging/ablation studies)
         # WARNING: Disabling components during training will train a model that doesn't use them!
         "training_use_vision": True,    # Include vision tokens in training

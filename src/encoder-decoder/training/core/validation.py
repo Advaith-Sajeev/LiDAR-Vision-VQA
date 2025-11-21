@@ -685,7 +685,7 @@ def run_inference_sampling(
         print("[inference_sampling] Warning: No results generated, skipping metrics calculation")
         metrics = {}
     else:
-        metrics = calculate_metrics_by_type(results)
+        metrics = calculate_metrics_by_type(results, config)
     
     # Save results
     output = {
@@ -706,34 +706,61 @@ def run_inference_sampling(
     print('='*60)
     
     if "caption_dashboard" in metrics:
-        print(f"\nCaption Dashboard ({metrics['caption_dashboard']['num_samples']} samples):")
-        print(f"  BLEU-4:       {metrics['caption_dashboard']['bleu4']:.4f}")
-        print(f"  CIDEr:        {metrics['caption_dashboard']['cider']:.4f}")
-        print(f"  SPICE:        {metrics['caption_dashboard']['spice']:.4f}")
-        print(f"  BERTScore-F1: {metrics['caption_dashboard']['bertscore_f1']:.4f}")
+        cap = metrics['caption_dashboard']
+        print(f"\nCaption Dashboard ({cap['num_samples']} samples):")
+        if "bleu4" in cap:
+            print(f"  BLEU-4:       {cap['bleu4']:.4f}")
+        if "cider" in cap:
+            print(f"  CIDEr:        {cap['cider']:.4f}")
+        if "spice" in cap:
+            print(f"  SPICE:        {cap['spice']:.4f}")
+        if "bertscore_f1" in cap:
+            print(f"  BERTScore-F1: {cap['bertscore_f1']:.4f}")
     
     if "grounding_det_area_dashboard" in metrics:
         gnd = metrics['grounding_det_area_dashboard']
         print(f"\nGrounding det_area Dashboard ({gnd['num_samples']} samples):")
-        print(f"  Text Quality:")
-        print(f"    BLEU-4:       {gnd['bleu4']:.4f}")
-        print(f"    CIDEr:        {gnd['cider']:.4f}")
-        print(f"    SPICE:        {gnd['spice']:.4f}")
-        print(f"    BERTScore-F1: {gnd['bertscore_f1']:.4f}")
         
-        bbox_valid = gnd.get('bbox_valid_samples', gnd['num_samples'])
-        print(f"  Bbox Accuracy ({bbox_valid} valid bbox parses):")
-        print(f"    Top-1 Acc:    {gnd['top1_accuracy']:.4f}")
-        print(f"    BEV IoU:      {gnd['bev_iou']:.4f}")
+        # Print text quality metrics if any are enabled
+        text_metrics = [k for k in ["bleu4", "cider", "spice", "bertscore_f1"] if k in gnd]
+        if text_metrics:
+            print(f"  Text Quality:")
+            if "bleu4" in gnd:
+                print(f"    BLEU-4:       {gnd['bleu4']:.4f}")
+            if "cider" in gnd:
+                print(f"    CIDEr:        {gnd['cider']:.4f}")
+            if "spice" in gnd:
+                print(f"    SPICE:        {gnd['spice']:.4f}")
+            if "bertscore_f1" in gnd:
+                print(f"    BERTScore-F1: {gnd['bertscore_f1']:.4f}")
+        
+        # Print bbox accuracy metrics if any are enabled
+        bbox_metrics = [k for k in ["top1_accuracy", "bev_iou"] if k in gnd]
+        if bbox_metrics:
+            bbox_valid = gnd.get('bbox_valid_samples', gnd['num_samples'])
+            print(f"  Bbox Accuracy ({bbox_valid} valid bbox parses):")
+            if "top1_accuracy" in gnd:
+                print(f"    Top-1 Acc:    {gnd['top1_accuracy']:.4f}")
+            if "bev_iou" in gnd:
+                print(f"    BEV IoU:      {gnd['bev_iou']:.4f}")
     
     if "grounding_det_object_dashboard" in metrics:
         obj = metrics['grounding_det_object_dashboard']
         print(f"\nGrounding det_object Dashboard ({obj['num_samples']} samples):")
-        print(f"  Text Quality:")
-        print(f"    BLEU-4:       {obj['bleu4']:.4f}")
-        print(f"    CIDEr:        {obj['cider']:.4f}")
-        print(f"    SPICE:        {obj['spice']:.4f}")
-        print(f"    BERTScore-F1: {obj['bertscore_f1']:.4f}")
+        
+        # Print text quality metrics if any are enabled
+        text_metrics = [k for k in ["bleu4", "cider", "spice", "bertscore_f1"] if k in obj]
+        if text_metrics:
+            print(f"  Text Quality:")
+            if "bleu4" in obj:
+                print(f"    BLEU-4:       {obj['bleu4']:.4f}")
+            if "cider" in obj:
+                print(f"    CIDEr:        {obj['cider']:.4f}")
+            if "spice" in obj:
+                print(f"    SPICE:        {obj['spice']:.4f}")
+            if "bertscore_f1" in obj:
+                print(f"    BERTScore-F1: {obj['bertscore_f1']:.4f}")
+        
         print(f"  Note: Bbox evaluation skipped (coords in question)")
     
     print('='*60 + '\n')
