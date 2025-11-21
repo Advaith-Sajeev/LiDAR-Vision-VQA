@@ -27,3 +27,6 @@ Thumbs.db
 # logs
 checkpoints/
 *.logs
+
+# gitfiles
+.git 

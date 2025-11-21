@@ -660,13 +660,6 @@ class Trainer:
             
             inp = torch.cat(pieces, dim=1)
             debug.shape("trainer", "concatenated_input", inp)
-            pieces.append(tok_emb)
-            piece_names.append("text_prompt")
-            
-            debug.debug("trainer", f"Input sequence order: {' → '.join(piece_names)}")
-            
-            inp = torch.cat(pieces, dim=1)
-            debug.shape("trainer", "concatenated_input", inp)
             
             # Add answer embeddings
             ans_emb = E(a_ids)
