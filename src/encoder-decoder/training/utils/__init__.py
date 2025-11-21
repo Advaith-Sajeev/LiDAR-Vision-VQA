@@ -5,7 +5,7 @@ from .distributed import (
     init_dist_if_needed,
     is_main_process,
 )
-from .logging import Tee
+from .logging_utils import Tee
 from .helpers import set_seed, count_trainable_params
 from .checkpoints import (
     save_state,
