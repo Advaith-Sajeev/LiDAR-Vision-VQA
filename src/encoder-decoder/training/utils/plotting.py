@@ -75,7 +75,7 @@ def plot_metric_curves(
         metrics_history: Dictionary of metric names to lists of values
         epochs: Epoch numbers where metrics were computed
         out_dir: Directory to save plots
-        metric_type: Type of metrics ("caption" or "grounding")
+        metric_type: Type of metrics ("caption", "grounding_det_area", or "grounding_det_object")
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     
@@ -91,7 +91,7 @@ def plot_metric_curves(
         plt.plot(epochs, values, linewidth=2, marker="o", markersize=5, color='steelblue')
         plt.xlabel("Epoch")
         plt.ylabel(metric_name)
-        plt.title(f"{metric_type.capitalize()}: {metric_name}")
+        plt.title(f"{metric_type.replace('_', ' ').title()}: {metric_name}")
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
         
@@ -100,20 +100,43 @@ def plot_metric_curves(
         plt.savefig(out_dir / f"{metric_type}_{safe_name}.png", dpi=120)
         plt.close()
     
-    # Also create a combined plot with all metrics (if multiple)
+    # Create a grid subplot with all metrics (if multiple)
     if len(metrics_history) > 1:
-        plt.figure(figsize=(12, 6))
-        for metric_name, values in metrics_history.items():
-            if values:
-                plt.plot(epochs, values, linewidth=2, marker="o", markersize=4, label=metric_name)
+        # Calculate grid dimensions
+        n_metrics = len(metrics_history)
+        n_cols = min(3, n_metrics)  # Max 3 columns
+        n_rows = (n_metrics + n_cols - 1) // n_cols  # Ceiling division
         
-        plt.xlabel("Epoch")
-        plt.ylabel("Score")
-        plt.title(f"{metric_type.capitalize()} Metrics Over Time")
-        plt.legend(loc='best')
-        plt.grid(True, alpha=0.3)
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(6*n_cols, 4*n_rows))
+        
+        # Flatten axes array for easier iteration
+        if n_metrics == 1:
+            axes = [axes]
+        elif n_rows == 1:
+            axes = axes
+        else:
+            axes = axes.flatten()
+        
+        # Plot each metric in its own subplot
+        for idx, (metric_name, values) in enumerate(metrics_history.items()):
+            if values:
+                ax = axes[idx]
+                ax.plot(epochs, values, linewidth=2, marker="o", markersize=4, color='steelblue')
+                ax.set_xlabel("Epoch", fontsize=10)
+                ax.set_ylabel(metric_name, fontsize=10)
+                ax.set_title(metric_name, fontsize=11, fontweight='bold')
+                ax.grid(True, alpha=0.3)
+        
+        # Hide unused subplots
+        for idx in range(n_metrics, len(axes)):
+            axes[idx].axis('off')
+        
+        # Add overall title
+        fig.suptitle(f"{metric_type.replace('_', ' ').title()} Metrics Over Time", 
+                     fontsize=14, fontweight='bold', y=0.995)
+        
         plt.tight_layout()
-        plt.savefig(out_dir / f"{metric_type}_metrics_combined.png", dpi=120)
+        plt.savefig(out_dir / f"{metric_type}_metrics_combined.png", dpi=120, bbox_inches='tight')
         plt.close()
 
 
