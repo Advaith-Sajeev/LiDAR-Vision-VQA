@@ -141,8 +141,9 @@ def get_training_config() -> Dict:
         # Generate predictions on validation samples every N epochs
         "inference_sampling_every": 1,
         
-        # Total number of samples to generate (must be even for balanced sampling)
-        "inference_samples_n": 10,
+        # Total number of samples to generate (must be divisible by 4 for equal distribution)
+        # 50% caption, 25% det_area, 25% det_object
+        "inference_samples_n": 12,
         
         # Test JSON files for inference sampling
         "inference_caption_json": "/home/j_bindu/fyp-26-grp-38/Datasets/LiDAR-LLM-Nu-Caption/val.json",
