@@ -16,11 +16,13 @@ def has_coordinates_in_question(sample):
 def load_validation_jsons():
     """Try to load actual validation JSONs if available"""
     
-    # Common paths for validation data
+    # Paths from train.py config (HPC cluster paths)
     possible_paths = [
+        "/home/j_bindu/fyp-26-grp-38/Datasets/LiDAR-LLM-Nu-Grounding/LiDAR-LLM-Nu-Grounding-val.json",
+        "/home/j_bindu/fyp-26-grp-38/Datasets/LiDAR-LLM-Nu-Caption/val.json",
+        # Fallback relative paths for local testing
         "data/nuscenes/json/nuScenes_grounding_val_v1.0_mini.json",
         "data/nuscenes/json/nuScenes_grounding_val.json",
-        "../../../data/nuscenes/json/nuScenes_grounding_val_v1.0_mini.json",
     ]
     
     for path_str in possible_paths:
