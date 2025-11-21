@@ -213,22 +213,28 @@ def test_projector_dimension_assertion():
     """Test that projector dimension is validated."""
     # Create a mock projector with wrong output dimension
     mock_projector = Mock()
-    mock_projector.out_features = 1024  # Wrong dimension
+    mock_cfg = Mock()
+    mock_cfg.n_embed = 1024  # Wrong dimension
+    mock_projector.cfg = mock_cfg
     
     # This should fail the assertion
     with pytest.raises(AssertionError, match="projector output dimension"):
-        assert mock_projector.out_features == 2048, \
-            f"DeepEncoder projector output dimension {mock_projector.out_features} != 2048"
+        projector_out_dim = mock_projector.cfg.n_embed
+        assert projector_out_dim == 2048, \
+            f"DeepEncoder projector output dimension {projector_out_dim} != 2048"
 
 
 def test_projector_dimension_correct():
     """Test that projector dimension validation passes with correct dimension."""
     mock_projector = Mock()
-    mock_projector.out_features = 2048  # Correct dimension
+    mock_cfg = Mock()
+    mock_cfg.n_embed = 2048  # Correct dimension
+    mock_projector.cfg = mock_cfg
     
     # This should pass
-    assert mock_projector.out_features == 2048, \
-        f"DeepEncoder projector output dimension {mock_projector.out_features} != 2048"
+    projector_out_dim = mock_projector.cfg.n_embed
+    assert projector_out_dim == 2048, \
+        f"DeepEncoder projector output dimension {projector_out_dim} != 2048"
 
 
 def test_setup_optimizer_handles_empty_param_groups(mock_config, mock_device):
