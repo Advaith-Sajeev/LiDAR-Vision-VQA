@@ -1,11 +1,15 @@
 """Logging utilities"""
 
 import sys
+import re
 from pathlib import Path
 
 
 class Tee:
     """Tee stdout to a log file safely."""
+    
+    # ANSI escape code pattern
+    ANSI_ESCAPE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
     
     def __init__(self, logfile: Path):
         logfile.parent.mkdir(parents=True, exist_ok=True)
@@ -20,7 +24,9 @@ class Tee:
             pass
         if not self.closed:
             try:
-                self.file.write(s)
+                # Strip ANSI codes before writing to file
+                clean_s = self.ANSI_ESCAPE.sub('', s)
+                self.file.write(clean_s)
             except Exception:
                 pass
                 
