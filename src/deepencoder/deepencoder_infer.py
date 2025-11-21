@@ -29,6 +29,11 @@ import torch.nn.functional as F  # noqa: F401  (kept for parity; not used direct
 from PIL import Image
 import numpy as np
 
+# Import shared debug logger from training utilities
+from deepencoder.debug import debug
+
+_MODULE = "deepencoder"
+
 # --- import your package modules ---
 from deepencoder.lora_config import DeepEncoderLoRAConfig
 from deepencoder.sam_vary_sdpa import build_sam_vit_b
@@ -86,7 +91,7 @@ def download_sam_if_needed(sam_ckpt: str | None, auto_download: bool = True) -> 
     """
     # If a valid path was provided, use it.
     if sam_ckpt is not None and Path(sam_ckpt).exists():
-        print(f"[INFO] Using provided SAM checkpoint: {sam_ckpt}")
+        debug.info(_MODULE, f"Using provided SAM checkpoint: {sam_ckpt}")
         return sam_ckpt
 
     if not auto_download:
@@ -100,15 +105,15 @@ def download_sam_if_needed(sam_ckpt: str | None, auto_download: bool = True) -> 
     dest_path = cache_dir / SAM_DEFAULT_NAME
 
     if dest_path.exists():
-        print(f"[INFO] Found cached SAM checkpoint: {dest_path}")
+        debug.debug(_MODULE, f"Found cached SAM checkpoint: {dest_path}")
         return str(dest_path)
 
-    print(f"[INFO] Downloading SAM ViT-B weights to: {dest_path}")
+    debug.info(_MODULE, f"Downloading SAM ViT-B weights to: {dest_path}")
     # Some environments need this to avoid SSL inspection issues
     ctx = ssl.create_default_context()  # noqa: F841 (placeholder for custom handlers)
     try:
         urllib.request.urlretrieve(SAM_VIT_B_URL, dest_path, _progress_hook)
-        print("\n[INFO] Download complete.")
+        debug.info(_MODULE, "\nDownload complete.")
     except Exception as e:
         # Clean up partial file
         if dest_path.exists():
@@ -187,10 +192,10 @@ def load_openclip_vitl14_into_vitmodel(
     so we skip CLIP's patch conv.
     """
     if not _HAS_OPENCLIP:
-        print("[WARN] open_clip not found; skipping CLIP weight loading (leaving random init).")
+        debug.warning(_MODULE, "open_clip not found; skipping CLIP weight loading (leaving random init).")
         return
 
-    print("[INFO] Loading CLIP ViT-L/14 (OpenCLIP, pretrained=%s)..." % openclip_pretrained)
+    debug.info(_MODULE, "Loading CLIP ViT-L/14 (OpenCLIP, pretrained=%s)..." % openclip_pretrained)
     model, _, _ = open_clip.create_model_and_transforms(
         "ViT-L-14-quickgelu", pretrained=openclip_pretrained, device=device
     )
@@ -255,7 +260,7 @@ def load_openclip_vitl14_into_vitmodel(
             if ln2_b is not None:
                 block.layer_norm2.bias.copy_(ln2_b.to(dtype))
 
-    print("[INFO] CLIP weights loaded where shapes matched. Unmatched params stay randomly-initialized.")
+    debug.debug(_MODULE, "CLIP weights loaded where shapes matched. Unmatched params stay randomly-initialized.")
 
 
 # ------------------------------
@@ -423,14 +428,21 @@ class DeepEncoderRuntime:
                 target_modules=target_modules,
                 task_type="FEATURE_EXTRACTION",
             )
+            debug.debug(_MODULE, f"Applying LoRA to CLIP: r={self.lora_config.r}, alpha={self.lora_config.lora_alpha}, targets={target_modules}")
             self.clip_vit = get_peft_model(self.clip_vit, lcfg)
             # Optionally freeze the non-LoRA CLIP backbone params:
             if self.freeze_clip_backbone_when_lora_enabled:
+                frozen_count = 0
+                lora_count = 0
                 for n, p in self.clip_vit.named_parameters():
                     # LoRA-added params have requires_grad=True already.
                     # We conservatively freeze everything else.
                     if "lora_" not in n:
                         p.requires_grad = False
+                        frozen_count += 1
+                    else:
+                        lora_count += 1
+                debug.debug(_MODULE, f"CLIP backbone: {frozen_count} params frozen, {lora_count} LoRA params trainable")
 
         # -------- Projector (trainable) --------
         self.projector = MlpProjector(
@@ -466,29 +478,44 @@ class DeepEncoderRuntime:
         Backbone params have requires_grad=False (frozen);
         net_2/net_3 keep requires_grad=True and are trainable.
         """
-        return self.sam(x)
+        debug.trace(_MODULE, f"📐 SAM input: {x.shape} dtype={x.dtype} device={x.device}")
+        feats = self.sam(x)
+        debug.trace(_MODULE, f"📐 SAM output: {feats.shape} dtype={feats.dtype}")
+        return feats
 
 
     def encode_image(self, image_path: str) -> dict:
         """Returns tokens for a single image (train-ready; grads flow through CLIP+projector)."""
+        debug.trace(_MODULE, f"📷 Loading image: {image_path}")
         img = Image.open(image_path)
+        original_size = img.size
         img = resize_and_pad_to_square(img)
         x = _pil_to_tensor_og_norm(img).to(device=self.device, dtype=self.dtype)  # [1,3,1024,1024]
+        debug.trace(_MODULE, f"📐 Image: {original_size} → {img.size} → tensor {x.shape} dtype={x.dtype}")
 
         # SAM features (frozen)
+        debug.trace(_MODULE, "🔄 Running SAM encoder (frozen)...")
         sam_feats = self._sam_features(x)
 
         # CLIP tokens conditioned on SAM (trainable)
         # When PEFT wraps the model, we need to access the base model directly for custom forward signature
         clip_model = self.clip_vit.base_model.model if hasattr(self.clip_vit, 'base_model') else self.clip_vit
+        debug.trace(_MODULE, "🔄 Running CLIP encoder (trainable)...")
         clip_y = clip_model(x, sam_feats)                # [B, 1+HW, 1024]
-        clip_tokens = clip_y[:, 1:, :]                      # [B, HW, 1024]
+        debug.trace(_MODULE, f"📐 CLIP output: {clip_y.shape} dtype={clip_y.dtype}")
+        
+        clip_tokens = clip_y[:, 1:, :]                      # [B, HW, 1024] - remove CLS token
         sam_tokens  = sam_feats.flatten(2).permute(0, 2, 1) # [B, HW, 1024]
+        debug.trace(_MODULE, f"📐 CLIP tokens (no CLS): {clip_tokens.shape}, SAM tokens: {sam_tokens.shape}")
 
         fused = torch.cat([clip_tokens, sam_tokens], dim=-1)      # [B, HW, 2048]
+        debug.trace(_MODULE, f"📐 Fused [CLIP+SAM]: {fused.shape}")
+        
         vision_tokens = self.projector(fused)                      # [B, HW, 2048]
+        debug.trace(_MODULE, f"📐 After projector (2048→2048): {vision_tokens.shape}")
 
         vt = vision_tokens.squeeze(0)  # [HW, 2048]
+        debug.trace(_MODULE, f"✓ Vision encoding complete: {vt.shape}")
         return {"tokens": vt, "grid": self.grid, "image_size": self.image_size}
 
     def encode_views(
@@ -502,21 +529,26 @@ class DeepEncoderRuntime:
         Missing views -> zeros (unless strict=True, which raises).
         TODO : Change actual 0s to fall-back incase of missing views
         """
+        debug.debug(_MODULE, f"🎥 Encoding {len(image_paths)} camera views...")
         tokens_list: List[Optional[torch.Tensor]] = []
         present_mask: List[bool] = []
         first_shape: Optional[Tuple[int, int]] = None
 
-        for p in image_paths:
+        for i, p in enumerate(image_paths):
+            view_name = view_order[i] if i < len(view_order) else 'unknown'
+            debug.trace(_MODULE, f"Processing view {i+1}/{len(image_paths)}: {view_name}")
             if p is not None and Path(p).exists():
                 out_i = self.encode_image(str(p))
                 t = out_i["tokens"]  # [HW, 2048]
                 tokens_list.append(t)
                 present_mask.append(True)
+                debug.trace(_MODULE, f"✓ View {i+1} ({view_name}) encoded: {t.shape}")
                 if first_shape is None:
                     first_shape = tuple(t.shape)
             else:
                 if strict:
                     raise FileNotFoundError(f"Missing view file: {p}")
+                debug.trace(_MODULE, f"⚠ View {i+1} ({view_name}) missing, using zeros")
                 tokens_list.append(None)
                 present_mask.append(False)
 

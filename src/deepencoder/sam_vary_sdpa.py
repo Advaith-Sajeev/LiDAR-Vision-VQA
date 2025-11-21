@@ -12,6 +12,11 @@ import torch.nn.functional as F
 from typing import Optional, Tuple, Type
 from functools import partial
 
+# Import shared debug logger from training utilities
+from deepencoder.debug import debug
+
+_MODULE = "sam_vary"
+
 # flash-attn is optional
 try:
     from flash_attn import flash_attn_qkvpacked_func  # not used below, kept for parity
@@ -34,12 +39,15 @@ def sdp_attention(q, k, v, attn_mask=None):
     if _HAS_SDP:
         # Use PyTorch's memory-efficient implementation
         # Note: F.scaled_dot_product_attention accepts attn_mask parameter
+        debug.trace(_MODULE, f"📐 Using F.scaled_dot_product_attention with q.shape={q.shape}")
         return F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
     
     # Fallback for older PyTorch versions (< 2.0)
     # Process in chunks to avoid OOM
+    debug.warning(_MODULE, "⚠ F.scaled_dot_product_attention not available, using chunked fallback")
     B, H, S, D = q.shape
     chunk_size = min(1024, S)  # Process in smaller chunks
+    debug.trace(_MODULE, f"Processing attention in chunks of {chunk_size} (total seq_len={S})")
     
     dk = D ** 0.5
     outputs = []
