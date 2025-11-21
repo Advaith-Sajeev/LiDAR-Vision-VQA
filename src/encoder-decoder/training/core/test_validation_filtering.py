@@ -221,14 +221,27 @@ def test_sample_selection():
     print("  - Answers: descriptive text without bbox coordinates")
     print("  - Tests: spatial understanding via text similarity metrics")
     
-    # Show examples of det_area samples
+    # Show examples of both types
     if det_area_all:
-        print(f"\n✓ Examples of KEPT det_area samples:")
-        for i, s in enumerate(det_area_all[:3], 1):
-            q = s.get('question', '')[:100]
-            a = s.get('answer', '')[:100]
-            print(f"  {i}. Q: {q}{'...' if len(s.get('question', '')) > 100 else ''}")
-            print(f"     A: {a}{'...' if len(s.get('answer', '')) > 100 else ''}")
+        print(f"\n✓ Examples of KEPT det_area samples (2 samples):")
+        for i, s in enumerate(det_area_all[:2], 1):
+            q = s.get('question', '')
+            a = s.get('answer', '')
+            print(f"\n  Sample {i}:")
+            print(f"    Type: det_area")
+            print(f"    Q: {q}")
+            print(f"    A: {a}")
+    
+    if det_object_all:
+        print(f"\n🚫 Examples of SKIPPED det_object samples (2 samples):")
+        for i, s in enumerate(det_object_all[:2], 1):
+            q = s.get('question', '')
+            a = s.get('answer', '')
+            print(f"\n  Sample {i}:")
+            print(f"    Type: det_object")
+            print(f"    Q: {q}")
+            print(f"    A: {a}")
+            print(f"    Reason: Coordinates in question → model could copy them")
     
     if actual_data:
         # For real data, just verify we got some samples
