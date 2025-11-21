@@ -21,4 +21,9 @@ Thumbs.db
 *.ckpt
 *.pt
 
+# Testing
+.pytest_cache
 
+# logs
+checkpoints/
+*.logs
