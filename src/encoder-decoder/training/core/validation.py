@@ -399,35 +399,34 @@ def run_inference_sampling(
     # Filter for samples that have BEV features
     caption_available = [s for s in caption_data if s.get("sample_token") in token2path]
     
-    # For grounding: ONLY use det_object samples that DON'T have coordinates in the question
-    # If the question contains coordinates like [x,y,z,...], the model can just copy them
-    # This ensures we're testing actual spatial understanding, not pattern matching
-    def has_coordinates_in_question(sample):
-        """Check if question contains coordinate arrays like [1.2, 3.4, 5.6]"""
-        question = sample.get("question", "")
-        # Simple heuristic: check for pattern like [number, number, ...]
-        import re
-        # Match patterns like [25.67,28.0,32.6,...] in the question
-        coord_pattern = r'\[\s*-?\d+\.?\d*\s*,\s*-?\d+\.?\d*'
-        return bool(re.search(coord_pattern, question))
-    
+    # For grounding: Use det_area samples (descriptive questions without coordinates)
+    # det_area questions ask about spatial regions descriptively (e.g., "What's ahead?")
+    # and have descriptive answers without bbox coordinates
+    # This tests spatial understanding rather than object recognition at given coordinates
     grounding_available = [
         s for s in grounding_data 
         if s.get("sample_token") in token2path 
-        and s.get("template_type") == "det_object"
-        and not has_coordinates_in_question(s)  # Exclude questions with coordinates
+        and s.get("template_type") == "det_area"
     ]
     
     # Log filtering statistics
     total_grounding_with_bev = len([s for s in grounding_data if s.get("sample_token") in token2path])
+    det_area_count = len(grounding_available)
     det_object_count = len([s for s in grounding_data if s.get("sample_token") in token2path and s.get("template_type") == "det_object"])
-    filtered_out = det_object_count - len(grounding_available)
-    print(f"[inference_sampling] Grounding filtering: {total_grounding_with_bev} total → {det_object_count} det_object → {len(grounding_available)} without coords in question")
-    if filtered_out > 0:
-        print(f"[inference_sampling]   Filtered {filtered_out} det_object samples with coordinates in question (would allow copying)")
     
+    print(f"[inference_sampling] Grounding filtering: {total_grounding_with_bev} total → {det_area_count} det_area (descriptive)")
+    print(f"[inference_sampling]   Note: Skipping {det_object_count} det_object samples (coordinates in questions)")
+    
+    # Sample from the filtered pools
+    # If not enough samples after filtering, we'll just get what's available
     caption_samples = random.sample(caption_available, min(n_per_type, len(caption_available)))
     grounding_samples = random.sample(grounding_available, min(n_per_type, len(grounding_available)))
+    
+    # Warn if we couldn't get enough samples
+    if len(caption_samples) < n_per_type:
+        print(f"[inference_sampling] Warning: Only {len(caption_samples)}/{n_per_type} caption samples available")
+    if len(grounding_samples) < n_per_type:
+        print(f"[inference_sampling] Warning: Only {len(grounding_samples)}/{n_per_type} grounding samples available")
     
     print(f"[inference_sampling] Selected {len(caption_samples)} caption + {len(grounding_samples)} grounding samples")
     
@@ -672,9 +671,20 @@ def run_inference_sampling(
         print(f"  BERTScore-F1: {metrics['caption_dashboard']['bertscore_f1']:.4f}")
     
     if "grounding_dashboard" in metrics:
-        print(f"\nGrounding Dashboard ({metrics['grounding_dashboard']['num_samples']} samples):")
-        print(f"  Top-1 Acc:    {metrics['grounding_dashboard']['top1_accuracy']:.4f}")
-        print(f"  BEV IoU:      {metrics['grounding_dashboard']['bev_iou']:.4f}")
+        gnd = metrics['grounding_dashboard']
+        print(f"\nGrounding Dashboard ({gnd['num_samples']} samples - det_area):")
+        if 'bleu4' in gnd:
+            # Text similarity metrics for det_area
+            print(f"  BLEU-4:       {gnd['bleu4']:.4f}")
+            print(f"  CIDEr:        {gnd['cider']:.4f}")
+            print(f"  SPICE:        {gnd['spice']:.4f}")
+            print(f"  BERTScore-F1: {gnd['bertscore_f1']:.4f}")
+            if 'note' in gnd:
+                print(f"  Note: {gnd['note']}")
+        else:
+            # Legacy bbox metrics (shouldn't happen with det_area)
+            print(f"  Top-1 Acc:    {gnd.get('top1_accuracy', 0.0):.4f}")
+            print(f"  BEV IoU:      {gnd.get('bev_iou', 0.0):.4f}")
     
     print('='*60 + '\n')
     

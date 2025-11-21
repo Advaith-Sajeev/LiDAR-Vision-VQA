@@ -333,15 +333,20 @@ def calculate_metrics_by_type(results: List[Dict]) -> Dict:
             "bleu4": 0.0, "cider": 0.0, "spice": 0.0, "bertscore_f1": 0.0, "num_samples": 0
         }
     
-    # Grounding metrics
+    # Grounding metrics  
+    # Note: Using det_area samples (descriptive spatial answers without bbox coordinates)
+    # Evaluate using text similarity metrics instead of bbox IoU
     if grounding_results:
         gnd_preds = [r["prediction"] for r in grounding_results]
         gnd_refs = [r["ground_truth"] for r in grounding_results]
-        metrics["grounding_dashboard"] = calculate_grounding_metrics(gnd_preds, gnd_refs)
+        # Use caption metrics for det_area (descriptive text comparison)
+        metrics["grounding_dashboard"] = calculate_caption_metrics(gnd_preds, gnd_refs)
         metrics["grounding_dashboard"]["num_samples"] = len(grounding_results)
+        metrics["grounding_dashboard"]["note"] = "Using text similarity metrics (det_area samples)"
     else:
         metrics["grounding_dashboard"] = {
-            "top1_accuracy": 0.0, "bev_iou": 0.0, "num_samples": 0
+            "bleu4": 0.0, "cider": 0.0, "spice": 0.0, "bertscore_f1": 0.0, 
+            "num_samples": 0, "note": "No grounding samples"
         }
     
     return metrics

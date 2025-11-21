@@ -189,12 +189,11 @@ def test_sample_selection():
         # Simulate token2path (all tokens have BEV features)
         token2path = {s["sample_token"]: f"/path/{s['sample_token']}.npy" for s in grounding_data}
     
-    # Apply filtering logic
+    # Apply filtering logic (now using det_area instead of det_object)
     grounding_available = [
         s for s in grounding_data 
         if s.get("sample_token") in token2path 
-        and s.get("template_type") == "det_object"
-        and not has_coordinates_in_question(s)
+        and s.get("template_type") == "det_area"  # Use det_area for descriptive spatial questions
     ]
     
     print(f"\nOriginal grounding samples: {len(grounding_data)}")
@@ -208,34 +207,40 @@ def test_sample_selection():
         print(f"  ... and {len(grounding_available) - 5} more samples")
     
     # Count breakdown
-    det_object_all = [s for s in grounding_data if s.get("template_type") == "det_object"]
-    det_object_with_coords = [s for s in det_object_all if has_coordinates_in_question(s)]
     det_area_all = [s for s in grounding_data if s.get("template_type") == "det_area"]
+    det_object_all = [s for s in grounding_data if s.get("template_type") == "det_object"]
     
     print("\n📊 Filtering breakdown:")
     print(f"  Total samples: {len(grounding_data)}")
-    print(f"  det_object: {len(det_object_all)}")
-    print(f"    - with coordinates in question: {len(det_object_with_coords)} (FILTERED)")
-    print(f"    - without coordinates: {len(grounding_available)} (KEPT)")
-    print(f"  det_area: {len(det_area_all)} (FILTERED - no bbox for eval)")
+    print(f"  det_area: {len(det_area_all)} (KEPT - descriptive spatial questions)")
+    print(f"  det_object: {len(det_object_all)} (SKIPPED - coordinates in questions)")
     
-    # Show examples of filtered samples
-    if det_object_with_coords:
-        print(f"\n🚫 Examples of FILTERED det_object samples (coordinates in question):")
-        for i, s in enumerate(det_object_with_coords[:3], 1):
-            print(f"  {i}. {s['question'][:100]}{'...' if len(s['question']) > 100 else ''}")
+    print("\n💡 Strategy:")
+    print("  - Using det_area for grounding evaluation")
+    print("  - Questions: descriptive (e.g., 'What's ahead?', 'Describe left side')")
+    print("  - Answers: descriptive text without bbox coordinates")
+    print("  - Tests: spatial understanding via text similarity metrics")
+    
+    # Show examples of det_area samples
+    if det_area_all:
+        print(f"\n✓ Examples of KEPT det_area samples:")
+        for i, s in enumerate(det_area_all[:3], 1):
+            q = s.get('question', '')[:100]
+            a = s.get('answer', '')[:100]
+            print(f"  {i}. Q: {q}{'...' if len(s.get('question', '')) > 100 else ''}")
+            print(f"     A: {a}{'...' if len(s.get('answer', '')) > 100 else ''}")
     
     if actual_data:
         # For real data, just verify we got some samples
         if len(grounding_available) > 0:
-            print(f"\n✓ Successfully filtered {len(grounding_available)} valid samples from actual data!")
+            print(f"\n✓ Successfully filtered {len(grounding_available)} valid det_area samples from actual data!")
             return True
         else:
-            print(f"\n✗ Warning: No valid samples after filtering!")
+            print(f"\n✗ Warning: No det_area samples found in validation data!")
             return False
     else:
-        # For synthetic data, verify exact matches
-        expected_kept = ["tok2", "tok4", "tok6"]  # det_object without coordinates
+        # For synthetic data, verify we got det_area samples
+        expected_kept = ["tok3"]  # Only det_area sample
         actual_kept = [s["sample_token"] for s in grounding_available]
         
         print("\n🔍 Detailed breakdown (synthetic data):")
@@ -243,21 +248,18 @@ def test_sample_selection():
             token = s["sample_token"]
             question = s["question"]
             template = s["template_type"]
-            has_coords = has_coordinates_in_question(s)
             
-            if template != "det_object":
-                reason = f"❌ Wrong template ({template})"
-            elif has_coords:
-                reason = "❌ Has coordinates in question"
+            if template == "det_area":
+                reason = "✓ Valid for evaluation (descriptive)"
             else:
-                reason = "✓ Valid for evaluation"
+                reason = f"❌ Wrong template ({template})"
             
             print(f"  {token}: {reason}")
             print(f"    Q: {question}")
         
         # Verify
         if set(actual_kept) == set(expected_kept):
-            print(f"\n✓ Filtering correct! Kept {len(actual_kept)} valid samples.")
+            print(f"\n✓ Filtering correct! Kept {len(actual_kept)} det_area sample(s).")
             return True
         else:
             print(f"\n✗ Filtering error!")
@@ -279,9 +281,11 @@ if __name__ == "__main__":
     if test1_pass and test2_pass:
         print("✓ All tests passed! The filtering logic is correct.")
         print("\nSummary:")
-        print("  - Questions with coordinates [x,y,z,...] are FILTERED OUT")
-        print("  - Only det_object questions without coordinates are KEPT")
-        print("  - This ensures bbox evaluation tests actual spatial reasoning")
+        print("  - Using det_area questions for grounding evaluation")
+        print("  - det_area: Descriptive spatial questions (e.g., 'What's ahead?')")
+        print("  - Answers: Descriptive text without bbox coordinates")
+        print("  - Evaluation: Text similarity metrics (BLEU, BERTScore, etc.)")
+        print("  - det_object questions (with coordinates) skipped for eval")
     else:
         print("✗ Some tests failed. Review the filtering logic.")
     
