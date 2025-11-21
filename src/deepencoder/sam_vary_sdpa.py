@@ -26,20 +26,37 @@ _HAS_SDP = hasattr(F, "scaled_dot_product_attention")
 
 def sdp_attention(q, k, v, attn_mask=None):
     """
-    Fallback-aware scaled dot-product attention.
+    Memory-efficient scaled dot-product attention.
     q, k, v: [B, H, S, D]
     attn_mask: additive bias [B, H, S, S] or None
     returns: [B, H, S, D]
     """
-    if _HAS_SDP and attn_mask is None:
-        return F.scaled_dot_product_attention(q, k, v)
-    # Manual attention (Torch 1.13 compatible)
-    dk = q.size(-1)
-    scores = torch.matmul(q, k.transpose(-2, -1)) / (dk ** 0.5)  # [B,H,S,S]
-    if attn_mask is not None:
-        scores = scores + attn_mask
-    attn = torch.softmax(scores, dim=-1)
-    return torch.matmul(attn, v)
+    if _HAS_SDP:
+        # Use PyTorch's memory-efficient implementation
+        # Note: F.scaled_dot_product_attention accepts attn_mask parameter
+        return F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
+    
+    # Fallback for older PyTorch versions (< 2.0)
+    # Process in chunks to avoid OOM
+    B, H, S, D = q.shape
+    chunk_size = min(1024, S)  # Process in smaller chunks
+    
+    dk = D ** 0.5
+    outputs = []
+    
+    for i in range(0, S, chunk_size):
+        q_chunk = q[:, :, i:i+chunk_size, :]  # [B, H, chunk, D]
+        scores = torch.matmul(q_chunk, k.transpose(-2, -1)) / dk  # [B, H, chunk, S]
+        
+        if attn_mask is not None:
+            mask_chunk = attn_mask[:, :, i:i+chunk_size, :]
+            scores = scores + mask_chunk
+        
+        attn = torch.softmax(scores, dim=-1)
+        out_chunk = torch.matmul(attn, v)  # [B, H, chunk, D]
+        outputs.append(out_chunk)
+    
+    return torch.cat(outputs, dim=2)  # [B, H, S, D]
 
 
 def get_abs_pos(abs_pos, tgt_size):
