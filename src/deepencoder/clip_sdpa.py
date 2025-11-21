@@ -51,6 +51,7 @@ except Exception:
 # Torch 1.13-safe SDPA fallback
 # -----------------------------
 _HAS_SDP = hasattr(F, "scaled_dot_product_attention")
+_WARNED_SDP = False  # Print warning once only
 
 def sdp_attention(q, k, v, attn_mask: Optional[torch.Tensor] = None):
     """
@@ -59,6 +60,7 @@ def sdp_attention(q, k, v, attn_mask: Optional[torch.Tensor] = None):
     attn_mask: additive mask/bias [B, H, S, S] or None
     returns: [B, H, S, D]
     """
+    global _WARNED_SDP
     if _HAS_SDP:
         # Use PyTorch's memory-efficient implementation
         # Note: F.scaled_dot_product_attention accepts attn_mask parameter
@@ -67,7 +69,9 @@ def sdp_attention(q, k, v, attn_mask: Optional[torch.Tensor] = None):
 
     # Fallback for older PyTorch versions (< 2.0)
     # Process in chunks to avoid OOM
-    debug.warn(_MODULE, "⚠ F.scaled_dot_product_attention not available, using chunked fallback")
+    if not _WARNED_SDP:
+        debug.warn(_MODULE, "⚠ F.scaled_dot_product_attention not available, using chunked fallback")
+        _WARNED_SDP = True
     B, H, S, D = q.shape
     chunk_size = min(1024, S)  # Process in smaller chunks
     debug.trace(_MODULE, f"Processing attention in chunks of {chunk_size} (total seq_len={S})")
