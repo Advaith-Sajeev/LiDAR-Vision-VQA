@@ -192,7 +192,7 @@ def load_openclip_vitl14_into_vitmodel(
     so we skip CLIP's patch conv.
     """
     if not _HAS_OPENCLIP:
-        debug.warning(_MODULE, "open_clip not found; skipping CLIP weight loading (leaving random init).")
+        debug.warn(_MODULE, "open_clip not found; skipping CLIP weight loading (leaving random init).")
         return
 
     debug.info(_MODULE, "Loading CLIP ViT-L/14 (OpenCLIP, pretrained=%s)..." % openclip_pretrained)

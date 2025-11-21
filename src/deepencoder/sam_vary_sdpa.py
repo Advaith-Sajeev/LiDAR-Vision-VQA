@@ -44,7 +44,7 @@ def sdp_attention(q, k, v, attn_mask=None):
     
     # Fallback for older PyTorch versions (< 2.0)
     # Process in chunks to avoid OOM
-    debug.warning(_MODULE, "⚠ F.scaled_dot_product_attention not available, using chunked fallback")
+    debug.warn(_MODULE, "⚠ F.scaled_dot_product_attention not available, using chunked fallback")
     B, H, S, D = q.shape
     chunk_size = min(1024, S)  # Process in smaller chunks
     debug.trace(_MODULE, f"Processing attention in chunks of {chunk_size} (total seq_len={S})")
