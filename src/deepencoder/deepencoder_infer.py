@@ -56,28 +56,8 @@ except Exception:
 
 
 # =========================
-# CONFIG (edit these as needed)
+# Constants
 # =========================
-CONFIG = {
-    # Input image path
-    "image": "/home/j_bindu/fyp-26-grp-38/Datasets/nuscenes/train/samples/CAM_FRONT/n008-2018-05-21-11-06-59-0400__CAM_FRONT__1526915243512465.jpg",
-
-    # If None or file missing, we'll auto-download to ~/.cache/deepencoder/sam_vit_b_01ec64.pth
-    "sam_ckpt": None,
-
-    # Device & dtype
-    "device": "cuda",            # "cuda" or "cpu"
-    "dtype": "float32",          # "bfloat16" | "float32"
-
-    # OpenCLIP pretrained tag (e.g., "openai", "laion2b_s32b_b82k")
-    "openclip_pretrained": "openai",
-
-    # Optional path to save tokens as .npy (or None)
-    "save_npy": None,
-
-    # Auto-download SAM weights if missing
-    "auto_download_sam": True,
-}
 
 # Official Meta Segment-Anything SAM ViT-B checkpoint
 SAM_VIT_B_URL = "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth"
@@ -588,32 +568,9 @@ def multiview_tokens_from_sample_token(
 
 
 if __name__ == "__main__":
-    # Resolve config
-    image_path = CONFIG["image"]
-    if not Path(image_path).exists():
-        raise FileNotFoundError(f"Image not found: {image_path}")
+    print("This module is intended to be imported, not run directly.")
+    print("To test DeepEncoder inference, run:")
+    print("  python tests/test_deepencoder_infer.py")
+    print("\nFor usage examples, see the test file or import DeepEncoderRuntime:")
+    print("  from deepencoder.deepencoder_infer import DeepEncoderRuntime")
 
-    # Ensure SAM weights
-    sam_ckpt = CONFIG.get("sam_ckpt", None)
-    sam_ckpt = download_sam_if_needed(sam_ckpt, auto_download=CONFIG.get("auto_download_sam", True))
-
-    device = CONFIG.get("device", "cuda")
-    dtype = _to_dtype(CONFIG.get("dtype", "bfloat16"))
-    openclip_pretrained = CONFIG.get("openclip_pretrained", "openai")
-    save_npy = CONFIG.get("save_npy", None)
-
-    out = deepencoder_infer(
-        image_path=image_path,
-        sam_ckpt=sam_ckpt,
-        device=device,
-        dtype=dtype,
-        openclip_pretrained=openclip_pretrained,
-    )
-
-    vt = out["vision_tokens"].squeeze(0)  # [256, 2048] for current (16×16) grid configuration
-    print(
-        f"[OK] Vision tokens: shape={tuple(vt.shape)} grid={out['grid']} image_size={out['image_size']} norm={out['normalization']}"
-    )
-    if save_npy:
-        np.save(save_npy, vt.detach().cpu().to(torch.float32).numpy())
-        print(f"[SAVED] {save_npy}")

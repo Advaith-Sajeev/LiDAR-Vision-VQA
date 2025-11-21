@@ -479,7 +479,7 @@ def _build_sam(
         if not os.path.exists(checkpoint):
             raise FileNotFoundError(f"SAM checkpoint not found: {checkpoint}")
 
-        state_dict = torch.load(checkpoint, map_location="cpu")
+        state_dict = torch.load(checkpoint, map_location="cpu", weights_only=False)
 
         # (A) Official SAM ckpt: keys like "image_encoder.patch_embed.proj.weight"
         if any(k.startswith("image_encoder.") for k in state_dict):
