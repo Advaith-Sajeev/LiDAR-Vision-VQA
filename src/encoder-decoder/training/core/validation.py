@@ -393,8 +393,24 @@ def run_inference_sampling(
         print(f"[inference_sampling] Warning: Could not load grounding JSON: {e}")
         grounding_data = []
     
-    # Sample n/2 from each
-    n_per_type = config["inference_samples_n"] // 2
+    # Validate config: inference_samples_n must be divisible by 4
+    # to ensure equal distribution: n/2 caption, n/4 det_area, n/4 det_object
+    total_n = config["inference_samples_n"]
+    assert total_n % 4 == 0, (
+        f"inference_samples_n must be divisible by 4 for equal distribution. "
+        f"Got {total_n}. Recommended values: 4, 8, 12, 16, 20, 24, 28, 32, etc."
+    )
+    
+    # Calculate equal distribution
+    n_caption = total_n // 2      # Half for caption
+    n_grounding = total_n // 2    # Half for grounding
+    n_det_area = n_grounding // 2  # Quarter for det_area
+    n_det_object = n_grounding // 2  # Quarter for det_object
+    
+    print(f"[inference_sampling] Sampling strategy (total={total_n}):")
+    print(f"  Caption: {n_caption} samples ({n_caption/total_n*100:.0f}%)")
+    print(f"  Grounding det_area: {n_det_area} samples ({n_det_area/total_n*100:.0f}%)")
+    print(f"  Grounding det_object: {n_det_object} samples ({n_det_object/total_n*100:.0f}%)")
     
     # Filter for samples that have BEV features
     caption_available = [s for s in caption_data if s.get("sample_token") in token2path]
@@ -417,29 +433,42 @@ def run_inference_sampling(
     # Log filtering statistics
     total_grounding_with_bev = len([s for s in grounding_data if s.get("sample_token") in token2path])
     
-    print(f"[inference_sampling] Grounding filtering: {total_grounding_with_bev} total")
-    print(f"[inference_sampling]   det_area: {len(grounding_det_area)} samples → text quality + bbox accuracy")
-    print(f"[inference_sampling]   det_object: {len(grounding_det_object)} samples → text quality only")
+    print(f"\n[inference_sampling] Available samples:")
+    print(f"  Caption: {len(caption_available)} available")
+    print(f"  Grounding total: {total_grounding_with_bev} available")
+    print(f"    det_area: {len(grounding_det_area)} available → text quality + bbox accuracy")
+    print(f"    det_object: {len(grounding_det_object)} available → text quality only")
     
-    # Sample from both types
-    # Split grounding samples between det_area and det_object
-    n_caption = n_per_type
-    n_det_area = n_per_type // 2
-    n_det_object = n_per_type // 2
+    # Validate sufficient samples are available
+    assert len(caption_available) >= n_caption, (
+        f"Insufficient caption samples: need {n_caption}, have {len(caption_available)}. "
+        f"Reduce inference_samples_n or add more caption data."
+    )
+    assert len(grounding_det_area) >= n_det_area, (
+        f"Insufficient det_area samples: need {n_det_area}, have {len(grounding_det_area)}. "
+        f"Reduce inference_samples_n or add more det_area data."
+    )
+    assert len(grounding_det_object) >= n_det_object, (
+        f"Insufficient det_object samples: need {n_det_object}, have {len(grounding_det_object)}. "
+        f"Reduce inference_samples_n or add more det_object data."
+    )
     
-    caption_samples = random.sample(caption_available, min(n_caption, len(caption_available)))
-    det_area_samples = random.sample(grounding_det_area, min(n_det_area, len(grounding_det_area)))
-    det_object_samples = random.sample(grounding_det_object, min(n_det_object, len(grounding_det_object)))
+    # Sample exactly the required number from each type
+    caption_samples = random.sample(caption_available, n_caption)
+    det_area_samples = random.sample(grounding_det_area, n_det_area)
+    det_object_samples = random.sample(grounding_det_object, n_det_object)
     
-    # Warn if we couldn't get enough samples
-    if len(caption_samples) < n_caption:
-        print(f"[inference_sampling] Warning: Only {len(caption_samples)}/{n_caption} caption samples available")
-    if len(det_area_samples) < n_det_area:
-        print(f"[inference_sampling] Warning: Only {len(det_area_samples)}/{n_det_area} det_area samples available")
-    if len(det_object_samples) < n_det_object:
-        print(f"[inference_sampling] Warning: Only {len(det_object_samples)}/{n_det_object} det_object samples available")
+    print(f"\n[inference_sampling] ✓ Sampled exactly:")
+    print(f"  Caption: {len(caption_samples)} samples")
+    print(f"  det_area: {len(det_area_samples)} samples")
+    print(f"  det_object: {len(det_object_samples)} samples")
+    print(f"  Total: {len(caption_samples) + len(det_area_samples) + len(det_object_samples)} samples")
     
-    print(f"[inference_sampling] Selected {len(caption_samples)} caption + {len(det_area_samples)} det_area + {len(det_object_samples)} det_object")
+    # Verify equal distribution
+    assert len(caption_samples) == n_caption
+    assert len(det_area_samples) == n_det_area
+    assert len(det_object_samples) == n_det_object
+    assert len(caption_samples) + len(det_area_samples) + len(det_object_samples) == total_n
     
     all_samples = [
         {**s, "dataset_type": "caption"} for s in caption_samples
