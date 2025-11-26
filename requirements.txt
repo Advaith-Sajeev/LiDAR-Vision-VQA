@@ -65,3 +65,19 @@ pytest>=7.4.0
 pytest-cov>=4.1.0
 sacrebleu>=2.3.0  # Additional BLEU metric
 rouge-score>=0.1.2  # ROUGE metrics
+
+#############################################################################
+
+# conda create --name mahexh-lidar-llm python=3.11 -y
+# conda activate mahexh-lidar-llm
+# pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu130
+# pip install spconv-cu120
+# cd src/lidar-encoder/
+# pip install llvmlite numba tensorboardX easydict pyyaml scikit-image tqdm SharedArray opencv-python pyquaternion
+# pip install -e . --no-build-isolation
+# python verify_dependency.py
+
+# pip install -r requirements.txt
+ 
+# pip install flash-attn --no-build-isolation
+
