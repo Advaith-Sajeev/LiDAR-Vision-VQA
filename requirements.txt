@@ -1,0 +1,67 @@
+# ============================================================================
+# Core Deep Learning Frameworks
+# ============================================================================
+torch>=2.0.0
+torchvision>=0.15.0
+transformers>=4.35.0
+
+# ============================================================================
+# Data Processing & Utilities
+# ============================================================================
+numpy>=1.22.0
+pillow>=10.0.0
+tqdm>=4.65.0
+pyyaml>=6.0
+
+# ============================================================================
+# LiDAR Processing (lidar-encoder/PCDet)
+# ============================================================================
+llvmlite
+numba
+tensorboardX
+easydict
+scikit-image
+SharedArray
+opencv-python
+pyquaternion
+spconv-cu120  # For CUDA 12.x, adjust version for your CUDA
+
+# ============================================================================
+# Vision Models (deepencoder)
+# ============================================================================
+open-clip-torch>=2.20.0  # For CLIP ViT-L/14 weights
+
+# ============================================================================
+# Model Training & Fine-tuning
+# ============================================================================
+peft>=0.6.0  # LoRA and other parameter-efficient fine-tuning
+bitsandbytes>=0.41.0  # For QLoRA (quantized LoRA) and 8-bit/4-bit quantization
+accelerate>=0.25.0  # Distributed training, mixed precision, DeepSpeed integration
+
+# Advanced Training (Optional)
+# deepspeed>=0.12.0  # Advanced distributed training and ZeRO optimization
+optimum>=1.15.0  # Hugging Face optimization toolkit
+
+# ============================================================================
+# Evaluation Metrics (encoder-decoder)
+# ============================================================================
+pycocotools>=2.0.6  # For BLEU, CIDEr, SPICE scores
+bert-score>=0.3.13  # For BERTScore evaluation
+
+# ============================================================================
+# Dataset Support
+# ============================================================================
+nuscenes-devkit>=1.1.0
+
+# ============================================================================
+# Visualization & Debugging
+# ============================================================================
+matplotlib>=3.7.0  # For plotting loss curves and visualizations
+
+# ============================================================================
+# Optional Dependencies (Development/Testing)
+# ============================================================================
+pytest>=7.4.0
+pytest-cov>=4.1.0
+sacrebleu>=2.3.0  # Additional BLEU metric
+rouge-score>=0.1.2  # ROUGE metrics
