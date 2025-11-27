@@ -75,8 +75,8 @@ rouge-score>=0.1.2  # ROUGE metrics
 # cd src/lidar-encoder/
 # pip install llvmlite numba tensorboardX easydict pyyaml scikit-image tqdm SharedArray opencv-python pyquaternion
 # pip install -e . --no-build-isolation
-# python verify_dependency.py
-
+# python tools/verify_dependency.py
+# cd ../..
 # pip install -r requirements.txt
  
 # pip install flash-attn --no-build-isolation

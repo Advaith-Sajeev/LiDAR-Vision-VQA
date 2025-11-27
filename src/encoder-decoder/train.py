@@ -335,7 +335,7 @@ def get_training_config() -> Dict:
         
         # Data type for DeepEncoder processing
         # Options: "float32", "bfloat16" (bfloat16 faster but requires modern GPU)
-        "deep_dtype": "float32",
+        "deep_dtype": "bfloat16",
         
         # OpenCLIP pretrained weights
         # Options: "openai", "laion400m_e32", "laion2b_s32b_b79k"

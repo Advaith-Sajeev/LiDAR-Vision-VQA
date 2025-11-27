@@ -19,12 +19,10 @@ _MODULE = "sam_vary"
 
 # flash-attn is optional
 try:
-    from flash_attn import flash_attn_qkvpacked_func  # not used below, kept for parity
+    from flash_attn import flash_attn_func
     _HAS_FLASH_ATTN = True
 except Exception:
     _HAS_FLASH_ATTN = False
-    def flash_attn_qkvpacked_func(*args, **kwargs):
-        raise RuntimeError("flash-attn not available")
 
 # ---- Torch 1.13 fallback for scaled dot-product attention ----
 _HAS_SDP = hasattr(F, "scaled_dot_product_attention")
@@ -32,12 +30,23 @@ _WARNED_SDP = False  # Print warning once only
 
 def sdp_attention(q, k, v, attn_mask=None):
     """
-    Memory-efficient scaled dot-product attention.
+    Memory-efficient scaled dot-product attention with Flash Attention support.
     q, k, v: [B, H, S, D]
     attn_mask: additive bias [B, H, S, S] or None
     returns: [B, H, S, D]
     """
     global _WARNED_SDP
+    
+    # Try Flash Attention first (fastest, but requires CUDA + fp16/bf16 + no mask)
+    if _HAS_FLASH_ATTN and attn_mask is None and q.is_cuda and q.dtype in (torch.float16, torch.bfloat16):
+        debug.trace(_MODULE, f"📐 Using Flash Attention with q.shape={q.shape}")
+        # Flash attention expects [B, S, H, D] format, we have [B, H, S, D]
+        q_flash = q.transpose(1, 2)  # [B, S, H, D]
+        k_flash = k.transpose(1, 2)
+        v_flash = v.transpose(1, 2)
+        out = flash_attn_func(q_flash, k_flash, v_flash, causal=False)
+        return out.transpose(1, 2)  # Back to [B, H, S, D]
+    
     if _HAS_SDP:
         # Use PyTorch's memory-efficient implementation
         # Note: F.scaled_dot_product_attention accepts attn_mask parameter

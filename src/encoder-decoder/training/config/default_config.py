@@ -71,6 +71,6 @@ DEFAULT_CONFIG: Dict = {
     "nu_version": "v1.0-trainval",
     "sam_ckpt": None,                           # Path to SAM checkpoint, or None to auto-download
     "auto_download_sam": True,                  # Auto-download SAM weights if missing
-    "deep_dtype": "float32",                    # "bfloat16" or "float32"
+    "deep_dtype": "float32",                    # "bfloat16", "float16", or "float32" (Flash Attention requires fp16/bf16)
     "openclip_pretrained": "openai",
 }

@@ -317,11 +317,20 @@ def deepencoder_infer(
 
 
 def _to_dtype(s: str) -> torch.dtype:
+    """Convert string dtype specification to torch.dtype.
+    
+    Supported values:
+        - "bf16", "bfloat16" → torch.bfloat16
+        - "fp16", "float16" → torch.float16
+        - "fp32", "float32" → torch.float32
+    """
     if s.lower() in ("bf16", "bfloat16"):
         return torch.bfloat16
+    if s.lower() in ("fp16", "float16"):
+        return torch.float16
     if s.lower() in ("fp32", "float32"):
         return torch.float32
-    raise ValueError(f"Unsupported dtype string: {s}")
+    raise ValueError(f"Unsupported dtype string: {s}. Supported: bf16/bfloat16, fp16/float16, fp32/float32")
 
 
 # ======== Optional: multi-view helpers (kept, now returning 2048-dim tokens) ========

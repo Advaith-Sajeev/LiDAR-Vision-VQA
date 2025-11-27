@@ -18,6 +18,35 @@ from ..models import (
 )
 from ..utils import count_trainable_params
 
+# Check for Flash Attention availability
+try:
+    from flash_attn import flash_attn_func
+    _HAS_FLASH_ATTN = True
+except ImportError:
+    _HAS_FLASH_ATTN = False
+
+
+def _get_model_dtype(config: Dict, device: torch.device) -> torch.dtype:
+    """
+    Determine the dtype for LLM model based on config.
+    
+    Priority:
+        1. If fp16=True and CUDA → float16
+        2. Otherwise → bfloat16
+        
+    Note: Flash Attention requires float16 or bfloat16.
+    
+    Args:
+        config: Training configuration with "fp16" key
+        device: Target device
+        
+    Returns:
+        torch.dtype: Either torch.float16 or torch.bfloat16
+    """
+    if config.get("fp16", False) and device.type == "cuda":
+        return torch.float16
+    return torch.bfloat16
+
 
 def setup_models(config: Dict, device: torch.device, is_main: bool):
     """
@@ -47,11 +76,26 @@ def setup_models(config: Dict, device: torch.device, is_main: bool):
     }
     added = tok.add_special_tokens(special_tokens)
 
+    # Determine attention implementation
+    attn_implementation = None
+    if _HAS_FLASH_ATTN and device.type == "cuda":
+        attn_implementation = "flash_attention_2"
+        if is_main:
+            print("[LLM] Using Flash Attention 2 for faster training")
+    elif is_main:
+        print("[LLM] Flash Attention not available, using default attention")
+
+    # Determine dtype using helper function
+    model_dtype = _get_model_dtype(config, device)
+    if is_main:
+        print(f"[LLM] Using dtype: {model_dtype}")
+
     # Base LLM
     base = AutoModelForCausalLM.from_pretrained(
         config["model_id"],
-        torch_dtype=torch.float16 if (config["fp16"] and device.type == "cuda") else None,
+        dtype=model_dtype,
         device_map=None,
+        attn_implementation=attn_implementation,
     ).to(device)
     base.config.use_cache = False
     base.requires_grad_(False)
