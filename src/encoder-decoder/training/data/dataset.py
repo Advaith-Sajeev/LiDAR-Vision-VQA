@@ -5,7 +5,7 @@ import numpy as np
 import torch
 from pathlib import Path
 from torch.utils.data import Dataset
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 
 from .utils import load_json_any, collect_feature_tokens
 
@@ -18,13 +18,25 @@ except ImportError:
     DEBUG_AVAILABLE = False
 
 
+# Default camera view order for nuScenes
+DEFAULT_VIEW_ORDER = (
+    "CAM_FRONT",
+    "CAM_FRONT_RIGHT",
+    "CAM_BACK_RIGHT",
+    "CAM_BACK",
+    "CAM_BACK_LEFT",
+    "CAM_FRONT_LEFT",
+)
+
+
 class MixedNuDataset(Dataset):
     """
-    Dataset for nuScenes with BEV features and QA pairs.
+    Dataset for nuScenes with BEV features, camera images, and QA pairs.
     
     Returns items with:
       - token: str (nuScenes sample_token)
       - bev:   Tensor [C,H,W]   (loaded from <feature>.npy)
+      - images: List[Optional[Tensor]] (6 camera views, each [1,3,1024,1024] or None)
       - question / answer strings
     """
     
@@ -35,6 +47,9 @@ class MixedNuDataset(Dataset):
         target_field: str = "answer_lidar",
         max_samples: Optional[int] = None,
         seed: int = 42,
+        nusc=None,  # NuScenes object for image loading
+        load_images: bool = False,  # Whether to load camera images
+        view_order: Sequence[str] = DEFAULT_VIEW_ORDER,
     ):
         if DEBUG_AVAILABLE:
             debug.info("dataset", "Initializing MixedNuDataset")
@@ -107,9 +122,20 @@ class MixedNuDataset(Dataset):
             rows = rows[:max_samples]
 
         self.rows = rows
+        self.nusc = nusc
+        self.load_images = load_images
+        self.view_order = view_order
+        
+        # Import image loading helper if needed
+        if self.load_images:
+            from deepencoder import load_and_preprocess_image, resolve_cam_image_paths
+            self._load_and_preprocess_image = load_and_preprocess_image
+            self._resolve_cam_image_paths = resolve_cam_image_paths
         
         if is_main_process():
             print(f"[dataset] total={total}  kept={len(self.rows)}  no_feature/qa={no_feature}/{no_qa}")
+            if self.load_images:
+                print(f"[dataset] Image loading enabled (workers will load {len(self.view_order)} views per sample)")
             if DEBUG_AVAILABLE:
                 debug.info("dataset", f"Dataset ready: {len(self.rows)} samples")
                 debug.debug("dataset", f"Dropped: no_feature={no_feature}, no_qa={no_qa}")
@@ -119,6 +145,22 @@ class MixedNuDataset(Dataset):
 
     def __len__(self):
         return len(self.rows)
+    
+    def _load_camera_images(self, sample_token: str) -> List[Optional[torch.Tensor]]:
+        """Load and preprocess camera images for a sample (runs in DataLoader workers)."""
+        if self.nusc is None:
+            return [None] * len(self.view_order)
+        
+        # Resolve image paths
+        image_paths = self._resolve_cam_image_paths(self.nusc, sample_token, self.view_order)
+        
+        # Load and preprocess each image
+        images = []
+        for path in image_paths:
+            img_tensor = self._load_and_preprocess_image(path)
+            images.append(img_tensor)
+        
+        return images
         
     def __getitem__(self, idx):
         if DEBUG_AVAILABLE and debug.get_debug_level() >= 3:  # TRACE level
@@ -135,9 +177,15 @@ class MixedNuDataset(Dataset):
         if DEBUG_AVAILABLE and debug.get_debug_level() >= 3:
             debug.shape("dataset", f"bev_{idx}", bev)
         
-        return {
+        result = {
             "token": tok,
             "bev": torch.from_numpy(bev).float(),
             "question": r.get("question", ""),
             "answer": r.get(self.target_field, "")
         }
+        
+        # Load camera images if enabled (runs in worker process)
+        if self.load_images:
+            result["images"] = self._load_camera_images(tok)
+        
+        return result

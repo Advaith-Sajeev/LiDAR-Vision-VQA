@@ -248,12 +248,12 @@ class TestDefaultConfigDtype:
         dtype = _to_dtype(DEFAULT_CONFIG["deep_dtype"])
         assert dtype in [torch.float16, torch.bfloat16, torch.float32]
     
-    def test_default_config_has_fp16(self):
-        """Test that default config includes fp16 flag."""
+    def test_default_config_has_mixed_precision(self):
+        """Test that default config includes mixed_precision setting."""
         from training.config.default_config import DEFAULT_CONFIG
         
-        assert "fp16" in DEFAULT_CONFIG
-        assert isinstance(DEFAULT_CONFIG["fp16"], bool)
+        assert "mixed_precision" in DEFAULT_CONFIG
+        assert DEFAULT_CONFIG["mixed_precision"] in ["no", "fp16", "bf16"]
 
 
 # ==================== Main Entry Point ====================

@@ -1,10 +1,10 @@
 """Collate function for batch processing"""
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 import torch
 
 
-def make_collate(tokenizer, max_ans_toks: int, system_prompt: str = ""):
+def make_collate(tokenizer, max_ans_toks: int, system_prompt: str = "", load_images: bool = False):
     """
     Create collate function for DataLoader.
     
@@ -12,6 +12,7 @@ def make_collate(tokenizer, max_ans_toks: int, system_prompt: str = ""):
         tokenizer: Hugging Face tokenizer
         max_ans_toks: Maximum answer tokens
         system_prompt: System prompt to use in chat template
+        load_images: Whether to expect and collate camera images
         
     Returns:
         Collate function that processes batch items
@@ -50,7 +51,7 @@ def make_collate(tokenizer, max_ans_toks: int, system_prompt: str = ""):
             add_special_tokens=True,
         )
         
-        return {
+        result = {
             "bev": torch.stack(bevs, dim=0),
             "sample_tokens": tokens,
             "prompt_ids": prompt_batch["input_ids"],
@@ -58,5 +59,16 @@ def make_collate(tokenizer, max_ans_toks: int, system_prompt: str = ""):
             "answer_ids": ans_batch["input_ids"],
             "answer_attn": ans_batch["attention_mask"],
         }
+        
+        # Collate camera images if present
+        if load_images and "images" in items[0]:
+            # items[i]["images"] is List[Optional[Tensor]] with 6 views
+            # We need to create List[List[Optional[Tensor]]] for batch
+            batch_images: List[List[Optional[torch.Tensor]]] = []
+            for it in items:
+                batch_images.append(it["images"])
+            result["images"] = batch_images
+        
+        return result
         
     return collate

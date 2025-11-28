@@ -1,4 +1,4 @@
-"""Tests for LoRA utilities"""
+"""Tests for LoRA/QLoRA utilities"""
 
 import pytest
 import torch
@@ -8,6 +8,7 @@ from training.models.lora_utils import (
     make_lora,
     patch_clip_peft_forward,
     infer_clip_lora_targets,
+    get_bnb_config,
 )
 
 
@@ -64,6 +65,89 @@ class TestMakeLora:
         assert call_kwargs["r"] == 16
         assert call_kwargs["lora_alpha"] == 32
         assert call_kwargs["lora_dropout"] == 0.05
+
+    @patch('training.models.lora_utils.get_peft_model')
+    @patch('training.models.lora_utils.LoraConfig')
+    @patch('training.models.lora_utils.prepare_model_for_kbit_training')
+    def test_make_lora_with_quantization(self, mock_prepare_kbit, mock_lora_config, mock_get_peft):
+        """Test that QLoRA prepares model for k-bit training when is_quantized=True"""
+        model = nn.Linear(10, 10)
+        targets = ["q_proj"]
+        
+        mock_prepared_model = Mock()
+        mock_prepare_kbit.return_value = mock_prepared_model
+        
+        make_lora(model, targets, 8, 16, 0.1, is_quantized=True)
+        
+        # Should call prepare_model_for_kbit_training when quantized
+        mock_prepare_kbit.assert_called_once()
+        # Should pass the prepared model to get_peft_model
+        mock_get_peft.assert_called_once()
+    
+    @patch('training.models.lora_utils.get_peft_model')
+    @patch('training.models.lora_utils.LoraConfig')
+    @patch('training.models.lora_utils.prepare_model_for_kbit_training')
+    def test_make_lora_without_quantization(self, mock_prepare_kbit, mock_lora_config, mock_get_peft):
+        """Test that k-bit preparation is skipped when is_quantized=False"""
+        model = nn.Linear(10, 10)
+        targets = ["q_proj"]
+        
+        make_lora(model, targets, 8, 16, 0.1, is_quantized=False)
+        
+        # Should NOT call prepare_model_for_kbit_training when not quantized
+        mock_prepare_kbit.assert_not_called()
+
+
+class TestGetBnbConfig:
+    """Tests for get_bnb_config function"""
+    
+    @patch('training.models.lora_utils.BitsAndBytesConfig')
+    def test_get_bnb_config_default(self, mock_bnb_config):
+        """Test default BitsAndBytesConfig creation"""
+        get_bnb_config()
+        
+        mock_bnb_config.assert_called_once_with(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_compute_dtype=torch.bfloat16,
+        )
+    
+    @patch('training.models.lora_utils.BitsAndBytesConfig')
+    def test_get_bnb_config_custom(self, mock_bnb_config):
+        """Test custom BitsAndBytesConfig creation"""
+        get_bnb_config(
+            use_4bit=True,
+            bnb_4bit_quant_type="fp4",
+            bnb_4bit_use_double_quant=False,
+            bnb_4bit_compute_dtype="float16",
+        )
+        
+        mock_bnb_config.assert_called_once_with(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="fp4",
+            bnb_4bit_use_double_quant=False,
+            bnb_4bit_compute_dtype=torch.float16,
+        )
+    
+    @patch('training.models.lora_utils.BitsAndBytesConfig')
+    def test_get_bnb_config_dtype_mapping(self, mock_bnb_config):
+        """Test dtype string to torch.dtype mapping"""
+        # Test bfloat16
+        get_bnb_config(bnb_4bit_compute_dtype="bfloat16")
+        assert mock_bnb_config.call_args[1]["bnb_4bit_compute_dtype"] == torch.bfloat16
+        
+        mock_bnb_config.reset_mock()
+        
+        # Test float16
+        get_bnb_config(bnb_4bit_compute_dtype="float16")
+        assert mock_bnb_config.call_args[1]["bnb_4bit_compute_dtype"] == torch.float16
+        
+        mock_bnb_config.reset_mock()
+        
+        # Test float32
+        get_bnb_config(bnb_4bit_compute_dtype="float32")
+        assert mock_bnb_config.call_args[1]["bnb_4bit_compute_dtype"] == torch.float32
 
 
 class TestPatchClipPeftForward:

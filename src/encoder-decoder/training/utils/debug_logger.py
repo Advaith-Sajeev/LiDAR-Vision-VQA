@@ -206,7 +206,11 @@ class DebugLogger:
             return
         
         if isinstance(tensor, torch.Tensor):
-            arr = tensor.detach().cpu().numpy()
+            # Convert bfloat16 to float32 first (numpy doesn't support bfloat16)
+            t = tensor.detach()
+            if t.dtype == torch.bfloat16:
+                t = t.float()
+            arr = t.cpu().numpy()
         elif isinstance(tensor, np.ndarray):
             arr = tensor
         else:

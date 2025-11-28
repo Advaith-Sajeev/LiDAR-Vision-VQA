@@ -15,12 +15,12 @@ from pathlib import Path
 from typing import Dict, Optional, List
 from datetime import datetime
 
-from deepencoder.deepencoder_infer import DEFAULT_VIEW_ORDER, multiview_tokens_from_sample_token
+from deepencoder.deepencoder_infer import DEFAULT_VIEW_ORDER, multiview_tokens_from_sample_token, batch_multiview_tokens_from_sample_tokens
 from ..utils import calculate_metrics_by_type
 
 
 @torch.no_grad()
-def run_validation(dl, device, tok, base, vat_lidar, vat_vision, vision_adapter, runtime, nusc, config):
+def run_validation(dl, device, tok, base, vat_lidar, vat_vision, vision_adapter, runtime, nusc, config, use_amp=False, amp_dtype=torch.float32):
     """
     Run validation on validation dataloader.
     
@@ -35,6 +35,8 @@ def run_validation(dl, device, tok, base, vat_lidar, vat_vision, vision_adapter,
         runtime: DeepEncoder runtime (optional)
         nusc: NuScenes instance (optional)
         config: Training configuration
+        use_amp: Whether to use automatic mixed precision
+        amp_dtype: Data type for AMP (torch.float16 or torch.bfloat16)
         
     Returns:
         Average validation loss
@@ -57,52 +59,68 @@ def run_validation(dl, device, tok, base, vat_lidar, vat_vision, vision_adapter,
     if config["use_vision"]:
         vat_vision_model = unwrap(vat_vision)
         vision_adapter_model = unwrap(vision_adapter)
-        # Use runtime.eval() to properly set all components to eval mode
-        runtime_unwrapped = unwrap(runtime)
+        # Note: runtime is not DDP-wrapped, use directly
 
         vat_vision_model.eval()
         vision_adapter_model.eval()
-        runtime_unwrapped.eval()
+        runtime.eval()
     else:
         vat_vision_model = vision_adapter_model = None
 
     total_loss = 0.0
     count = 0
-    use_amp = config["fp16"] and device.type == "cuda"
 
     for batch in dl:
-        bev = batch["bev"].to(device)
-        p_ids = batch["prompt_ids"].to(device)
-        a_ids = batch["answer_ids"].to(device)
+        # Use non_blocking for async CPU→GPU transfers
+        bev = batch["bev"].to(device, non_blocking=True)
+        p_ids = batch["prompt_ids"].to(device, non_blocking=True)
+        a_ids = batch["answer_ids"].to(device, non_blocking=True)
         sample_tokens = batch["sample_tokens"]
 
         # Check validation toggles
         use_vision_in_validation = config.get("validation_use_vision", True)
         use_lidar_in_validation = config.get("validation_use_lidar", True)
 
-        # Vision pipeline
+        # Vision pipeline - use batched processing for efficiency
         vision_kv = None
         if config["use_vision"] and use_vision_in_validation:
-            vision_kvs = []
-            for tok_str in sample_tokens:
-                mv = multiview_tokens_from_sample_token(
-                    tok_str, nusc, runtime=runtime, view_order=DEFAULT_VIEW_ORDER, strict=False
+            try:
+                # Batched vision encoding (much faster than sequential)
+                batch_view_tokens = batch_multiview_tokens_from_sample_tokens(
+                    sample_tokens, nusc, runtime=runtime, view_order=DEFAULT_VIEW_ORDER, strict=False
                 )
-                # Safety check
-                if not mv.get("tokens") or len(mv["tokens"]) != 6:
-                    dummy_shape = (400, 1280)
-                    mv["tokens"] = [torch.zeros(dummy_shape, device=device) for _ in range(6)]
-                    mv["grid"] = [20, 20]
+                
+                # Move all tensors to device
+                batch_view_tokens_device = [
+                    [t.to(device) for t in view_tokens]
+                    for view_tokens in batch_view_tokens
+                ]
+                
+                with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
+                    vision_kv = vision_adapter_model.forward_batch(batch_view_tokens_device)
+                    
+            except Exception as e:
+                # Fallback to sequential processing
+                print(f"[validation] Batched vision encoding failed, using sequential: {e}")
+                vision_kvs = []
+                for tok_str in sample_tokens:
+                    mv = multiview_tokens_from_sample_token(
+                        tok_str, nusc, runtime=runtime, view_order=DEFAULT_VIEW_ORDER, strict=False
+                    )
+                    # Safety check
+                    if not mv.get("tokens") or len(mv["tokens"]) != 6:
+                        dummy_shape = (256, 2048)
+                        mv["tokens"] = [torch.zeros(dummy_shape, device=device) for _ in range(6)]
 
-                vt_list = [t.to(device) for t in mv["tokens"]]
+                    vt_list = [t.to(device) for t in mv["tokens"]]
 
-                with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=use_amp):
-                    kv = vision_adapter_model(vt_list)  # [1536, 2048]
-                    kv = kv.unsqueeze(0)  # Add batch dimension: [1, 1536, 2048]
-                vision_kvs.append(kv)
-            vision_kv = torch.cat(vision_kvs, dim=0)
+                    with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
+                        kv = vision_adapter_model(vt_list)  # [1536, 2048]
+                        kv = kv.unsqueeze(0)  # Add batch dimension: [1, 1536, 2048]
+                    vision_kvs.append(kv)
+                vision_kv = torch.cat(vision_kvs, dim=0)
 
-        with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=use_amp):
+        with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
             E = base_model.get_input_embeddings()
 
             def emb_token(txt):
@@ -163,8 +181,8 @@ def run_validation(dl, device, tok, base, vat_lidar, vat_vision, vision_adapter,
     if config["use_vision"]:
         vat_vision_model.train()
         vision_adapter_model.train()
-        # Use runtime.train() to properly restore training mode
-        runtime_unwrapped.train()
+        # Restore runtime to training mode
+        runtime.train()
 
     return total_loss / max(1, count)
 
@@ -298,7 +316,8 @@ def save_val_inference_samples(
 @torch.no_grad()
 def run_inference_sampling(
     base, vat_lidar, vat_vision, vision_adapter, runtime, nusc,
-    tok, config, out_dir, epoch, device, token2path, best_step
+    tok, config, out_dir, epoch, device, token2path, best_step,
+    use_amp=False, amp_dtype=torch.float32
 ):
     """
     Generate predictions on validation samples with evaluation metrics.
@@ -365,16 +384,16 @@ def run_inference_sampling(
     if config["use_vision"]:
         vat_vision_model = unwrap(vat_vision)
         vision_adapter_model = unwrap(vision_adapter)
-        runtime_unwrapped = unwrap(runtime)
+        # Note: runtime is not DDP-wrapped, use directly
         
         was_training_vision = vat_vision_model.training
         was_training_adapter = vision_adapter_model.training
         
         vat_vision_model.eval()
         vision_adapter_model.eval()
-        runtime_unwrapped.eval()
+        runtime.eval()
     else:
-        vat_vision_model = vision_adapter_model = runtime_unwrapped = None
+        vat_vision_model = vision_adapter_model = None
     
     # Load validation JSONs
     try:
@@ -478,43 +497,93 @@ def run_inference_sampling(
         {**s, "dataset_type": "grounding_det_object"} for s in det_object_samples
     ]
     
-    # Generate predictions
+    # ===== BATCHED ENCODING PHASE =====
+    # Pre-encode all BEV and vision features in batches for efficiency
+    # This avoids redundant per-sample encoding during generation
+    
+    inference_batch_size = config.get("inference_batch_size", 8)  # Encode in batches
+    print(f"\n[inference_sampling] Pre-encoding {len(all_samples)} samples (batch_size={inference_batch_size})...")
+    
+    # Filter valid samples and prepare for batched encoding
+    valid_samples = []
+    for sample in all_samples:
+        sample_token = sample["sample_token"]
+        bev_path = token2path.get(sample_token)
+        if bev_path:
+            sample["_bev_path"] = bev_path
+            valid_samples.append(sample)
+        else:
+            print(f"[inference_sampling] Warning: No BEV feature for {sample_token}")
+    
+    # Pre-compute all encodings in batches
+    encoded_samples = []
+    
+    for batch_start in range(0, len(valid_samples), inference_batch_size):
+        batch_end = min(batch_start + inference_batch_size, len(valid_samples))
+        batch_samples = valid_samples[batch_start:batch_end]
+        batch_tokens = [s["sample_token"] for s in batch_samples]
+        
+        # Batch load BEV features
+        batch_bevs = []
+        for s in batch_samples:
+            bev = np.load(s["_bev_path"])
+            batch_bevs.append(torch.from_numpy(bev).float())
+        batch_bev = torch.stack(batch_bevs, dim=0).to(device, non_blocking=True)  # [B, C, H, W]
+        
+        # Batched LiDAR encoding
+        with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
+            batch_prefix_lidar = vat_lidar_model(batch_bev) * config["prefix_scale"]  # [B, n_queries, d_model]
+        
+        # Batched vision encoding
+        batch_prefix_vision = None
+        if config["use_vision"] and nusc is not None:
+            try:
+                batch_view_tokens = batch_multiview_tokens_from_sample_tokens(
+                    batch_tokens, nusc, runtime=runtime, view_order=DEFAULT_VIEW_ORDER, strict=False
+                )
+                
+                # Move to device
+                batch_view_tokens_device = [
+                    [t.to(device) for t in view_tokens]
+                    for view_tokens in batch_view_tokens
+                ]
+                
+                with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
+                    batch_kv = vision_adapter_model.forward_batch(batch_view_tokens_device)  # [B, 1536, 2048]
+                    batch_prefix_vision = vat_vision_model(batch_kv) * config["prefix_scale"]  # [B, n_queries, d_model]
+                    
+            except Exception as e:
+                print(f"[inference_sampling] Batched vision encoding failed: {e}")
+                batch_prefix_vision = None
+        
+        # Store encoded features for each sample
+        for i, sample in enumerate(batch_samples):
+            sample["_prefix_lidar"] = batch_prefix_lidar[i:i+1]  # [1, n_queries, d_model]
+            if batch_prefix_vision is not None:
+                sample["_prefix_vision"] = batch_prefix_vision[i:i+1]  # [1, n_queries, d_model]
+            else:
+                sample["_prefix_vision"] = None
+            encoded_samples.append(sample)
+        
+        if (batch_start // inference_batch_size) % 2 == 0:
+            print(f"[inference_sampling] Encoded {batch_end}/{len(valid_samples)} samples...")
+    
+    print(f"[inference_sampling] ✓ Pre-encoding complete: {len(encoded_samples)} samples ready")
+    
+    # ===== GENERATION PHASE =====
+    # Generate predictions using pre-encoded features
     results = []
     
-    for sample in all_samples:
+    for sample in encoded_samples:
         try:
             sample_token = sample["sample_token"]
             question = sample.get("question", "").strip()
             ground_truth = sample.get(config["target_field"], "").strip()
             dataset_type = sample["dataset_type"]
             
-            # Load BEV feature
-            bev_path = token2path.get(sample_token)
-            if not bev_path:
-                print(f"[inference_sampling] Warning: No BEV feature for {sample_token}")
-                continue
-            
-            bev = np.load(bev_path)
-            bev = torch.from_numpy(bev).float().unsqueeze(0).to(device)  # [1, C, H, W]
-            
-            # Process LiDAR
-            prefix_lidar = vat_lidar_model(bev) * config["prefix_scale"]  # [1, n_queries, d_model]
-            
-            # Process vision
-            prefix_vision = None
-            if config["use_vision"] and nusc is not None:
-                try:
-                    mv = multiview_tokens_from_sample_token(
-                        sample_token, nusc, runtime=runtime_unwrapped, view_order=DEFAULT_VIEW_ORDER, strict=False
-                    )
-                    
-                    if mv.get("tokens") and len(mv["tokens"]) == 6:
-                        vt = [t.to(device) for t in mv["tokens"]]
-                        kv = vision_adapter_model(vt)  # [1536, 2048]
-                        kv = kv.unsqueeze(0)  # [1, 1536, 2048]
-                        prefix_vision = vat_vision_model(kv) * config["prefix_scale"]  # [1, n_queries, d_model]
-                except Exception as e:
-                    print(f"[inference_sampling] Vision processing failed for {sample_token}: {e}")
+            # Use pre-encoded features
+            prefix_lidar = sample["_prefix_lidar"]  # [1, n_queries, d_model]
+            prefix_vision = sample.get("_prefix_vision")  # [1, n_queries, d_model] or None
             
             # Format prompt with configurable system prompt and toggles
             # CRITICAL: Match the exact order used during training!
@@ -545,34 +614,35 @@ def run_inference_sampling(
             
             # Build inputs_embeds using the SAME order as training
             # Training order: VISION → LIDAR → SYSTEM+QUESTION
-            E = base_model.get_input_embeddings()
+            with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
+                E = base_model.get_input_embeddings()
+                
+                def emb_token(txt):
+                    ids = tok([txt], add_special_tokens=False, return_tensors="pt").input_ids.to(device)
+                    return E(ids)
+                
+                # Tokenize the prompt (system + user + generation prompt)
+                prompt_ids = tok(prompt, return_tensors="pt", add_special_tokens=False).input_ids.to(device)
+                prompt_embeds = E(prompt_ids)  # [1, L, d_model]
             
-            def emb_token(txt):
-                ids = tok([txt], add_special_tokens=False, return_tensors="pt").input_ids.to(device)
-                return E(ids)
-            
-            # Tokenize the prompt (system + user + generation prompt)
-            prompt_ids = tok(prompt, return_tensors="pt", add_special_tokens=False).input_ids.to(device)
-            prompt_embeds = E(prompt_ids)  # [1, L, d_model]
-            
-            # Build the full input with toggleable components
-            # Order matches training: VISION → LIDAR → TEXT
-            embeds_list = []
-            
-            # 1. Vision tokens (if available AND enabled)
-            if prefix_vision is not None and use_vision_in_inference:
-                embeds_list.append(emb_token("<vision_start>"))
-                embeds_list.append(prefix_vision)
-                embeds_list.append(emb_token("<vision_end>"))
-            
-            # 2. LiDAR tokens (if enabled)
-            if use_lidar_in_inference:
-                embeds_list.append(emb_token("<lidar_start>"))
-                embeds_list.append(prefix_lidar)
-                embeds_list.append(emb_token("<lidar_end>"))
-            
-            # 3. Text prompt (user question + optional system prompt + generation prompt)
-            embeds_list.append(prompt_embeds)
+                # Build the full input with toggleable components
+                # Order matches training: VISION → LIDAR → TEXT
+                embeds_list = []
+                
+                # 1. Vision tokens (if available AND enabled)
+                if prefix_vision is not None and use_vision_in_inference:
+                    embeds_list.append(emb_token("<vision_start>"))
+                    embeds_list.append(prefix_vision)
+                    embeds_list.append(emb_token("<vision_end>"))
+                
+                # 2. LiDAR tokens (if enabled)
+                if use_lidar_in_inference:
+                    embeds_list.append(emb_token("<lidar_start>"))
+                    embeds_list.append(prefix_lidar)
+                    embeds_list.append(emb_token("<lidar_end>"))
+                
+                # 3. Text prompt (user question + optional system prompt + generation prompt)
+                embeds_list.append(prompt_embeds)
             
             # Safety check: ensure we have at least some embeddings
             if not embeds_list:
@@ -582,6 +652,12 @@ def run_inference_sampling(
             
             # Concatenate all pieces
             inputs_embeds = torch.cat(embeds_list, dim=1)  # [1, total_len, d_model]
+            
+            # CRITICAL: Cast inputs_embeds to match model dtype to avoid dtype mismatch during generation
+            # The model weights are in bfloat16 when using bf16 mixed precision
+            model_dtype = next(base_model.parameters()).dtype
+            inputs_embeds = inputs_embeds.to(model_dtype)
+            
             attention_mask = torch.ones(1, inputs_embeds.shape[1], dtype=torch.long, device=device)
             
             # Debug logging
@@ -608,36 +684,39 @@ def run_inference_sampling(
             # Use greedy decoding if both modalities are disabled (for debugging/early training)
             # This is more stable for untrained models
             use_greedy = not (use_vision_in_inference and use_lidar_in_inference)
+            
+            # Common generation kwargs for speed optimization
+            common_kwargs = {
+                "inputs_embeds": inputs_embeds,
+                "attention_mask": attention_mask,
+                "max_new_tokens": max_new_tokens,
+                "pad_token_id": tok.pad_token_id,
+                "eos_token_id": tok.eos_token_id,
+                "bos_token_id": tok.bos_token_id,
+                "use_cache": True,  # Enable KV cache for faster generation
+            }
+            
             if use_greedy:
                 generation_kwargs = {
-                    "inputs_embeds": inputs_embeds,
-                    "attention_mask": attention_mask,
-                    "max_new_tokens": max_new_tokens,
+                    **common_kwargs,
                     "do_sample": False,  # Greedy decoding
                     "num_beams": 1,
-                    "pad_token_id": tok.pad_token_id,
-                    "eos_token_id": tok.eos_token_id,
-                    "bos_token_id": tok.bos_token_id,
                 }
             else:
                 generation_kwargs = {
-                    "inputs_embeds": inputs_embeds,
-                    "attention_mask": attention_mask,
-                    "max_new_tokens": max_new_tokens,
+                    **common_kwargs,
                     "temperature": config.get("inference_temperature", 0.7),
                     "top_p": config.get("inference_top_p", 0.9),
                     "top_k": config.get("inference_top_k", 50),
                     "do_sample": config.get("inference_do_sample", True),
                     "num_beams": config.get("inference_num_beams", 1),
-                    "pad_token_id": tok.pad_token_id,
-                    "eos_token_id": tok.eos_token_id,
-                    "bos_token_id": tok.bos_token_id,
                     "repetition_penalty": 1.0,
                 }
             
-            # Generate
+            # Generate with torch.inference_mode for speed
             try:
-                outputs = base_model.generate(**generation_kwargs)
+                with torch.inference_mode():
+                    outputs = base_model.generate(**generation_kwargs)
                 
                 # CRITICAL: generate() with inputs_embeds behavior:
                 # - Returns ONLY the generated tokens (not input + generated)
@@ -783,6 +862,8 @@ def run_inference_sampling(
             vat_vision_model.train()
         if was_training_adapter:
             vision_adapter_model.train()
+        # Restore runtime to training mode (CLIP/Projector train, SAM stays frozen)
+        runtime.train()
     
     # Return metrics for live plotting
     return metrics

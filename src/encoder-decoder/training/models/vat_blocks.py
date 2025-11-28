@@ -3,6 +3,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 
 # Check for Flash Attention availability
 try:
@@ -92,6 +93,7 @@ class VATBlock(nn.Module):
     """
     Transformer block with SA + Cross-Attn (query attends to kv) + MLP
     Now with optional Flash Attention support for faster training.
+    Supports gradient checkpointing for memory efficiency.
     
     Shapes:
       q:  [B, nq, d_model]
@@ -116,16 +118,38 @@ class VATBlock(nn.Module):
             nn.Dropout(dropout),
         )
         
-    def forward(self, q: torch.Tensor, kv: torch.Tensor) -> torch.Tensor:
-        # Self-attention
+        # Gradient checkpointing flag
+        self.gradient_checkpointing = False
+    
+    def _sa_forward(self, q: torch.Tensor) -> torch.Tensor:
+        """Self-attention sub-block (for gradient checkpointing)"""
         q_norm = self.sa_ln(q)
-        q = q + self.sa(q_norm)
-        
-        # Cross-attention
+        return self.sa(q_norm)
+    
+    def _ca_forward(self, q: torch.Tensor, kv: torch.Tensor) -> torch.Tensor:
+        """Cross-attention sub-block (for gradient checkpointing)"""
         q_norm = self.ca_ln(q)
-        q = q + self.ca(q_norm, kv, kv)
+        return self.ca(q_norm, kv, kv)
+    
+    def _mlp_forward(self, q: torch.Tensor) -> torch.Tensor:
+        """MLP sub-block (for gradient checkpointing)"""
+        return self.mlp(self.mlp_ln(q))
         
-        # MLP
-        q = q + self.mlp(self.mlp_ln(q))
+    def forward(self, q: torch.Tensor, kv: torch.Tensor) -> torch.Tensor:
+        if self.gradient_checkpointing and self.training:
+            # Use gradient checkpointing for memory efficiency
+            # use_reentrant=False is more memory efficient and handles autocast properly
+            q = q + checkpoint(self._sa_forward, q, use_reentrant=False)
+            q = q + checkpoint(self._ca_forward, q, kv, use_reentrant=False)
+            q = q + checkpoint(self._mlp_forward, q, use_reentrant=False)
+        else:
+            # Standard forward pass
+            q_norm = self.sa_ln(q)
+            q = q + self.sa(q_norm)
+            
+            q_norm = self.ca_ln(q)
+            q = q + self.ca(q_norm, kv, kv)
+            
+            q = q + self.mlp(self.mlp_ln(q))
         
         return q

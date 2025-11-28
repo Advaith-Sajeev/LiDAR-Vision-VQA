@@ -123,6 +123,24 @@ class VATLiDAR(nn.Module):
         # Cache for geometric grid (per (H, W, device)).
         # Maps (H, W, device) -> (geom: [HW, 5], sid: [HW])
         self._cache: Dict[Tuple[int, int, torch.device], Tuple[torch.Tensor, torch.Tensor]] = {}
+        
+        # Gradient checkpointing flag
+        self._gradient_checkpointing = False
+    
+    def gradient_checkpointing_enable(self, gradient_checkpointing_kwargs=None):
+        """
+        Enable gradient checkpointing for memory-efficient training.
+        This trades compute for memory by recomputing activations during backward pass.
+        """
+        self._gradient_checkpointing = True
+        for blk in self.blocks:
+            blk.gradient_checkpointing = True
+    
+    def gradient_checkpointing_disable(self):
+        """Disable gradient checkpointing."""
+        self._gradient_checkpointing = False
+        for blk in self.blocks:
+            blk.gradient_checkpointing = False
 
     def _grid(self, H: int, W: int, device: torch.device) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -135,10 +153,15 @@ class VATLiDAR(nn.Module):
                 - sinθ, cosθ
             sid: [HW]
                 - integer sector id in {0..5}, one of 6 non-overlapping angular bins.
+                
+        Note: Tensors are cloned when returning from cache to support torch.compile()
+              with CUDA graphs, which requires fresh tensor storage on each call.
         """
         key = (H, W, device)
         if key in self._cache:
-            return self._cache[key]
+            # Clone cached tensors to avoid CUDA graph memory conflicts with torch.compile()
+            geom, sid = self._cache[key]
+            return geom.clone(), sid.clone()
 
         # Normalized coordinates: y in [-1, 1] (top→bottom), x in [-1, 1] (left→right).
         yv, xv = torch.meshgrid(

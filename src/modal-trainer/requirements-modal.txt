@@ -1,0 +1,9 @@
+# Modal Dependencies
+# Install with: pip install -r requirements-modal.txt
+
+# Modal SDK
+modal>=0.63.0
+
+# Note: All training dependencies (torch, transformers, etc.) are installed 
+# in the Modal container image automatically when you run the script.
+# You only need 'modal' installed locally to deploy jobs.

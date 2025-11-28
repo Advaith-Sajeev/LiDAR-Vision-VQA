@@ -15,6 +15,7 @@ from ..models import (
     VATVision,
     VisionAdapter,
     make_lora,
+    get_bnb_config,
 )
 from ..utils import count_trainable_params
 
@@ -26,25 +27,79 @@ except ImportError:
     _HAS_FLASH_ATTN = False
 
 
+def maybe_compile_model(model: nn.Module, config: Dict, name: str = "") -> nn.Module:
+    """
+    Optionally compile model with torch.compile() for faster execution.
+    
+    torch.compile() uses TorchDynamo and TorchInductor to optimize PyTorch code,
+    providing 10-30% speedup on modern GPUs (especially A100/H100).
+    
+    Args:
+        model: The model to compile
+        config: Training configuration (checks "use_torch_compile" key)
+        name: Name for logging
+        
+    Returns:
+        Compiled model if enabled, else original model
+    
+    Note:
+        - Requires PyTorch 2.0+
+        - First forward pass is slow (compilation)
+        - Disable for debugging (set use_torch_compile: False)
+        - mode="reduce-overhead" is best for training with varying shapes
+    """
+    if not config.get("use_torch_compile", False):
+        return model
+    
+    if not hasattr(torch, 'compile'):
+        print(f"[torch.compile] Skipping {name}: PyTorch < 2.0")
+        return model
+    
+    try:
+        # mode options: "default", "reduce-overhead", "max-autotune"
+        # - "reduce-overhead": Good for training, handles dynamic shapes better
+        # - "max-autotune": Slower compile, potentially faster runtime
+        compile_mode = config.get("torch_compile_mode", "reduce-overhead")
+        compiled = torch.compile(model, mode=compile_mode)
+        print(f"[torch.compile] {name} compiled with mode={compile_mode}")
+        return compiled
+    except Exception as e:
+        print(f"[torch.compile] Failed for {name}: {e}")
+        return model
+
+
 def _get_model_dtype(config: Dict, device: torch.device) -> torch.dtype:
     """
     Determine the dtype for LLM model based on config.
     
+    Supports both legacy fp16 and new mixed_precision config.
     Priority:
-        1. If fp16=True and CUDA → float16
-        2. Otherwise → bfloat16
+        1. Check mixed_precision: "fp16" → float16, "bf16" → bfloat16
+        2. Fallback to legacy fp16 boolean
+        3. Default → bfloat16
         
     Note: Flash Attention requires float16 or bfloat16.
     
     Args:
-        config: Training configuration with "fp16" key
+        config: Training configuration with "mixed_precision" or "fp16" key
         device: Target device
         
     Returns:
         torch.dtype: Either torch.float16 or torch.bfloat16
     """
+    # Handle new mixed_precision config (preferred)
+    mixed_prec = config.get('mixed_precision', None)
+    if mixed_prec == 'fp16':
+        return torch.float16
+    elif mixed_prec == 'bf16':
+        return torch.bfloat16
+    elif mixed_prec == 'no':
+        return torch.bfloat16  # Even in "no" AMP mode, use bf16 for model weights
+    
+    # Fallback to legacy fp16 config
     if config.get("fp16", False) and device.type == "cuda":
         return torch.float16
+    
     return torch.bfloat16
 
 
@@ -90,16 +145,43 @@ def setup_models(config: Dict, device: torch.device, is_main: bool):
     if is_main:
         print(f"[LLM] Using dtype: {model_dtype}")
 
+    # Check if using QLoRA (4-bit quantization)
+    use_qlora = config.get("use_qlora", False)
+    quantization_config = None
+    
+    if use_qlora:
+        if is_main:
+            print("[LLM] Enabling QLoRA with 4-bit quantization")
+        quantization_config = get_bnb_config(
+            use_4bit=True,
+            bnb_4bit_quant_type=config.get("qlora_quant_type", "nf4"),
+            bnb_4bit_use_double_quant=config.get("qlora_double_quant", True),
+            bnb_4bit_compute_dtype=config.get("qlora_compute_dtype", "bfloat16"),
+        )
+        if is_main:
+            print(f"[LLM QLoRA] quant_type={config.get('qlora_quant_type', 'nf4')}, "
+                  f"double_quant={config.get('qlora_double_quant', True)}, "
+                  f"compute_dtype={config.get('qlora_compute_dtype', 'bfloat16')}")
+
     # Base LLM
     base = AutoModelForCausalLM.from_pretrained(
         config["model_id"],
         dtype=model_dtype,
-        device_map=None,
+        device_map="auto" if use_qlora else None,  # QLoRA needs device_map for quantization
+        quantization_config=quantization_config,
         attn_implementation=attn_implementation,
-    ).to(device)
+    )
+    
+    # Move to device if not using QLoRA (QLoRA uses device_map="auto")
+    if not use_qlora:
+        base = base.to(device)
+    
     base.config.use_cache = False
-    base.requires_grad_(False)
-    base.gradient_checkpointing_enable()
+    
+    # Gradient checkpointing is handled by prepare_model_for_kbit_training for QLoRA
+    if not use_qlora:
+        base.requires_grad_(False)
+        base.gradient_checkpointing_enable()
 
     if added > 0:
         base.resize_token_embeddings(len(tok))
@@ -107,8 +189,15 @@ def setup_models(config: Dict, device: torch.device, is_main: bool):
     # Apply LoRA to base model
     lora_targets = config.get("lora_target_modules", ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"])
     if is_main:
-        print(f"[LLM LoRA] Applying LoRA to target modules: {lora_targets}")
-    base = make_lora(base, lora_targets, config["lora_r"], config["lora_alpha"], config["lora_dropout"])
+        print(f"[LLM {'QLoRA' if use_qlora else 'LoRA'}] Applying LoRA to target modules: {lora_targets}")
+    base = make_lora(
+        base, 
+        lora_targets, 
+        config["lora_r"], 
+        config["lora_alpha"], 
+        config["lora_dropout"],
+        is_quantized=use_qlora,
+    )
 
     d_model = base.config.hidden_size
 
@@ -140,11 +229,17 @@ def setup_models(config: Dict, device: torch.device, is_main: bool):
             target_modules=clip_target_modules,  # Can be None (auto-detect) or custom list
         )
 
+        # Use model_dtype for DeepEncoder to ensure consistency
+        # Override config["deep_dtype"] if it exists to maintain consistency
+        deep_dtype_str = "bfloat16" if model_dtype == torch.bfloat16 else "float16"
+        if is_main:
+            print(f"[DeepEncoder] Using dtype: {deep_dtype_str} (matches LLM dtype)")
+        
         runtime = DeepEncoderRuntime(
             sam_ckpt=config.get("sam_ckpt", None),
             auto_download_sam=config.get("auto_download_sam", True),
             device=("cuda" if device.type == "cuda" else "cpu"),
-            dtype=config["deep_dtype"],
+            dtype=deep_dtype_str,  # Use model_dtype for consistency
             openclip_pretrained=config["openclip_pretrained"],
             lora_config=clip_lora_config,
             freeze_clip_backbone_when_lora_enabled=True,
@@ -166,6 +261,14 @@ def setup_models(config: Dict, device: torch.device, is_main: bool):
         # Vision models
         # VisionAdapter expects (d_in, d_model, dropout) - projects from 2048 to d_model
         vision_adapter = VisionAdapter(2048, d_model, dropout=0.10).to(device)
+        
+        # Convert vision models to match LLM dtype for consistency
+        vision_adapter = vision_adapter.to(dtype=model_dtype)
+        if is_main:
+            print(f"[VisionAdapter] Using dtype: {model_dtype}")
+        
+        # Apply torch.compile() for faster execution (PyTorch 2.0+)
+        vision_adapter = maybe_compile_model(vision_adapter, config, "VisionAdapter")
         
         # VATVision new signature: takes d_in, d_model, n_input_tokens, compression_factor
         # n_input_tokens = 6 views * 256 tokens/view = 1536
@@ -197,6 +300,20 @@ def setup_models(config: Dict, device: torch.device, is_main: bool):
             use_per_view_query=config["vision_per_view_query"],
             strict_per_view=config.get("vision_strict_per_view", False),
         ).to(device)
+        
+        # Convert vision VAT to match LLM dtype
+        vat_vision = vat_vision.to(dtype=model_dtype)
+        if is_main:
+            print(f"[VATVision] Using dtype: {model_dtype}")
+        
+        # Enable gradient checkpointing if configured (trades compute for memory)
+        if config.get("gradient_checkpointing", True):
+            vat_vision.gradient_checkpointing_enable()
+            if is_main:
+                print(f"[VATVision] Gradient checkpointing enabled")
+        
+        # Apply torch.compile() for faster execution (PyTorch 2.0+)
+        vat_vision = maybe_compile_model(vat_vision, config, "VATVision")
     else:
         nusc = runtime = vision_adapter = vat_vision = None
 
@@ -217,7 +334,10 @@ def create_vat_lidar(c_in: int, d_model: int, config: Dict, device: torch.device
     Returns:
         VATLiDAR model
     """
-    return VATLiDAR(
+    # Determine model dtype to match LLM
+    model_dtype = _get_model_dtype(config, device)
+    
+    vat_lidar = VATLiDAR(
         c_in=c_in,
         d_model=d_model,
         n_queries=config["vat_queries"],
@@ -227,6 +347,19 @@ def create_vat_lidar(c_in: int, d_model: int, config: Dict, device: torch.device
         dropout=config["vat_dropout"],
         post_dropout=config["vat_post_dropout"],
     ).to(device)
+    
+    # Convert to match LLM dtype
+    vat_lidar = vat_lidar.to(dtype=model_dtype)
+    
+    # Enable gradient checkpointing if configured (trades compute for memory)
+    if config.get("gradient_checkpointing", True):
+        vat_lidar.gradient_checkpointing_enable()
+        print(f"[VATLiDAR] Gradient checkpointing enabled")
+    
+    # Apply torch.compile() for faster execution (PyTorch 2.0+)
+    vat_lidar = maybe_compile_model(vat_lidar, config, "VATLiDAR")
+    
+    return vat_lidar
 
 
 def setup_optimizer_and_scheduler(
@@ -279,7 +412,17 @@ def setup_optimizer_and_scheduler(
             {"params": vision_vat_params, "lr": config["lr_vision_vat"], "weight_decay": config["weight_decay"]}
         )
 
-    optim = torch.optim.AdamW(optim_groups)
+    # Use fused AdamW if available (PyTorch 2.0+ on CUDA) for ~5-15% faster optimizer step
+    # Fused optimizer combines multiple CUDA kernels into one, reducing kernel launch overhead
+    use_fused = torch.cuda.is_available() and hasattr(torch.optim.AdamW, '__init__')
+    try:
+        optim = torch.optim.AdamW(optim_groups, fused=use_fused)
+        if use_fused:
+            print("[optimizer] Using fused AdamW (faster optimizer step)")
+    except TypeError:
+        # Fallback for older PyTorch versions that don't support fused parameter
+        optim = torch.optim.AdamW(optim_groups)
+        print("[optimizer] Using standard AdamW (fused not available)")
 
     # Calculate scheduler steps
     effective_batch_size = config["batch_size"] * max(1, world_size) * config["grad_accum"]

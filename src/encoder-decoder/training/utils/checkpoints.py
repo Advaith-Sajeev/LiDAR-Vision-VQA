@@ -1,7 +1,6 @@
-"""Checkpoint management utilities"""
+"""Checkpoint management utilities for epoch-level resumability"""
 
 import random
-import shutil
 import numpy as np
 import torch
 import torch.nn as nn
@@ -15,13 +14,13 @@ def save_state(
     *,
     step: int,
     epoch: int,
-    it_in_epoch: int,
     global_step: int,
     epoch_losses: List[float],
     best_loss: float,
     best_step: Optional[int],
     optim,
     sched,
+    scaler=None,  # GradScaler for mixed precision
     vat_lidar: nn.Module,
     vat_vision: Optional[nn.Module],
     base: nn.Module,
@@ -32,22 +31,27 @@ def save_state(
     config: Dict,
     val_losses: Optional[List[float]] = None,
     val_epochs: Optional[List[int]] = None,
+    # Metrics history for live plotting (restore on resume)
+    caption_metrics_history: Optional[Dict] = None,
+    grounding_det_area_metrics_history: Optional[Dict] = None,
+    grounding_det_object_metrics_history: Optional[Dict] = None,
+    metrics_epochs: Optional[List[int]] = None,
 ):
     """
-    Save training state and model checkpoints.
+    Save training state and model checkpoints at epoch level.
     
     Args:
         out_dir: Output directory for checkpoints
-        tag: Tag for checkpoint (e.g., "latest" or "step1000")
+        tag: Tag for checkpoint (always "latest" for epoch-level)
         step: Current step number
         epoch: Current epoch number
-        it_in_epoch: Iteration within epoch
         global_step: Global training step
         epoch_losses: List of epoch losses
         best_loss: Best validation loss so far
         best_step: Step with best validation loss
         optim: Optimizer
         sched: Learning rate scheduler
+        scaler: GradScaler for mixed precision (optional)
         vat_lidar: LiDAR VAT model
         vat_vision: Vision VAT model (optional)
         base: Base LLM model
@@ -65,32 +69,20 @@ def save_state(
     def unwrap(model):
         return model.module if isinstance(model, nn.parallel.DistributedDataParallel) else model
     
-    if tag == "latest":
-        torch.save(unwrap(vat_lidar).state_dict(), out_dir / "vat_lidar_latest.pt")
-        if vat_vision is not None:
-            torch.save(unwrap(vat_vision).state_dict(), out_dir / "vat_vision_latest.pt")
-        unwrap(base).save_pretrained(out_dir / "qwen2_lora_adapter_latest")
-        if vision_adapter is not None:
-            torch.save(unwrap(vision_adapter).state_dict(), out_dir / "vision_adapter_latest.pt")
-        if projector is not None:
-            torch.save(unwrap(projector).state_dict(), out_dir / "projector_latest.pt")
-        if clip_vit is not None:
-            unwrap(clip_vit).save_pretrained(out_dir / "clip_lora_adapter_latest")
-        fname = "training_state_latest.pt"
-    else:
-        torch.save(unwrap(vat_lidar).state_dict(), out_dir / f"vat_lidar_step{step}.pt")
-        if vat_vision is not None:
-            torch.save(unwrap(vat_vision).state_dict(), out_dir / f"vat_vision_step{step}.pt")
-        unwrap(base).save_pretrained(out_dir / f"qwen2_lora_adapter_step{step}")
-        if vision_adapter is not None:
-            torch.save(unwrap(vision_adapter).state_dict(), out_dir / f"vision_adapter_step{step}.pt")
-        if projector is not None:
-            torch.save(unwrap(projector).state_dict(), out_dir / f"projector_step{step}.pt")
-        if clip_vit is not None:
-            unwrap(clip_vit).save_pretrained(out_dir / f"clip_lora_adapter_step{step}")
-        fname = f"training_state_step{step}.pt"
+    # Save model weights
+    torch.save(unwrap(vat_lidar).state_dict(), out_dir / "vat_lidar_latest.pt")
+    if vat_vision is not None:
+        torch.save(unwrap(vat_vision).state_dict(), out_dir / "vat_vision_latest.pt")
+    # save_embedding_layers=True: We resize embeddings for special tokens, so explicitly save them
+    unwrap(base).save_pretrained(out_dir / "qwen2_lora_adapter_latest", save_embedding_layers=True)
+    if vision_adapter is not None:
+        torch.save(unwrap(vision_adapter).state_dict(), out_dir / "vision_adapter_latest.pt")
+    if projector is not None:
+        torch.save(unwrap(projector).state_dict(), out_dir / "projector_latest.pt")
+    if clip_vit is not None:
+        unwrap(clip_vit).save_pretrained(out_dir / "clip_lora_adapter_latest")
 
-    # Save RNG states
+    # Save RNG states for reproducibility
     rng = {
         "py_random": random.getstate(),
         "np_random": np.random.get_state(),
@@ -100,7 +92,6 @@ def save_state(
     
     state = {
         "epoch": epoch,
-        "it_in_epoch": it_in_epoch,
         "global_step": global_step,
         "epoch_losses": epoch_losses,
         "best_loss": best_loss,
@@ -109,11 +100,19 @@ def save_state(
         "val_epochs": val_epochs,
         "optimizer": optim.state_dict(),
         "scheduler": sched.state_dict(),
+        "scaler": scaler.state_dict() if scaler is not None else None,
         "rng": rng,
         "sched_meta": sched_meta,
         "config": config,
+        # Metrics history for live plotting
+        "caption_metrics_history": caption_metrics_history,
+        "grounding_det_area_metrics_history": grounding_det_area_metrics_history,
+        "grounding_det_object_metrics_history": grounding_det_object_metrics_history,
+        "metrics_epochs": metrics_epochs,
     }
-    torch.save(state, out_dir / fname)
+    torch.save(state, out_dir / "training_state_latest.pt")
+    
+    print(f"[checkpoint] Saved epoch {epoch} checkpoint (global_step={global_step})")
 
 
 def try_load_state(out_dir: Path):
@@ -131,61 +130,4 @@ def try_load_state(out_dir: Path):
         st = torch.load(p_latest, map_location="cpu", weights_only=False)
         return st, "latest"
         
-    steps = []
-    for p in out_dir.glob("training_state_step*.pt"):
-        try:
-            steps.append(int(p.stem.replace("training_state_step", "")))
-        except:
-            pass
-            
-    if steps:
-        stp = max(steps)
-        st = torch.load(out_dir / f"training_state_step{stp}.pt", map_location="cpu", weights_only=False)
-        return st, f"step{stp}"
-        
     return None, ""
-
-
-def prune_checkpoints_steps(out_dir: Path, keep_last_n: int, best_step: Optional[int]):
-    """
-    Remove old checkpoints, keeping only the last N and the best.
-    
-    Args:
-        out_dir: Directory containing checkpoints
-        keep_last_n: Number of recent checkpoints to keep
-        best_step: Step number of best checkpoint (always kept)
-    """
-    steps = []
-    for f in out_dir.glob("vat_lidar_step*.pt"):
-        try:
-            steps.append(int(f.stem.replace("vat_lidar_step", "")))
-        except:
-            pass
-            
-    steps = sorted(steps, reverse=True)
-    to_keep = set(steps[:keep_last_n])
-    if best_step is not None:
-        to_keep.add(best_step)
-        
-    for st in steps:
-        if st in to_keep:
-            continue
-            
-        for p in [
-            out_dir / f"vat_lidar_step{st}.pt",
-            out_dir / f"vat_vision_step{st}.pt",
-            out_dir / f"vision_adapter_step{st}.pt",
-            out_dir / f"projector_step{st}.pt",
-            out_dir / f"training_state_step{st}.pt",
-        ]:
-            if p.exists():
-                if p.suffix == ".pt":
-                    p.unlink()
-                    
-        p_l = out_dir / f"qwen2_lora_adapter_step{st}"
-        if p_l.exists():
-            shutil.rmtree(p_l, ignore_errors=True)
-            
-        p_c = out_dir / f"clip_lora_adapter_step{st}"
-        if p_c.exists():
-            shutil.rmtree(p_c, ignore_errors=True)

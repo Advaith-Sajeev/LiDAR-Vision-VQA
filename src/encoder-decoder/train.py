@@ -107,8 +107,10 @@ def get_training_config() -> Dict:
         # Random seed for reproducibility
         "seed": 42,
         
-        # Enable mixed precision (FP16) training - speeds up training on modern GPUs
-        "fp16": False,
+        # Mixed precision training mode
+        # Options: "no" (disabled), "fp16" (float16), "bf16" (bfloat16)
+        # bf16 is recommended for modern GPUs (better numerical stability than fp16)
+        "mixed_precision": "bf16",  # "no", "fp16", or "bf16"
         
         # Resume from checkpoint if available
         "resume": False,
@@ -263,7 +265,23 @@ def get_training_config() -> Dict:
         "vision_strict_per_view": False, # keep False
         
         
-        # ==================== LoRA Configuration ====================
+        # ==================== QLoRA Configuration ====================
+        # Enable 4-bit quantization (QLoRA) for memory-efficient training
+        # When enabled, the base LLM is loaded in 4-bit precision
+        "use_qlora": False,  # Set to True for memory-efficient training
+        
+        # Quantization type: "nf4" (normalized float4) or "fp4" (float4)
+        # nf4 is recommended for better accuracy
+        "qlora_quant_type": "nf4",
+        
+        # Enable double quantization for additional memory savings
+        # Quantizes the quantization constants themselves
+        "qlora_double_quant": True,
+        
+        # Compute dtype for QLoRA operations
+        # Options: "bfloat16", "float16", "float32"
+        "qlora_compute_dtype": "bfloat16",
+        
         # LoRA rank (higher = more parameters, more expressive)
         # Typical values: 2-8 for small models, 8-16 for large models
         "lora_r": 2,
@@ -646,7 +664,7 @@ def main():
     print(f"Batch size: {config['batch_size']}")
     print(f"Gradient accumulation: {config['grad_accum']}")
     print(f"Effective batch size: {config['batch_size'] * config['grad_accum']}")
-    print(f"FP16: {config['fp16']}")
+    print(f"Mixed Precision: {config['mixed_precision']}")
     print(f"Resume: {config['resume']}")
     print(f"Seed: {config['seed']}")
     

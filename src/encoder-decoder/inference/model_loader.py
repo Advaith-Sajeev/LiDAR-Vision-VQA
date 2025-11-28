@@ -17,6 +17,7 @@ from training.models import (
     VATVision,
     VisionAdapter,
     make_lora,
+    get_bnb_config,
 )
 
 
@@ -74,16 +75,34 @@ class ModelLoader:
         return tok
     
     def load_base_model(self, tokenizer):
-        """Load base LLM with LoRA."""
+        """Load base LLM with LoRA/QLoRA."""
         print("[loader] Loading base LLM...")
+        
+        # Check if model was trained with QLoRA
+        use_qlora = self.config.get("use_qlora", False)
+        quantization_config = None
+        
+        if use_qlora:
+            print("[loader] Model was trained with QLoRA, loading with 4-bit quantization")
+            quantization_config = get_bnb_config(
+                use_4bit=True,
+                bnb_4bit_quant_type=self.config.get("qlora_quant_type", "nf4"),
+                bnb_4bit_use_double_quant=self.config.get("qlora_double_quant", True),
+                bnb_4bit_compute_dtype=self.config.get("qlora_compute_dtype", "bfloat16"),
+            )
+        
         base = AutoModelForCausalLM.from_pretrained(
             self.config["model_id"],
-            torch_dtype=torch.float16 if self.device.type == "cuda" else torch.float32,
-            device_map=None,
-        ).to(self.device)
+            dtype=torch.float16 if self.device.type == "cuda" else torch.float32,
+            device_map="auto" if use_qlora else None,
+            quantization_config=quantization_config,
+        )
+        
+        # Move to device if not using QLoRA
+        if not use_qlora:
+            base = base.to(self.device)
         
         base.config.use_cache = True  # Enable KV cache for faster inference
-        base.requires_grad_(False)
         
         # Resize embeddings if tokens were added
         if len(tokenizer) != base.config.vocab_size:
@@ -92,23 +111,46 @@ class ModelLoader:
         # Apply LoRA
         # Use target modules from config (saved during training) or default
         lora_targets = self.config.get("lora_target_modules", ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"])
-        print(f"[loader] Applying LoRA with targets: {lora_targets}")
+        print(f"[loader] Applying {'QLoRA' if use_qlora else 'LoRA'} with targets: {lora_targets}")
         base = make_lora(
             base,
             lora_targets,
             self.config["lora_r"],
             self.config["lora_alpha"],
-            self.config["lora_dropout"]
+            self.config["lora_dropout"],
+            is_quantized=use_qlora,
         )
         
-        # Load LoRA weights
-        lora_path = self.checkpoint_dir / "lora.pt"
-        if lora_path.exists():
-            print(f"[loader] Loading LoRA weights from {lora_path}")
-            lora_state = torch.load(lora_path, map_location=self.device)
-            base.load_state_dict(lora_state, strict=False)
+        # Load LoRA weights - try PEFT adapter directory first, then legacy lora.pt
+        lora_adapter_path = self.checkpoint_dir / "qwen2_lora_adapter_latest"
+        lora_legacy_path = self.checkpoint_dir / "lora.pt"
+        
+        if lora_adapter_path.exists():
+            print(f"[loader] Loading LLM LoRA adapter from {lora_adapter_path}")
+            # Load adapter weights using PEFT's set_peft_model_state_dict
+            adapter_weights_path = lora_adapter_path / "adapter_model.safetensors"
+            if adapter_weights_path.exists():
+                from safetensors.torch import load_file
+                adapter_state = load_file(str(adapter_weights_path))
+            else:
+                adapter_weights_path = lora_adapter_path / "adapter_model.bin"
+                if adapter_weights_path.exists():
+                    adapter_state = torch.load(adapter_weights_path, map_location=self.device)
+                else:
+                    print(f"[loader] Warning: No adapter weights found in {lora_adapter_path}")
+                    adapter_state = None
+            
+            if adapter_state is not None:
+                from peft import set_peft_model_state_dict
+                set_peft_model_state_dict(base, adapter_state)
+                print(f"[loader] LLM LoRA adapter loaded successfully via set_peft_model_state_dict()")
+        elif lora_legacy_path.exists():
+            print(f"[loader] Loading LoRA weights from legacy {lora_legacy_path}")
+            lora_state = torch.load(lora_legacy_path, map_location=self.device)
+            from peft import set_peft_model_state_dict
+            set_peft_model_state_dict(base, lora_state)
         else:
-            print(f"[loader] Warning: LoRA weights not found at {lora_path}")
+            print(f"[loader] Warning: LoRA weights not found at {lora_adapter_path} or {lora_legacy_path}")
         
         base.eval()
         return base

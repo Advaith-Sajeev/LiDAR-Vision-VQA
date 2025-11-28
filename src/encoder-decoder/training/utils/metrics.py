@@ -151,6 +151,9 @@ def calculate_caption_metrics(predictions: List[str], references: List[str], con
     """
     Calculate caption evaluation metrics: BLEU-4, CIDEr, SPICE, BERTScore
     
+    Only computes metrics that are enabled in config to avoid expensive operations
+    (e.g., SPICE requires downloading Stanford CoreNLP).
+    
     Args:
         predictions: List of predicted captions
         references: List of ground truth captions
@@ -163,63 +166,89 @@ def calculate_caption_metrics(predictions: List[str], references: List[str], con
     if config is None:
         config = {}
     
-    try:
-        from pycocoevalcap.bleu.bleu import Bleu
-        from pycocoevalcap.cider.cider import Cider
-        from pycocoevalcap.spice.spice import Spice
-    except ImportError:
-        print("[metrics] Warning: pycocoevalcap not installed. Install with: pip install pycocoevalcap")
-        return {"bleu4": 0.0, "cider": 0.0, "spice": 0.0, "bertscore_f1": 0.0}
+    # Check which metrics are actually needed by ANY dashboard
+    # This avoids computing expensive metrics when disabled
+    needs_bleu = (
+        config.get("eval_caption_bleu4", True) or
+        config.get("eval_det_area_bleu4", True) or
+        config.get("eval_det_object_bleu4", True)
+    )
+    needs_cider = (
+        config.get("eval_caption_cider", True) or
+        config.get("eval_det_area_cider", True) or
+        config.get("eval_det_object_cider", True)
+    )
+    needs_spice = (
+        config.get("eval_caption_spice", False) or
+        config.get("eval_det_area_spice", False) or
+        config.get("eval_det_object_spice", False)
+    )
+    needs_bertscore = (
+        config.get("eval_caption_bertscore", False) or
+        config.get("eval_det_area_bertscore", False) or
+        config.get("eval_det_object_bertscore", False)
+    )
     
-    try:
-        from bert_score import score as bert_score
-    except ImportError:
-        print("[metrics] Warning: bert-score not installed. Install with: pip install bert-score")
+    results = {"bleu4": 0.0, "cider": 0.0, "spice": 0.0, "bertscore_f1": 0.0}
+    
+    # Only import and compute metrics that are needed
+    if needs_bleu or needs_cider or needs_spice:
+        try:
+            from pycocoevalcap.bleu.bleu import Bleu
+            from pycocoevalcap.cider.cider import Cider
+            if needs_spice:
+                from pycocoevalcap.spice.spice import Spice
+        except ImportError:
+            print("[metrics] Warning: pycocoevalcap not installed. Install with: pip install pycocoevalcap")
+            return results
+    
+    if needs_bertscore:
+        try:
+            from bert_score import score as bert_score
+        except ImportError:
+            print("[metrics] Warning: bert-score not installed. Install with: pip install bert-score")
+            bert_score = None
+    else:
         bert_score = None
     
     # Format for pycocoevalcap (expects dict format)
     gts = {i: [ref] for i, ref in enumerate(references)}
     res = {i: [pred] for i, pred in enumerate(predictions)}
     
-    results = {}
-    
     # BLEU-4
-    try:
-        bleu_scorer = Bleu(4)
-        bleu_score, _ = bleu_scorer.compute_score(gts, res)
-        results["bleu4"] = bleu_score[3]  # BLEU-4 is the 4th element (index 3)
-    except Exception as e:
-        print(f"[metrics] BLEU-4 calculation failed: {e}")
-        results["bleu4"] = 0.0
+    if needs_bleu:
+        try:
+            bleu_scorer = Bleu(4)
+            bleu_score, _ = bleu_scorer.compute_score(gts, res)
+            results["bleu4"] = bleu_score[3]  # BLEU-4 is the 4th element (index 3)
+        except Exception as e:
+            print(f"[metrics] BLEU-4 calculation failed: {e}")
     
     # CIDEr
-    try:
-        cider_scorer = Cider()
-        cider_score, _ = cider_scorer.compute_score(gts, res)
-        results["cider"] = cider_score
-    except Exception as e:
-        print(f"[metrics] CIDEr calculation failed: {e}")
-        results["cider"] = 0.0
+    if needs_cider:
+        try:
+            cider_scorer = Cider()
+            cider_score, _ = cider_scorer.compute_score(gts, res)
+            results["cider"] = cider_score
+        except Exception as e:
+            print(f"[metrics] CIDEr calculation failed: {e}")
     
-    # SPICE
-    try:
-        spice_scorer = Spice()
-        spice_score, _ = spice_scorer.compute_score(gts, res)
-        results["spice"] = spice_score
-    except Exception as e:
-        print(f"[metrics] SPICE calculation failed: {e}")
-        results["spice"] = 0.0
+    # SPICE (only if explicitly enabled - requires Java + Stanford CoreNLP)
+    if needs_spice:
+        try:
+            spice_scorer = Spice()
+            spice_score, _ = spice_scorer.compute_score(gts, res)
+            results["spice"] = spice_score
+        except Exception as e:
+            print(f"[metrics] SPICE calculation failed: {e}")
     
-    # BERTScore
-    if bert_score is not None:
+    # BERTScore (only if explicitly enabled - downloads RoBERTa model)
+    if needs_bertscore and bert_score is not None:
         try:
             P, R, F1 = bert_score(predictions, references, lang="en", verbose=False)
             results["bertscore_f1"] = F1.mean().item()
         except Exception as e:
             print(f"[metrics] BERTScore calculation failed: {e}")
-            results["bertscore_f1"] = 0.0
-    else:
-        results["bertscore_f1"] = 0.0
     
     return results
 

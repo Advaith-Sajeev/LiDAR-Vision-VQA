@@ -1,5 +1,6 @@
 """Plotting utilities for training visualization"""
 
+import math
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -70,6 +71,7 @@ def plot_metric_curves(
 ):
     """
     Plot individual metric curves over epochs.
+    Dynamically adjusts grid size based on enabled metrics (non-zero data).
     
     Args:
         metrics_history: Dictionary of metric names to lists of values
@@ -82,13 +84,22 @@ def plot_metric_curves(
     if not metrics_history or not epochs:
         return
     
-    # Plot each metric separately
+    # Filter to only metrics with actual data (non-empty and not all zeros)
+    active_metrics = {}
     for metric_name, values in metrics_history.items():
-        if not values:
-            continue
-        
+        if values and len(values) > 0:
+            # Check if there's any non-zero value (metric was actually computed)
+            if any(v != 0.0 for v in values):
+                active_metrics[metric_name] = values
+    
+    if not active_metrics:
+        print(f"[plotting] No active metrics to plot for {metric_type}")
+        return
+    
+    # Plot each metric separately
+    for metric_name, values in active_metrics.items():
         plt.figure(figsize=(8, 5))
-        plt.plot(epochs, values, linewidth=2, marker="o", markersize=5, color='steelblue')
+        plt.plot(epochs[:len(values)], values, linewidth=2, marker="o", markersize=5, color='steelblue')
         plt.xlabel("Epoch")
         plt.ylabel(metric_name)
         plt.title(f"{metric_type.replace('_', ' ').title()}: {metric_name}")
@@ -100,32 +111,45 @@ def plot_metric_curves(
         plt.savefig(out_dir / f"{metric_type}_{safe_name}.png", dpi=120)
         plt.close()
     
-    # Create a grid subplot with all metrics (if multiple)
-    if len(metrics_history) > 1:
-        # Calculate grid dimensions
-        n_metrics = len(metrics_history)
-        n_cols = min(3, n_metrics)  # Max 3 columns
-        n_rows = (n_metrics + n_cols - 1) // n_cols  # Ceiling division
+    # Create a grid subplot with all active metrics (if multiple)
+    if len(active_metrics) > 1:
+        # Calculate optimal grid dimensions
+        n_metrics = len(active_metrics)
         
-        fig, axes = plt.subplots(n_rows, n_cols, figsize=(6*n_cols, 4*n_rows))
+        # Dynamic grid sizing: prefer wider layouts
+        if n_metrics <= 2:
+            n_cols = n_metrics
+            n_rows = 1
+        elif n_metrics <= 4:
+            n_cols = 2
+            n_rows = 2
+        elif n_metrics <= 6:
+            n_cols = 3
+            n_rows = 2
+        else:
+            n_cols = min(3, n_metrics)
+            n_rows = math.ceil(n_metrics / n_cols)
+        
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(5*n_cols, 4*n_rows))
         
         # Flatten axes array for easier iteration
         if n_metrics == 1:
             axes = [axes]
-        elif n_rows == 1:
-            axes = axes
+        elif n_rows == 1 and n_cols > 1:
+            axes = list(axes)
+        elif n_cols == 1 and n_rows > 1:
+            axes = list(axes)
         else:
             axes = axes.flatten()
         
         # Plot each metric in its own subplot
-        for idx, (metric_name, values) in enumerate(metrics_history.items()):
-            if values:
-                ax = axes[idx]
-                ax.plot(epochs, values, linewidth=2, marker="o", markersize=4, color='steelblue')
-                ax.set_xlabel("Epoch", fontsize=10)
-                ax.set_ylabel(metric_name, fontsize=10)
-                ax.set_title(metric_name, fontsize=11, fontweight='bold')
-                ax.grid(True, alpha=0.3)
+        for idx, (metric_name, values) in enumerate(active_metrics.items()):
+            ax = axes[idx]
+            ax.plot(epochs[:len(values)], values, linewidth=2, marker="o", markersize=4, color='steelblue')
+            ax.set_xlabel("Epoch", fontsize=10)
+            ax.set_ylabel(metric_name, fontsize=10)
+            ax.set_title(metric_name, fontsize=11, fontweight='bold')
+            ax.grid(True, alpha=0.3)
         
         # Hide unused subplots
         for idx in range(n_metrics, len(axes)):
@@ -137,6 +161,18 @@ def plot_metric_curves(
         
         plt.tight_layout()
         plt.savefig(out_dir / f"{metric_type}_metrics_combined.png", dpi=120, bbox_inches='tight')
+        plt.close()
+    elif len(active_metrics) == 1:
+        # Single metric - create a simple combined plot (same as individual)
+        metric_name, values = list(active_metrics.items())[0]
+        fig, ax = plt.subplots(1, 1, figsize=(8, 5))
+        ax.plot(epochs[:len(values)], values, linewidth=2, marker="o", markersize=5, color='steelblue')
+        ax.set_xlabel("Epoch", fontsize=10)
+        ax.set_ylabel(metric_name, fontsize=10)
+        ax.set_title(f"{metric_type.replace('_', ' ').title()}: {metric_name}", fontsize=12, fontweight='bold')
+        ax.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(out_dir / f"{metric_type}_metrics_combined.png", dpi=120)
         plt.close()
 
 

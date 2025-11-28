@@ -10,7 +10,6 @@ from .helpers import set_seed, count_trainable_params
 from .checkpoints import (
     save_state,
     try_load_state,
-    prune_checkpoints_steps,
 )
 from .plotting import plot_loss_curve, plot_step_curve, plot_metric_curves, plot_all_metrics
 from .metrics import (
@@ -45,7 +44,6 @@ __all__ = [
     # Checkpoints
     "save_state",
     "try_load_state",
-    "prune_checkpoints_steps",
     # Plotting
     "plot_loss_curve",
     "plot_step_curve",

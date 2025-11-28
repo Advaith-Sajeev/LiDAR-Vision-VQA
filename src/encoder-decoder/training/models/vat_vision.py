@@ -19,20 +19,22 @@ NUM_VIEWS = 6
 
 class VATVision(nn.Module):
     """
-    Reduces vision tokens by half and projects embeddings to d_model dimension.
+    Reduces vision tokens and projects embeddings to d_model dimension.
     
     Two-stage compression:
     1. Token reduction: Reduces number of tokens via cross-attention
-    2. Dimension reduction: Projects token embeddings via MLP
+    2. Dimension projection: Projects token embeddings via MLP
 
     Shapes:
-      Input:  [B, N_img_tokens (1536), d_in (2048)]
-      After VAT: [B, n_queries (768), d_in (2048)]
-      Output: [B, n_queries (768), d_model (e.g., 512)]
+      Input:  [B, N_img_tokens (1536), d_in] where d_in = d_model (from VisionAdapter)
+      After VAT: [B, n_queries (768), d_in]
+      Output: [B, n_queries (768), d_model]
+    
+    Note: VisionAdapter projects DeepEncoder output (2048) to d_model before passing to VATVision.
     
     Args:
-        d_in: Input dimension from VisionAdapter (e.g., 2048)
-        d_model: Target output dimension (e.g., 512)
+        d_in: Input dimension from VisionAdapter (typically d_model, e.g., 896 for Qwen2.5-0.5B)
+        d_model: Target output dimension (same as d_in in current architecture)
         n_input_tokens: Total tokens from VisionAdapter (6 * 256 = 1536)
         compression_factor: Reduce tokens by this factor (e.g., 2 gives 768 queries)
         n_layers: Number of VAT transformer blocks
@@ -136,6 +138,24 @@ class VATVision(nn.Module):
             nn.Linear(d_model, d_model),
             nn.LayerNorm(d_model),
         )
+        
+        # Gradient checkpointing flag
+        self._gradient_checkpointing = False
+    
+    def gradient_checkpointing_enable(self, gradient_checkpointing_kwargs=None):
+        """
+        Enable gradient checkpointing for memory-efficient training.
+        This trades compute for memory by recomputing activations during backward pass.
+        """
+        self._gradient_checkpointing = True
+        for blk in self.blocks:
+            blk.gradient_checkpointing = True
+    
+    def gradient_checkpointing_disable(self):
+        """Disable gradient checkpointing."""
+        self._gradient_checkpointing = False
+        for blk in self.blocks:
+            blk.gradient_checkpointing = False
 
     def forward(self, kv_tokens: torch.Tensor) -> torch.Tensor:
         """

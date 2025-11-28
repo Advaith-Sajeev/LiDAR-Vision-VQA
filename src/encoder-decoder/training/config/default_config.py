@@ -16,7 +16,8 @@ DEFAULT_CONFIG: Dict = {
     "batch_size": 1,
     "grad_accum": 1,
     "seed": 42,
-    "fp16": False,
+    "mixed_precision": "bf16",  # "no", "fp16", or "bf16" (recommended for modern GPUs)
+    "gradient_checkpointing": True,  # Trade compute for memory (enables larger batch sizes)
     "resume": True,
     "save_every_steps": 1000,
     "keep_last_n": 5,
@@ -71,6 +72,18 @@ DEFAULT_CONFIG: Dict = {
     "nu_version": "v1.0-trainval",
     "sam_ckpt": None,                           # Path to SAM checkpoint, or None to auto-download
     "auto_download_sam": True,                  # Auto-download SAM weights if missing
-    "deep_dtype": "float32",                    # "bfloat16", "float16", or "float32" (Flash Attention requires fp16/bf16)
+    "deep_dtype": "bfloat16",                   # "bfloat16", "float16", or "float32" (bf16 recommended for modern GPUs)
     "openclip_pretrained": "openai",
+    
+    # Performance optimizations
+    "num_workers": 4,                           # DataLoader workers (0=main process, >0=parallel loading, 4-8 recommended)
+    "prefetch_factor": 2,                       # Batches to prefetch per worker (requires num_workers > 0)
+    "use_torch_compile": False,                 # Enable torch.compile() for VAT models (PyTorch 2.0+, 10-30% speedup)
+    "torch_compile_mode": "reduce-overhead",    # "default", "reduce-overhead", or "max-autotune"
+    
+    # CUDA optimizations
+    "cudnn_benchmark": True,                    # Enable cuDNN autotuning (faster for fixed-size inputs)
+    
+    # Inference optimizations
+    "inference_batch_size": 8,                  # Batch size for encoding during inference sampling (higher = faster but more VRAM)
 }

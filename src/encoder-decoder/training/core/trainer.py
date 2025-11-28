@@ -21,7 +21,6 @@ from ..utils import (
     count_trainable_params,
     save_state,
     try_load_state,
-    prune_checkpoints_steps,
     plot_loss_curve,
     plot_all_metrics,
     debug,
@@ -33,7 +32,7 @@ from ..utils import (
 )
 from .model_setup import setup_models, create_vat_lidar, setup_optimizer_and_scheduler
 from .validation import run_validation, run_inference_sampling
-from deepencoder.deepencoder_infer import DEFAULT_VIEW_ORDER, multiview_tokens_from_sample_token
+from deepencoder.deepencoder_infer import DEFAULT_VIEW_ORDER, multiview_tokens_from_sample_token, batch_multiview_tokens_from_sample_tokens
 
 
 class Trainer:
@@ -66,6 +65,11 @@ class Trainer:
             torch.cuda.set_device(self.local_rank)
             debug.debug("trainer", f"Set CUDA device to local_rank={self.local_rank}")
         
+        # Enable cuDNN benchmark mode for faster training with fixed-size inputs
+        if config.get("cudnn_benchmark", True) and self.device.type == "cuda":
+            torch.backends.cudnn.benchmark = True
+            debug.info("trainer", "cuDNN benchmark mode enabled")
+        
         # Logging
         self.tee = None
         self.out_dir = Path(config["out_dir"])
@@ -79,7 +83,8 @@ class Trainer:
             # No separate debug.log file needed
             debug.info("system", f"Logging to: {self.out_dir / 'train.log'}")
         
-        print(f"[device] {self.device.type}  fp16={config['fp16']}  GPUs={self.world_size}")
+        mixed_prec = config.get('mixed_precision', 'fp16' if config.get('fp16', False) else 'no')
+        print(f"[device] {self.device.type}  mixed_precision={mixed_prec}  GPUs={self.world_size}")
         
         # Set seed
         debug.debug("trainer", f"Setting random seed: {config['seed']}")
@@ -96,6 +101,22 @@ class Trainer:
         # Create LiDAR VAT now that we know BEV shape
         debug.info("trainer", f"Creating LiDAR VAT (c_in={self.c_in}, d_model={self.d_model})...")
         self.vat_lidar = create_vat_lidar(self.c_in, self.d_model, config, self.device)
+        
+        # Verify dtype consistency across all models
+        if is_main_process():
+            print("\n[dtype] Model dtype verification:")
+            # For QLoRA, base weights are 4-bit quantized, compute happens in qlora_compute_dtype
+            if config.get("use_qlora", False):
+                print(f"[dtype]   LLM: 4-bit NF4 (compute_dtype={config.get('qlora_compute_dtype', 'bfloat16')})")
+            else:
+                print(f"[dtype]   LLM: {next(self.base.parameters()).dtype}")
+            print(f"[dtype]   VAT LiDAR: {next(self.vat_lidar.parameters()).dtype}")
+            if config["use_vision"]:
+                print(f"[dtype]   VAT Vision: {next(self.vat_vision.parameters()).dtype}")
+                print(f"[dtype]   Vision Adapter: {next(self.vision_adapter.parameters()).dtype}")
+                print(f"[dtype]   DeepEncoder CLIP: {next(self.runtime.clip_vit.parameters()).dtype}")
+                print(f"[dtype]   DeepEncoder Projector: {next(self.runtime.projector.parameters()).dtype}")
+                print(f"[dtype]   DeepEncoder SAM: {next(self.runtime.sam.parameters()).dtype}")
         
         # Print parameter counts
         t_base, a_base, _ = count_trainable_params(self.base)
@@ -118,13 +139,15 @@ class Trainer:
         
         # Training state
         self.start_epoch = 1
-        self.it_resume = 0
         self.global_step = 0
         self.epoch_losses = []
         self.val_losses = []
         self.val_epochs = []
         self.best_val_loss = float("inf")
         self.best_step = None
+        
+        # Cache special token embeddings to avoid tokenizing them every step
+        self._special_token_cache = {}
         
         # Metric tracking for live plotting (three dashboards)
         self.caption_metrics_history = {
@@ -149,13 +172,24 @@ class Trainer:
         }
         self.metrics_epochs = []
         
-        # Resume if configured
+        # Handle mixed precision config (supports legacy fp16 and new mixed_precision)
+        # NOTE: Must initialize scaler BEFORE _try_resume() so it can restore scaler state
+        mixed_prec = config.get('mixed_precision', 'fp16' if config.get('fp16', False) else 'no')
+        self.use_amp = mixed_prec in ['fp16', 'bf16'] and self.device.type == "cuda"
+        self.amp_dtype = torch.float16 if mixed_prec == 'fp16' else torch.bfloat16 if mixed_prec == 'bf16' else torch.float32
+        debug.info("trainer", f"Mixed precision (AMP): {self.use_amp}, dtype: {self.amp_dtype}")
+        
+        # GradScaler for mixed precision training (handles loss scaling to prevent underflow)
+        # Note: GradScaler is only needed for fp16; bf16 typically doesn't need scaling
+        # but we enable it anyway for consistent handling
+        self.scaler = torch.amp.GradScaler('cuda', enabled=self.use_amp and mixed_prec == 'fp16')
+        if self.use_amp and mixed_prec == 'fp16':
+            debug.info("trainer", "GradScaler enabled for fp16 mixed precision")
+        
+        # Resume if configured (must be after scaler initialization to restore scaler state)
         if config["resume"]:
             debug.info("trainer", "Attempting to resume from checkpoint...")
             self._try_resume()
-        
-        self.use_amp = config["fp16"] and self.device.type == "cuda"
-        debug.info("trainer", f"Mixed precision (AMP): {self.use_amp}")
         
         if is_main_process():
             print(f"[train] epochs={config['epochs']} steps/epoch={self.steps_per_epoch} total_steps={self.total_steps}")
@@ -177,6 +211,9 @@ class Trainer:
     
     def _setup_datasets(self):
         """Initialize datasets and dataloaders"""
+        # Check if we should load images in DataLoader workers
+        load_images = self.config.get("use_vision", False)
+        
         # Full dataset
         ds_full = MixedNuDataset(
             self.config["jsons"],
@@ -184,6 +221,8 @@ class Trainer:
             target_field=self.config["target_field"],
             max_samples=self.config["max_samples"],
             seed=self.config["seed"],
+            nusc=self.nusc if load_images else None,
+            load_images=load_images,
         )
         
         # Train/val split
@@ -212,51 +251,80 @@ class Trainer:
             else SingleProcessDetSampler(ds_train, seed=self.config["seed"], shuffle=True)
         )
         
-        # DataLoaders
+        # DataLoaders - num_workers > 0 enables parallel data loading
+        # This improves GPU utilization by overlapping data loading with training
+        num_workers = self.config.get("num_workers", 0)
+        
+        if is_main_process():
+            print(f"[dataloader] num_workers={num_workers}")
+        
+        # persistent_workers keeps workers alive between epochs (avoids respawn overhead)
+        # prefetch_factor controls how many batches each worker pre-loads
+        use_persistent = num_workers > 0
+        prefetch = self.config.get("prefetch_factor", 2) if num_workers > 0 else None
+        
+        if is_main_process() and use_persistent:
+            print(f"[dataloader] persistent_workers=True, prefetch_factor={prefetch}")
+        
+        # Create collate function with image loading flag
+        collate_fn = make_collate(
+            self.tok, 
+            self.config["max_ans_toks"], 
+            self.config.get("system_prompt", ""),
+            load_images=load_images
+        )
+        
         self.dl_train = DataLoader(
             ds_train,
             batch_size=self.config["batch_size"],
             shuffle=False,
             sampler=sampler_train,
-            num_workers=0,
+            num_workers=num_workers,
             pin_memory=(self.device.type == "cuda"),
-            collate_fn=make_collate(self.tok, self.config["max_ans_toks"], self.config.get("system_prompt", "")),
+            persistent_workers=use_persistent,
+            prefetch_factor=prefetch,
+            collate_fn=collate_fn,
         )
         
         self.dl_val = DataLoader(
             ds_val,
             batch_size=self.config["batch_size"],
             shuffle=False,
-            num_workers=0,
+            num_workers=num_workers,
             pin_memory=(self.device.type == "cuda"),
-            collate_fn=make_collate(self.tok, self.config["max_ans_toks"], self.config.get("system_prompt", "")),
+            persistent_workers=use_persistent,
+            prefetch_factor=prefetch,
+            collate_fn=collate_fn,
         )
         
         self.ds_val = ds_val
         self.sampler_train = sampler_train
         self.train_size = train_size
+        self.load_images = load_images  # Store for use in training loop
     
     def _setup_ddp(self):
         """Setup distributed data parallel"""
         if self.world_size > 1:
+            # find_unused_parameters=False improves performance when all params are always used
+            # Set to True only if you see "unused parameter" errors during training
             self.vat_lidar = nn.parallel.DistributedDataParallel(
-                self.vat_lidar, device_ids=[self.local_rank], find_unused_parameters=True
+                self.vat_lidar, device_ids=[self.local_rank], find_unused_parameters=False
             )
             self.base = nn.parallel.DistributedDataParallel(
-                self.base, device_ids=[self.local_rank], find_unused_parameters=True
+                self.base, device_ids=[self.local_rank], find_unused_parameters=False
             )
             if self.config["use_vision"]:
                 self.vision_adapter = nn.parallel.DistributedDataParallel(
-                    self.vision_adapter, device_ids=[self.local_rank], find_unused_parameters=True
+                    self.vision_adapter, device_ids=[self.local_rank], find_unused_parameters=False
                 )
                 self.vat_vision = nn.parallel.DistributedDataParallel(
-                    self.vat_vision, device_ids=[self.local_rank], find_unused_parameters=True
+                    self.vat_vision, device_ids=[self.local_rank], find_unused_parameters=False
                 )
                 self.runtime.projector = nn.parallel.DistributedDataParallel(
-                    self.runtime.projector, device_ids=[self.local_rank], find_unused_parameters=True
+                    self.runtime.projector, device_ids=[self.local_rank], find_unused_parameters=False
                 )
                 self.runtime.clip_vit = nn.parallel.DistributedDataParallel(
-                    self.runtime.clip_vit, device_ids=[self.local_rank], find_unused_parameters=True
+                    self.runtime.clip_vit, device_ids=[self.local_rank], find_unused_parameters=False
                 )
     
     def _setup_optimizer(self):
@@ -321,14 +389,75 @@ class Trainer:
                         else self.runtime.projector
                     )
                     proj_model.load_state_dict(torch.load(proj_path, map_location=self.device))
+                
+                # Load CLIP LoRA adapter
+                clip_lora_path = self.out_dir / f"clip_lora_adapter_{tag}"
+                if clip_lora_path.exists():
+                    if is_main_process():
+                        print(f"[resume] loading CLIP LoRA adapter from {clip_lora_path}")
+                    clip_vit_unwrapped = (
+                        self.runtime.clip_vit.module
+                        if isinstance(self.runtime.clip_vit, nn.parallel.DistributedDataParallel)
+                        else self.runtime.clip_vit
+                    )
+                    # Load adapter weights using PEFT's set_peft_model_state_dict
+                    adapter_weights_path = clip_lora_path / "adapter_model.safetensors"
+                    if adapter_weights_path.exists():
+                        from safetensors.torch import load_file
+                        adapter_state = load_file(str(adapter_weights_path))
+                    else:
+                        adapter_weights_path = clip_lora_path / "adapter_model.bin"
+                        if adapter_weights_path.exists():
+                            adapter_state = torch.load(adapter_weights_path, map_location=self.device)
+                        else:
+                            print(f"[resume] WARNING: No CLIP adapter weights found in {clip_lora_path}")
+                            adapter_state = None
+                    
+                    if adapter_state is not None:
+                        from peft import set_peft_model_state_dict
+                        set_peft_model_state_dict(clip_vit_unwrapped, adapter_state)
+                        if is_main_process():
+                            print(f"[resume] CLIP LoRA adapter loaded successfully via set_peft_model_state_dict()")
+            
+            # Load LLM LoRA adapter
+            lora_path = self.out_dir / f"qwen2_lora_adapter_{tag}"
+            if lora_path.exists():
+                if is_main_process():
+                    print(f"[resume] loading LLM LoRA adapter from {lora_path}")
+                base_model = (
+                    self.base.module
+                    if isinstance(self.base, nn.parallel.DistributedDataParallel)
+                    else self.base
+                )
+                # Load adapter weights using PEFT's set_peft_model_state_dict
+                adapter_weights_path = lora_path / "adapter_model.safetensors"
+                if adapter_weights_path.exists():
+                    from safetensors.torch import load_file
+                    adapter_state = load_file(str(adapter_weights_path))
+                else:
+                    adapter_weights_path = lora_path / "adapter_model.bin"
+                    if adapter_weights_path.exists():
+                        adapter_state = torch.load(adapter_weights_path, map_location=self.device)
+                    else:
+                        print(f"[resume] WARNING: No LLM adapter weights found in {lora_path}")
+                        adapter_state = None
+                
+                if adapter_state is not None:
+                    from peft import set_peft_model_state_dict
+                    set_peft_model_state_dict(base_model, adapter_state)
+                    if is_main_process():
+                        print(f"[resume] LLM LoRA adapter loaded successfully via set_peft_model_state_dict()")
             
             # Load optimizer/scheduler
             self.optim.load_state_dict(prev_state["optimizer"])
             self.sched.load_state_dict(prev_state["scheduler"])
             
-            # Restore training state
-            self.start_epoch = prev_state["epoch"]
-            self.it_resume = prev_state["it_in_epoch"]
+            # Load GradScaler state if available
+            if prev_state.get("scaler") is not None and hasattr(self, 'scaler'):
+                self.scaler.load_state_dict(prev_state["scaler"])
+            
+            # Restore training state (epoch-level resume only)
+            saved_epoch = prev_state["epoch"]
             self.global_step = prev_state["global_step"]
             self.epoch_losses = prev_state.get("epoch_losses", [])
             self.val_losses = prev_state.get("val_losses", [])
@@ -336,7 +465,20 @@ class Trainer:
             self.best_val_loss = prev_state.get("best_loss", float("inf"))
             self.best_step = prev_state.get("best_step", None)
             
-            # Restore RNG states
+            # Restore metrics history for live plotting
+            if prev_state.get("caption_metrics_history") is not None:
+                self.caption_metrics_history = prev_state["caption_metrics_history"]
+            if prev_state.get("grounding_det_area_metrics_history") is not None:
+                self.grounding_det_area_metrics_history = prev_state["grounding_det_area_metrics_history"]
+            if prev_state.get("grounding_det_object_metrics_history") is not None:
+                self.grounding_det_object_metrics_history = prev_state["grounding_det_object_metrics_history"]
+            if prev_state.get("metrics_epochs") is not None:
+                self.metrics_epochs = prev_state["metrics_epochs"]
+            
+            # Resume from the next epoch (checkpoint is saved at end of each epoch)
+            self.start_epoch = saved_epoch + 1
+            
+            # Restore RNG states for reproducibility
             random.setstate(prev_state["rng"]["py_random"])
             np.random.set_state(prev_state["rng"]["np_random"])
             torch.set_rng_state(prev_state["rng"]["torch"])
@@ -344,7 +486,10 @@ class Trainer:
                 torch.cuda.set_rng_state_all(prev_state["rng"]["torch_cuda"])
             
             if is_main_process():
-                print(f"[resume] continuing from epoch {self.start_epoch}, step {self.global_step}")
+                print(f"[resume] completed epoch {saved_epoch}, resuming from epoch {self.start_epoch}, global_step {self.global_step}")
+        else:
+            if is_main_process():
+                print(f"[resume] no checkpoint found in {self.out_dir}, starting fresh")
     
     def _set_epoch(self, epoch: int):
         """Set epoch for samplers"""
@@ -363,6 +508,12 @@ class Trainer:
             print(f"\n[training_toggles] Vision={use_vision_training}, LiDAR={use_lidar_training}")
             print(f"[validation_toggles] Vision={use_vision_validation}, LiDAR={use_lidar_validation}")
             
+            # Log image loading mode
+            if self.load_images:
+                print(f"[vision_pipeline] Using DataLoader workers for image loading (fast path)")
+            elif self.config.get("use_vision", False):
+                print(f"[vision_pipeline] Loading images in training loop (fallback path)")
+            
             if not use_vision_training or not use_lidar_training:
                 # show which components are disabled
                 print(f"[WARNING] Training with disabled components {' '.join([comp for comp, enabled in zip(['VISION', 'LiDAR'], [use_vision_training, use_lidar_training]) if not enabled])} will train a model that doesn't use them!")
@@ -376,6 +527,18 @@ class Trainer:
             # Use runtime.train() to properly set CLIP/Projector to train mode
             # while keeping SAM frozen in eval mode
             self.runtime.train()
+        
+        # Check if training is already complete
+        if self.start_epoch > self.config["epochs"]:
+            if is_main_process():
+                print(f"[train] Training already complete (epoch {self.start_epoch - 1}/{self.config['epochs']})")
+                print(f"[train] To continue training, increase 'epochs' in config")
+            return
+        
+        if self.global_step >= self.total_steps:
+            if is_main_process():
+                print(f"[train] Training already complete (step {self.global_step}/{self.total_steps})")
+            return
         
         pbar = tqdm(
             total=self.total_steps,
@@ -391,10 +554,6 @@ class Trainer:
             epoch_count = 0
             
             for it, batch in enumerate(self.dl_train, start=1):
-                # Skip if resuming mid-epoch
-                if epoch == self.start_epoch and it <= self.it_resume:
-                    continue
-                
                 loss = self._train_step(batch)
                 epoch_loss_sum += loss
                 epoch_count += 1
@@ -404,15 +563,6 @@ class Trainer:
                     self.global_step += 1
                     pbar.update(1)
                     pbar.set_postfix(loss=loss, lr=f"{self.sched.get_last_lr()[0]:.2e}")
-                    
-                    # Save checkpoint every N steps
-                    if (
-                        is_main_process()
-                        and self.config["save_every_steps"] > 0
-                        and self.global_step % self.config["save_every_steps"] == 0
-                    ):
-                        self._save_checkpoint(f"step{self.global_step}", epoch, it)
-                        prune_checkpoints_steps(self.out_dir, self.config["keep_last_n"], self.best_step)
                     
                     if self.global_step >= self.total_steps:
                         break
@@ -428,13 +578,27 @@ class Trainer:
             if epoch % self.config["validate_every"] == 0:
                 self._run_validation(epoch)
             
-            # Save latest
+            # Save checkpoint at end of each epoch
             if is_main_process():
-                self._save_checkpoint("latest", epoch, len(self.dl_train))
+                self._save_checkpoint(epoch)
             
             # Run inference sampling
-            if is_main_process() and epoch % self.config.get("inference_sampling_every", 3) == 0:
-                print(f"\n[inference_sampling] Running at epoch {epoch}")
+            # Run on: 1) Every N epochs (where epoch % N == 0), OR 2) Final epoch
+            # If inference_every <= 0, inference sampling is disabled
+            inference_every = self.config.get("inference_sampling_every", 3)
+            is_final_epoch = (epoch == self.config["epochs"])
+            
+            # Handle disabled inference (inference_every <= 0)
+            if inference_every > 0:
+                should_run_inference = (epoch % inference_every == 0) or is_final_epoch
+            else:
+                should_run_inference = False  # Disabled
+            
+            if is_main_process() and should_run_inference:
+                if is_final_epoch and (epoch % inference_every != 0):
+                    print(f"\n[inference_sampling] Running at FINAL epoch {epoch}")
+                else:
+                    print(f"\n[inference_sampling] Running at epoch {epoch}")
                 metrics = run_inference_sampling(
                     self.base,
                     self.vat_lidar,
@@ -449,6 +613,8 @@ class Trainer:
                     self.device,
                     self.ds_full.token2path,
                     self.best_step,
+                    use_amp=self.use_amp,
+                    amp_dtype=self.amp_dtype,
                 )
                 
                 # Store metrics for live plotting
@@ -523,9 +689,10 @@ class Trainer:
         debug.trace("trainer", "TRAINING STEP START")
         debug.trace("trainer", "=" * 60)
         
-        bev = batch["bev"].to(self.device)
-        p_ids = batch["prompt_ids"].to(self.device)
-        a_ids = batch["answer_ids"].to(self.device)
+        # Use non_blocking=True for async CPU→GPU transfers (overlaps with other work)
+        bev = batch["bev"].to(self.device, non_blocking=True)
+        p_ids = batch["prompt_ids"].to(self.device, non_blocking=True)
+        a_ids = batch["answer_ids"].to(self.device, non_blocking=True)
         sample_tokens = batch["sample_tokens"]
         
         debug.shape("trainer", "bev", bev)
@@ -546,39 +713,77 @@ class Trainer:
             debug.start_timer("trainer", "vision_processing")
             debug.data_flow("trainer", "vision_start", f"Processing {len(sample_tokens)} samples")
             
-            vision_kvs = []
-            for idx, tok_str in enumerate(sample_tokens):
-                debug.trace("trainer", f"Processing vision for sample {idx+1}/{len(sample_tokens)}: {tok_str}")
+            # Check if images are pre-loaded by DataLoader workers
+            if self.load_images and "images" in batch:
+                # Fast path: images already loaded by workers, just encode on GPU
+                batch_images = batch["images"]  # List[List[Optional[Tensor]]]
+                debug.debug("trainer", f"Using pre-loaded images from DataLoader workers")
                 
-                mv = multiview_tokens_from_sample_token(
-                    tok_str, self.nusc, runtime=self.runtime, view_order=DEFAULT_VIEW_ORDER, strict=False
-                )
-                
-                if not mv.get("tokens") or len(mv["tokens"]) != 6:
-                    debug.warn("trainer", f"Failed to extract 6 view tokens for {tok_str}, using dummy")
+                try:
+                    # Encode pre-loaded images (no I/O, just GPU work)
+                    # encode_preloaded_views_batch returns tensors already on GPU
+                    batch_view_tokens = self.runtime.encode_preloaded_views_batch(
+                        batch_images, view_order=DEFAULT_VIEW_ORDER
+                    )
+                    
+                    # Tensors are already on GPU from encode_preloaded_views_batch
+                    # Use batched VisionAdapter forward pass
+                    with torch.autocast(device_type=self.device.type, dtype=self.amp_dtype, enabled=self.use_amp):
+                        vision_kv = self.vision_adapter.forward_batch(batch_view_tokens)
+                    debug.shape("trainer", "vision_kv_batch", vision_kv)
+                    debug.data_flow("trainer", "vision_complete", f"shape={tuple(vision_kv.shape)}")
+                    
+                except Exception as e:
+                    debug.warn("trainer", f"Pre-loaded image encoding failed: {e}")
                     if is_main_process():
-                        print(f"[warn] failed to extract 6 view tokens for {tok_str}, using dummy...")
-                    dummy_shape = (400, 1280)
-                    mv["tokens"] = [torch.zeros(dummy_shape, device=self.device) for _ in range(6)]
-                    mv["grid"] = [20, 20]
-                else:
-                    debug.trace("trainer", f"Extracted {len(mv['tokens'])} view tokens")
-                
-                vt = [t.to(self.device) for t in mv["tokens"]]
-                debug.shape("trainer", f"view_token[0]", vt[0])
-                
-                with torch.autocast(device_type=self.device.type, dtype=torch.float16, enabled=self.use_amp):
-                    kv = self.vision_adapter(vt)  # [1536, 2048]
-                    debug.shape("trainer", "vision_adapter_output", kv)
-                    kv = kv.unsqueeze(0)  # Add batch dimension: [1, 1536, 2048]
-                    debug.shape("trainer", "vision_kv_with_batch", kv)
-                vision_kvs.append(kv)
+                        print(f"[warn] Pre-loaded image encoding failed: {e}")
+                    # vision_kv remains None, will be skipped
+            else:
+                # Fallback: load images in training loop (slower, original path)
+                debug.debug("trainer", "Loading images in training loop (fallback path)")
+                try:
+                    batch_view_tokens = batch_multiview_tokens_from_sample_tokens(
+                        sample_tokens, self.nusc, runtime=self.runtime, view_order=DEFAULT_VIEW_ORDER, strict=False
+                    )
+                    
+                    # Move all tensors to device first
+                    batch_view_tokens_device = [
+                        [t.to(self.device) for t in view_tokens]
+                        for view_tokens in batch_view_tokens
+                    ]
+                    
+                    # Use batched VisionAdapter forward pass (single operation for all B samples)
+                    with torch.autocast(device_type=self.device.type, dtype=self.amp_dtype, enabled=self.use_amp):
+                        vision_kv = self.vision_adapter.forward_batch(batch_view_tokens_device)  # [B, V*HW, d_model]
+                    debug.shape("trainer", "vision_kv_batch", vision_kv)
+                    debug.data_flow("trainer", "vision_complete", f"shape={tuple(vision_kv.shape)}")
+                    
+                except Exception as e:
+                    # Fallback to sequential processing if batched fails
+                    debug.warn("trainer", f"Batched vision encoding failed: {e}, falling back to sequential")
+                    if is_main_process():
+                        print(f"[warn] Batched vision encoding failed, using sequential fallback...")
+                    
+                    vision_kvs = []
+                    for idx, tok_str in enumerate(sample_tokens):
+                        mv = multiview_tokens_from_sample_token(
+                            tok_str, self.nusc, runtime=self.runtime, view_order=DEFAULT_VIEW_ORDER, strict=False
+                        )
+                        
+                        if not mv.get("tokens") or len(mv["tokens"]) != 6:
+                            dummy_shape = (256, 2048)  # HW=256 for 16x16 grid, D=2048
+                            mv["tokens"] = [torch.zeros(dummy_shape, device=self.device, dtype=self.amp_dtype) for _ in range(6)]
+                        
+                        vt = [t.to(self.device) for t in mv["tokens"]]
+                        
+                        with torch.autocast(device_type=self.device.type, dtype=self.amp_dtype, enabled=self.use_amp):
+                            kv = self.vision_adapter(vt)
+                            kv = kv.unsqueeze(0)
+                        vision_kvs.append(kv)
+                    
+                    vision_kv = torch.cat(vision_kvs, dim=0)
             
-            # Concatenate along batch dimension: [B, 1536, 2048]
-            vision_kv = torch.cat(vision_kvs, dim=0)
-            debug.shape("trainer", "vision_kv_batch", vision_kv)
             debug.tensor_stats("trainer", "vision_kv", vision_kv)
-            debug.data_flow("trainer", "vision_complete", f"shape={tuple(vision_kv.shape)}") 
             debug.end_timer("trainer", "vision_processing")
         else:
             debug.debug("trainer", "Vision processing skipped (disabled or not configured)")
@@ -587,13 +792,16 @@ class Trainer:
         debug.start_timer("trainer", "forward_pass")
         debug.data_flow("trainer", "forward_start", "Building embeddings")
         
-        with torch.autocast(device_type=self.device.type, dtype=torch.float16, enabled=self.use_amp):
+        with torch.autocast(device_type=self.device.type, dtype=self.amp_dtype, enabled=self.use_amp):
             E = self.base.get_input_embeddings()
             debug.debug("trainer", f"Embedding layer: {E}")
             
-            def emb(txt):
-                ids = self.tok([txt], add_special_tokens=False, return_tensors="pt").input_ids.to(self.device)
-                return E(ids)
+            # Cached embedding function for special tokens (avoids tokenizing every step)
+            def get_cached_emb(txt: str) -> torch.Tensor:
+                if txt not in self._special_token_cache:
+                    ids = self.tok([txt], add_special_tokens=False, return_tensors="pt").input_ids.to(self.device)
+                    self._special_token_cache[txt] = E(ids)  # [1, 1, d_model]
+                return self._special_token_cache[txt]
             
             # Process LiDAR (if enabled)
             debug.start_timer("trainer", "lidar_vat")
@@ -632,8 +840,8 @@ class Trainer:
             
             # Add vision tokens if enabled
             if prefix_vision is not None:
-                vision_start = emb("<vision_start>").expand(prefix_vision.size(0), -1, -1)
-                vision_end = emb("<vision_end>").expand(prefix_vision.size(0), -1, -1)
+                vision_start = get_cached_emb("<vision_start>").expand(prefix_vision.size(0), -1, -1)
+                vision_end = get_cached_emb("<vision_end>").expand(prefix_vision.size(0), -1, -1)
                 
                 pieces += [vision_start, prefix_vision, vision_end]
                 piece_names += ["vision_start", "vision_tokens", "vision_end"]
@@ -643,8 +851,8 @@ class Trainer:
             
             # Add LiDAR tokens if enabled
             if prefix_lidar is not None:
-                lidar_start = emb("<lidar_start>").expand(prefix_lidar.size(0), -1, -1)
-                lidar_end = emb("<lidar_end>").expand(prefix_lidar.size(0), -1, -1)
+                lidar_start = get_cached_emb("<lidar_start>").expand(prefix_lidar.size(0), -1, -1)
+                lidar_end = get_cached_emb("<lidar_end>").expand(prefix_lidar.size(0), -1, -1)
                 
                 pieces += [lidar_start, prefix_lidar, lidar_end]
                 piece_names += ["lidar_start", "lidar_tokens", "lidar_end"]
@@ -693,10 +901,14 @@ class Trainer:
             debug.memory_usage("trainer", "after_llm")
             debug.end_timer("trainer", "forward_pass")
         
-        # Backward pass
+        # Backward pass with GradScaler for mixed precision
         debug.start_timer("trainer", "backward_pass")
         debug.data_flow("trainer", "backward", "Computing gradients")
-        loss.backward()
+        
+        # Use scaler for fp16 (scales loss to prevent gradient underflow)
+        # For bf16, scaler is disabled but we use consistent code path
+        self.scaler.scale(loss).backward()
+        
         debug.end_timer("trainer", "backward_pass")
         
         debug.end_timer("trainer", "train_step")
@@ -706,9 +918,12 @@ class Trainer:
         return loss.item() * self.config["grad_accum"]
     
     def _optimizer_step(self):
-        """Perform optimizer step with gradient clipping"""
+        """Perform optimizer step with gradient clipping and GradScaler"""
         debug.start_timer("trainer", "optimizer_step")
         debug.trace("trainer", "Clipping gradients and updating weights")
+        
+        # Unscale gradients before clipping (required for proper grad norm computation)
+        self.scaler.unscale_(self.optim)
         
         torch.nn.utils.clip_grad_norm_(self.vat_lidar.parameters(), self.config["clip_norm"])
         torch.nn.utils.clip_grad_norm_(
@@ -724,7 +939,10 @@ class Trainer:
             )
             torch.nn.utils.clip_grad_norm_(self.vat_vision.parameters(), self.config["clip_norm"])
         
-        self.optim.step()
+        # Step optimizer with scaler (handles inf/nan gradients gracefully)
+        self.scaler.step(self.optim)
+        self.scaler.update()
+        
         current_lr = self.sched.get_last_lr()[0]
         self.sched.step()
         debug.trace("trainer", f"Learning rate: {current_lr:.2e}")
@@ -748,6 +966,8 @@ class Trainer:
             self.runtime if self.config["use_vision"] else None,
             self.nusc if self.config["use_vision"] else None,
             self.config,
+            use_amp=self.use_amp,
+            amp_dtype=self.amp_dtype,
         )
         
         if is_main_process():
@@ -761,20 +981,20 @@ class Trainer:
                 print(f"[best-val] new best: {self.best_val_loss:.4f} at step {self.best_step}")
                 self._save_best_checkpoint()
     
-    def _save_checkpoint(self, tag: str, epoch: int, it_in_epoch: int):
-        """Save checkpoint"""
+    def _save_checkpoint(self, epoch: int):
+        """Save epoch checkpoint"""
         save_state(
             self.out_dir,
-            tag,
+            "latest",
             step=self.global_step,
             epoch=epoch,
-            it_in_epoch=it_in_epoch,
             global_step=self.global_step,
             epoch_losses=self.epoch_losses,
             best_loss=self.best_val_loss,
             best_step=self.best_step,
             optim=self.optim,
             sched=self.sched,
+            scaler=self.scaler,  # Save GradScaler state for mixed precision
             vat_lidar=self.vat_lidar,
             vat_vision=self.vat_vision if self.config["use_vision"] else None,
             base=self.base,
@@ -785,6 +1005,11 @@ class Trainer:
             config=self.config,
             val_losses=self.val_losses,
             val_epochs=self.val_epochs,
+            # Metrics history for live plotting (restore on resume)
+            caption_metrics_history=self.caption_metrics_history,
+            grounding_det_area_metrics_history=self.grounding_det_area_metrics_history,
+            grounding_det_object_metrics_history=self.grounding_det_object_metrics_history,
+            metrics_epochs=self.metrics_epochs,
         )
     
     def _save_best_checkpoint(self):
@@ -797,7 +1022,8 @@ class Trainer:
         if self.config["use_vision"]:
             torch.save(unwrap(self.vat_vision).state_dict(), self.out_dir / "vat_vision_best.pt")
         
-        unwrap(self.base).save_pretrained(self.out_dir / "qwen2_lora_adapter_best")
+        # save_embedding_layers=True: We resize embeddings for special tokens, so explicitly save them
+        unwrap(self.base).save_pretrained(self.out_dir / "qwen2_lora_adapter_best", save_embedding_layers=True)
         
         if self.config["use_vision"]:
             torch.save(unwrap(self.vision_adapter).state_dict(), self.out_dir / "vision_adapter_best.pt")
