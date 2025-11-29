@@ -87,3 +87,113 @@ DEFAULT_CONFIG: Dict = {
     # Inference optimizations
     "inference_batch_size": 8,                  # Batch size for encoding during inference sampling (higher = faster but more VRAM)
 }
+
+
+def validate_config(config: Dict, is_main: bool = True) -> None:
+    """
+    Validate configuration for conflicting or inefficient settings.
+    Raises AssertionError for critical conflicts, prints warnings for inefficiencies.
+    
+    Args:
+        config: Configuration dictionary
+        is_main: Whether this is the main process (for printing warnings)
+    """
+    warnings = []
+    
+    # ===== CRITICAL CONFLICTS (Errors) =====
+    
+    # CLIP LoRA enabled but vision disabled - wasteful resource allocation
+    clip_lora_enabled = config.get("clip_lora_enabled", False)
+    use_vision = config.get("use_vision", True)
+    if clip_lora_enabled and not use_vision:
+        raise AssertionError(
+            "Config conflict: clip_lora_enabled=True but use_vision=False. "
+            "CLIP LoRA adapters will be created but never used. "
+            "Either enable use_vision or disable clip_lora_enabled."
+        )
+    
+    # VAT queries must be divisible by 6 (for per-view distribution)
+    vat_queries = config.get("vat_queries", 12)
+    if vat_queries % 6 != 0:
+        raise AssertionError(
+            f"Config conflict: vat_queries={vat_queries} is not divisible by 6. "
+            f"VAT queries must be divisible by 6 for proper per-view distribution. "
+            f"Recommended values: 6, 12, 18, 24, 30, 36..."
+        )
+    
+    vision_queries = config.get("vision_queries", 12)
+    if vision_queries % 6 != 0:
+        raise AssertionError(
+            f"Config conflict: vision_queries={vision_queries} is not divisible by 6. "
+            f"Vision queries must be divisible by 6 for proper per-view distribution. "
+            f"Recommended values: 6, 12, 18, 24, 30, 36..."
+        )
+    
+    # inference_samples_n must be divisible by 4 (for equal distribution)
+    inference_samples_n = config.get("inference_samples_n", 12)
+    if inference_samples_n % 4 != 0:
+        raise AssertionError(
+            f"Config conflict: inference_samples_n={inference_samples_n} is not divisible by 4. "
+            f"Must be divisible by 4 for equal distribution across question types. "
+            f"Recommended values: 4, 8, 12, 16, 20, 24, 28, 32..."
+        )
+    
+    # ===== EFFICIENCY WARNINGS =====
+    
+    # QLoRA without gradient checkpointing - inefficient memory usage
+    use_qlora = config.get("use_qlora", False)
+    gradient_checkpointing = config.get("gradient_checkpointing", True)
+    if use_qlora and not gradient_checkpointing:
+        warnings.append(
+            "Efficiency warning: use_qlora=True but gradient_checkpointing=False. "
+            "QLoRA is typically used to save memory, but disabling gradient checkpointing "
+            "negates much of this benefit. Consider enabling gradient_checkpointing=True."
+        )
+    
+    # Very small effective batch size
+    batch_size = config.get("batch_size", 1)
+    grad_accum = config.get("grad_accum", 1)
+    effective_batch = batch_size * grad_accum
+    if effective_batch < 4:
+        warnings.append(
+            f"Efficiency warning: Very small effective batch size ({batch_size} × {grad_accum} = {effective_batch}). "
+            f"Training may be unstable or slow to converge. "
+            f"Consider increasing batch_size or grad_accum for effective_batch >= 4."
+        )
+    
+    # num_workers > 0 but prefetch_factor not set optimally
+    num_workers = config.get("num_workers", 4)
+    prefetch_factor = config.get("prefetch_factor", 2)
+    if num_workers > 0 and prefetch_factor < 2:
+        warnings.append(
+            f"Efficiency warning: num_workers={num_workers} but prefetch_factor={prefetch_factor}. "
+            f"Consider prefetch_factor >= 2 for better data loading overlap."
+        )
+    
+    # Training without either vision or lidar
+    training_use_vision = config.get("training_use_vision", True)
+    training_use_lidar = config.get("training_use_lidar", True)
+    if not training_use_vision and not training_use_lidar:
+        warnings.append(
+            "Efficiency warning: Both training_use_vision=False and training_use_lidar=False. "
+            "The model will only see text prompts without any sensor context. "
+            "This is likely unintentional unless debugging the LLM backbone."
+        )
+    
+    # Mixed precision disabled on modern hardware
+    mixed_precision = config.get("mixed_precision", "bf16")
+    if mixed_precision == "no":
+        warnings.append(
+            "Efficiency warning: mixed_precision='no' (disabled). "
+            "Training will use full FP32, which is 2x slower and uses 2x memory. "
+            "Consider mixed_precision='bf16' for modern GPUs or 'fp16' for older GPUs."
+        )
+    
+    # Print warnings on main process only
+    if is_main and warnings:
+        print("\n" + "=" * 60)
+        print("CONFIG VALIDATION WARNINGS")
+        print("=" * 60)
+        for i, w in enumerate(warnings, 1):
+            print(f"\n[{i}] {w}")
+        print("\n" + "=" * 60 + "\n")

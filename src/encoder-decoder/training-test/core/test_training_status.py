@@ -293,7 +293,7 @@ def test_vat_vision_full_training():
         d_in=896,
         d_model=896,
         n_input_tokens=1536,
-        compression_factor=128,
+        n_queries=12,  # Direct: any positive integer
         n_layers=2,
         n_heads=4,
         mlp_ratio=4.0,

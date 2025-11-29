@@ -27,6 +27,7 @@ def save_state(
     clip_vit: Optional[nn.Module],
     vision_adapter: Optional[nn.Module] = None,
     projector: Optional[nn.Module] = None,
+    sam: Optional[nn.Module] = None,  # SAM model with trainable compression head
     sched_meta: Dict,
     config: Dict,
     val_losses: Optional[List[float]] = None,
@@ -58,6 +59,7 @@ def save_state(
         clip_vit: CLIP model (optional)
         vision_adapter: Vision adapter model (optional)
         projector: Projector model (optional)
+        sam: SAM model with trainable compression head (net_2, net_3) (optional)
         sched_meta: Scheduler metadata
         config: Training configuration
         val_losses: Validation losses (optional)
@@ -81,6 +83,17 @@ def save_state(
         torch.save(unwrap(projector).state_dict(), out_dir / "projector_latest.pt")
     if clip_vit is not None:
         unwrap(clip_vit).save_pretrained(out_dir / "clip_lora_adapter_latest")
+    
+    # Save SAM compression head (net_2 and net_3 - the trainable DeepEncoder/VARY layers)
+    if sam is not None:
+        sam_model = unwrap(sam)
+        sam_compression_head_state = {
+            name: param.clone() for name, param in sam_model.named_parameters()
+            if name.startswith("net_2") or name.startswith("net_3")
+        }
+        if sam_compression_head_state:
+            torch.save(sam_compression_head_state, out_dir / "sam_compression_head_latest.pt")
+            print(f"[checkpoint] Saved SAM compression head ({len(sam_compression_head_state)} parameters)")
 
     # Save RNG states for reproducibility
     rng = {
@@ -89,6 +102,9 @@ def save_state(
         "torch": torch.get_rng_state(),
         "torch_cuda": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
     }
+    
+    # Extract mixed_precision mode for validation on resume
+    mixed_precision = config.get('mixed_precision', 'fp16' if config.get('fp16', False) else 'no')
     
     state = {
         "epoch": epoch,
@@ -101,6 +117,7 @@ def save_state(
         "optimizer": optim.state_dict(),
         "scheduler": sched.state_dict(),
         "scaler": scaler.state_dict() if scaler is not None else None,
+        "mixed_precision": mixed_precision,  # Save for validation on resume
         "rng": rng,
         "sched_meta": sched_meta,
         "config": config,

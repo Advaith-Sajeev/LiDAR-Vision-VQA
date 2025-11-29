@@ -12,6 +12,9 @@ import json
 
 from deepencoder.deepencoder_infer import DeepEncoderRuntime
 from deepencoder.lora_config import DeepEncoderLoRAConfig
+from deepencoder import TOKENS_PER_VIEW  # 256 tokens per view (from FIXED_GRID_SIDE=16)
+from configs.default_config import NUM_VIEWS  # 6 camera views
+
 from training.models import (
     VATLiDAR,
     VATVision,
@@ -268,24 +271,17 @@ class ModelLoader:
         vision_adapter.eval()
         
         # Load Vision VAT
-        # Compute n_input_tokens and compression_factor from config
-        # n_input_tokens = num_views * tokens_per_view = 6 * 256 = 1536 (default)
-        n_input_tokens = 6 * 256  # Fixed for nuScenes 6 views with 16x16 grid
-        desired_n_queries = self.config["vision_queries"]
+        # Token count derived from deepencoder grid (FIXED_GRID_SIDE) and camera views (NUM_VIEWS)
+        n_input_tokens = NUM_VIEWS * TOKENS_PER_VIEW  # 6 * 256 = 1536 (default)
+        n_queries = self.config["vision_queries"]  # Any positive integer allowed
         
-        if n_input_tokens % desired_n_queries == 0:
-            compression_factor = n_input_tokens // desired_n_queries
-        else:
-            # Fall back to compression_factor=2 (gives 768 queries)
-            compression_factor = 2
-            print(f"[loader] Warning: vision_queries={desired_n_queries} not compatible with n_input_tokens={n_input_tokens}")
-            print(f"[loader] Using compression_factor={compression_factor}, resulting in {n_input_tokens // compression_factor} queries")
+        print(f"[loader] VATVision: n_input_tokens={n_input_tokens} → n_queries={n_queries}")
         
         vat_vision = VATVision(
             d_in=2048,  # Input dimension from VisionAdapter
             d_model=d_model,  # Target output dimension
             n_input_tokens=n_input_tokens,
-            compression_factor=compression_factor,
+            n_queries=n_queries,  # Direct: any positive integer allowed
             n_layers=self.config["vision_layers"],
             n_heads=self.config["vision_heads"],
             mlp_ratio=self.config["vision_mlp_ratio"],

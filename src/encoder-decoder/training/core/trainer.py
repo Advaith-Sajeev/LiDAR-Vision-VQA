@@ -30,9 +30,17 @@ from ..utils import (
     DEBUG_DEBUG,
     DEBUG_TRACE,
 )
+from ..utils.sequence_builder import build_training_sequence, ModalityPosition
 from .model_setup import setup_models, create_vat_lidar, setup_optimizer_and_scheduler
 from .validation import run_validation, run_inference_sampling
-from deepencoder.deepencoder_infer import DEFAULT_VIEW_ORDER, multiview_tokens_from_sample_token, batch_multiview_tokens_from_sample_tokens
+from deepencoder.deepencoder_infer import multiview_tokens_from_sample_token, batch_multiview_tokens_from_sample_tokens
+from configs.default_config import (
+    DEFAULT_VIEW_ORDER,
+    TOKENS_PER_VIEW,
+    PROJECTOR_DIM,
+    NUM_VIEWS,
+)
+from ..config.default_config import validate_config
 
 
 class Trainer:
@@ -55,6 +63,10 @@ class Trainer:
         debug.section("trainer", "TRAINER INITIALIZATION", DEBUG_INFO)
         
         self.config = config
+        
+        # Validate configuration for conflicts and inefficiencies
+        validate_config(config, is_main=is_main_process())
+        
         self.rank, self.local_rank, self.world_size = init_dist_if_needed()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
@@ -65,10 +77,14 @@ class Trainer:
             torch.cuda.set_device(self.local_rank)
             debug.debug("trainer", f"Set CUDA device to local_rank={self.local_rank}")
         
-        # Enable cuDNN benchmark mode for faster training with fixed-size inputs
+        # Enable cuDNN benchmark mode for faster convolutions
+        # This is safe because our cuDNN inputs have fixed sizes:
+        #   - BEV features: validated to have consistent (C,H,W) during dataset init
+        #   - Camera images: resized to fixed 384x384 in preprocessing
+        # Variable-length text sequences don't use cuDNN (they use matmuls)
         if config.get("cudnn_benchmark", True) and self.device.type == "cuda":
             torch.backends.cudnn.benchmark = True
-            debug.info("trainer", "cuDNN benchmark mode enabled")
+            debug.info("trainer", "cuDNN benchmark mode enabled (fixed input sizes verified)")
         
         # Logging
         self.tee = None
@@ -214,7 +230,8 @@ class Trainer:
         # Check if we should load images in DataLoader workers
         load_images = self.config.get("use_vision", False)
         
-        # Full dataset
+        # Full dataset with comprehensive validation
+        # All validation settings are configurable via config
         ds_full = MixedNuDataset(
             self.config["jsons"],
             self.config["feature_dirs"],
@@ -223,6 +240,18 @@ class Trainer:
             seed=self.config["seed"],
             nusc=self.nusc if load_images else None,
             load_images=load_images,
+            # BEV shape validation (defaults match default_config.py)
+            validate_bev_shapes=self.config.get("validate_bev_shapes", True),
+            validate_all_bev=self.config.get("validate_all_bev_shapes", True),  # Validate ALL by default
+            bev_validation_sample_fraction=self.config.get("bev_validation_sample_fraction", 1.0),  # 100% by default
+            bev_validation_min_samples=self.config.get("bev_validation_min_samples", 10),
+            bev_validation_max_samples=self.config.get("bev_validation_max_samples", 100000),  # Effectively unlimited
+            bev_validation_workers=self.config.get("bev_validation_workers", 16),
+            # Additional validations (defaults match default_config.py)
+            validate_json_schema=self.config.get("validate_json_schema", True),
+            validate_token_coverage=self.config.get("validate_token_coverage", True),
+            validate_image_paths=self.config.get("validate_image_paths", True),
+            validate_bev_dtype=self.config.get("validate_bev_dtype", True),  # Check dtype/NaN/Inf by default
         )
         
         # Train/val split
@@ -240,9 +269,18 @@ class Trainer:
         if is_main_process():
             print(f"[dataset] train={train_size}  val={val_size}")
         
-        # Probe BEV shape
-        probe = ds_full[0]["bev"]
-        self.c_in = int(probe.shape[0])
+        # Get BEV channel dimension from validated dataset shape
+        # This is safer than probing a single sample - validation ensures consistency
+        if ds_full.bev_channels is not None:
+            self.c_in = ds_full.bev_channels
+            if is_main_process():
+                print(f"[BEV] Using validated channel dimension: C={self.c_in}")
+        else:
+            # Fallback: probe first sample (validation disabled)
+            probe = ds_full[0]["bev"]
+            self.c_in = int(probe.shape[0])
+            if is_main_process():
+                print(f"[BEV] Probed channel dimension: C={self.c_in} (validation disabled)")
         
         # Samplers
         sampler_train = (
@@ -344,6 +382,76 @@ class Trainer:
         effective_batch_size = self.config["batch_size"] * max(1, self.world_size) * self.config["grad_accum"]
         self.steps_per_epoch = max(1, math.ceil(self.train_size / effective_batch_size))
     
+    def _validate_lora_config(self, adapter_path: Path, adapter_type: str = "LLM") -> bool:
+        """
+        Validate that the saved LoRA adapter config matches the current config.
+        
+        Args:
+            adapter_path: Path to the saved adapter directory
+            adapter_type: "LLM" or "CLIP" to determine which config keys to use
+            
+        Returns:
+            True if configs match, False otherwise (with warnings printed)
+        """
+        import json
+        
+        config_path = adapter_path / "adapter_config.json"
+        if not config_path.exists():
+            if is_main_process():
+                print(f"[resume] WARNING: No adapter_config.json found in {adapter_path}, skipping validation")
+            return True  # Allow loading for backward compatibility with old checkpoints
+        
+        try:
+            with open(config_path, "r") as f:
+                saved_config = json.load(f)
+        except Exception as e:
+            if is_main_process():
+                print(f"[resume] WARNING: Failed to read adapter_config.json: {e}")
+            return True  # Allow loading on read failure
+        
+        # Get current config values based on adapter type
+        if adapter_type == "CLIP":
+            current_r = self.config.get("lora_r", 8)
+            current_alpha = self.config.get("lora_alpha", 16)
+            current_target_modules = self.config.get("clip_lora_target_modules")
+        else:  # LLM
+            current_r = self.config.get("lora_r", 8)
+            current_alpha = self.config.get("lora_alpha", 16)
+            current_target_modules = self.config.get("lora_target_modules")
+        
+        # Get saved config values
+        saved_r = saved_config.get("r")
+        saved_alpha = saved_config.get("lora_alpha")
+        saved_target_modules = saved_config.get("target_modules")
+        
+        mismatches = []
+        
+        # Check rank
+        if saved_r is not None and saved_r != current_r:
+            mismatches.append(f"lora_r: saved={saved_r}, current={current_r}")
+        
+        # Check alpha
+        if saved_alpha is not None and saved_alpha != current_alpha:
+            mismatches.append(f"lora_alpha: saved={saved_alpha}, current={current_alpha}")
+        
+        # Check target modules (convert to sets for comparison)
+        if saved_target_modules is not None and current_target_modules is not None:
+            saved_set = set(saved_target_modules) if isinstance(saved_target_modules, list) else {saved_target_modules}
+            current_set = set(current_target_modules) if isinstance(current_target_modules, list) else {current_target_modules}
+            if saved_set != current_set:
+                mismatches.append(f"target_modules: saved={sorted(saved_set)}, current={sorted(current_set)}")
+        
+        if mismatches:
+            if is_main_process():
+                print(f"[resume] ERROR: {adapter_type} LoRA config mismatch detected!")
+                for m in mismatches:
+                    print(f"[resume]   - {m}")
+                print(f"[resume] This may cause corrupted weights or runtime errors.")
+                print(f"[resume] Either use the same LoRA config or start training from scratch.")
+            return False
+        
+        return True
+
     def _try_resume(self):
         """Try to resume from checkpoint"""
         prev_state, tag = try_load_state(self.out_dir)
@@ -395,6 +503,15 @@ class Trainer:
                 if clip_lora_path.exists():
                     if is_main_process():
                         print(f"[resume] loading CLIP LoRA adapter from {clip_lora_path}")
+                    
+                    # Validate LoRA config before loading
+                    if not self._validate_lora_config(clip_lora_path, adapter_type="CLIP"):
+                        raise RuntimeError(
+                            f"CLIP LoRA config mismatch. Cannot resume with different LoRA configuration. "
+                            f"Please use the same lora_r, lora_alpha, and clip_lora_target_modules as the checkpoint, "
+                            f"or start training from scratch with resume=False."
+                        )
+                    
                     clip_vit_unwrapped = (
                         self.runtime.clip_vit.module
                         if isinstance(self.runtime.clip_vit, nn.parallel.DistributedDataParallel)
@@ -410,20 +527,57 @@ class Trainer:
                         if adapter_weights_path.exists():
                             adapter_state = torch.load(adapter_weights_path, map_location=self.device)
                         else:
-                            print(f"[resume] WARNING: No CLIP adapter weights found in {clip_lora_path}")
-                            adapter_state = None
+                            # This is a critical error - adapter_config.json exists but weights are missing
+                            # This indicates a corrupted or incomplete checkpoint
+                            raise FileNotFoundError(
+                                f"CLIP LoRA adapter config exists at {clip_lora_path}/adapter_config.json "
+                                f"but no adapter weights found (checked adapter_model.safetensors and adapter_model.bin). "
+                                f"This indicates a corrupted checkpoint. Either restore the weights or start fresh with resume=False."
+                            )
                     
-                    if adapter_state is not None:
-                        from peft import set_peft_model_state_dict
-                        set_peft_model_state_dict(clip_vit_unwrapped, adapter_state)
-                        if is_main_process():
-                            print(f"[resume] CLIP LoRA adapter loaded successfully via set_peft_model_state_dict()")
+                    # adapter_state is guaranteed to be set if we reach here (otherwise exception raised)
+                    from peft import set_peft_model_state_dict
+                    set_peft_model_state_dict(clip_vit_unwrapped, adapter_state)
+                    if is_main_process():
+                        print(f"[resume] CLIP LoRA adapter loaded successfully via set_peft_model_state_dict()")
+                
+                # Load SAM compression head (net_2 and net_3 - the trainable DeepEncoder/VARY layers)
+                sam_compression_head_path = self.out_dir / f"sam_compression_head_{tag}.pt"
+                if sam_compression_head_path.exists():
+                    if is_main_process():
+                        print(f"[resume] loading SAM compression head from {sam_compression_head_path}")
+                    sam_model = (
+                        self.runtime.sam.module
+                        if isinstance(self.runtime.sam, nn.parallel.DistributedDataParallel)
+                        else self.runtime.sam
+                    )
+                    sam_compression_head_state = torch.load(sam_compression_head_path, map_location=self.device)
+                    # Load only the compression head parameters (net_2, net_3)
+                    current_state = sam_model.state_dict()
+                    for name, param in sam_compression_head_state.items():
+                        if name in current_state:
+                            current_state[name] = param
+                    sam_model.load_state_dict(current_state)
+                    if is_main_process():
+                        print(f"[resume] SAM compression head loaded successfully ({len(sam_compression_head_state)} parameters)")
+                else:
+                    if is_main_process():
+                        print(f"[resume] WARNING: No SAM compression head found at {sam_compression_head_path}")
             
             # Load LLM LoRA adapter
             lora_path = self.out_dir / f"qwen2_lora_adapter_{tag}"
             if lora_path.exists():
                 if is_main_process():
                     print(f"[resume] loading LLM LoRA adapter from {lora_path}")
+                
+                # Validate LoRA config before loading
+                if not self._validate_lora_config(lora_path, adapter_type="LLM"):
+                    raise RuntimeError(
+                        f"LLM LoRA config mismatch. Cannot resume with different LoRA configuration. "
+                        f"Please use the same lora_r, lora_alpha, and lora_target_modules as the checkpoint, "
+                        f"or start training from scratch with resume=False."
+                    )
+                
                 base_model = (
                     self.base.module
                     if isinstance(self.base, nn.parallel.DistributedDataParallel)
@@ -439,22 +593,55 @@ class Trainer:
                     if adapter_weights_path.exists():
                         adapter_state = torch.load(adapter_weights_path, map_location=self.device)
                     else:
-                        print(f"[resume] WARNING: No LLM adapter weights found in {lora_path}")
-                        adapter_state = None
+                        # This is a critical error - adapter_config.json exists but weights are missing
+                        # This indicates a corrupted or incomplete checkpoint
+                        raise FileNotFoundError(
+                            f"LLM LoRA adapter config exists at {lora_path}/adapter_config.json "
+                            f"but no adapter weights found (checked adapter_model.safetensors and adapter_model.bin). "
+                            f"This indicates a corrupted checkpoint. Either restore the weights or start fresh with resume=False."
+                        )
                 
-                if adapter_state is not None:
-                    from peft import set_peft_model_state_dict
-                    set_peft_model_state_dict(base_model, adapter_state)
-                    if is_main_process():
-                        print(f"[resume] LLM LoRA adapter loaded successfully via set_peft_model_state_dict()")
+                # adapter_state is guaranteed to be set if we reach here (otherwise exception raised)
+                from peft import set_peft_model_state_dict
+                set_peft_model_state_dict(base_model, adapter_state)
+                if is_main_process():
+                    print(f"[resume] LLM LoRA adapter loaded successfully via set_peft_model_state_dict()")
             
             # Load optimizer/scheduler
             self.optim.load_state_dict(prev_state["optimizer"])
             self.sched.load_state_dict(prev_state["scheduler"])
             
-            # Load GradScaler state if available
-            if prev_state.get("scaler") is not None and hasattr(self, 'scaler'):
+            # Migrate optimizer state tensors to the correct device
+            # Checkpoint is loaded with map_location="cpu", but models are on GPU
+            # This prevents device mismatch warnings and CPU-GPU transfer slowdowns
+            for state in self.optim.state.values():
+                for k, v in state.items():
+                    if isinstance(v, torch.Tensor):
+                        state[k] = v.to(self.device)
+            if is_main_process():
+                print(f"[resume] Optimizer state migrated to {self.device}")
+            
+            # Validate mixed_precision mode consistency and restore GradScaler state
+            current_mixed_prec = self.config.get('mixed_precision', 'fp16' if self.config.get('fp16', False) else 'no')
+            saved_mixed_prec = prev_state.get("mixed_precision")
+            
+            if saved_mixed_prec is not None and saved_mixed_prec != current_mixed_prec:
+                # Mixed precision mode changed between checkpoint and current run
+                if is_main_process():
+                    print(f"[resume] WARNING: mixed_precision mode changed from '{saved_mixed_prec}' to '{current_mixed_prec}'")
+                    print(f"[resume] GradScaler state will NOT be restored due to mode change")
+                # Don't restore scaler state - it's incompatible
+            elif prev_state.get("scaler") is not None and hasattr(self, 'scaler') and current_mixed_prec == 'fp16':
+                # Only restore scaler state if:
+                # 1. Scaler state exists in checkpoint
+                # 2. Current mode is fp16 (where scaler is actually enabled)
+                # 3. Mixed precision mode is consistent (or old checkpoint without saved mode)
                 self.scaler.load_state_dict(prev_state["scaler"])
+                if is_main_process():
+                    print(f"[resume] GradScaler state restored for fp16 mode")
+            elif current_mixed_prec == 'bf16' and is_main_process():
+                # bf16 mode doesn't use GradScaler, so no restoration needed
+                print(f"[resume] bf16 mode: GradScaler not used, skipping scaler state restoration")
             
             # Restore training state (epoch-level resume only)
             saved_epoch = prev_state["epoch"]
@@ -566,6 +753,14 @@ class Trainer:
                     
                     if self.global_step >= self.total_steps:
                         break
+            
+            # Flush any remaining accumulated gradients at end of epoch
+            # This handles cases where len(dataloader) % grad_accum != 0
+            remaining_grads = epoch_count % self.config["grad_accum"]
+            if remaining_grads > 0 and self.global_step < self.total_steps:
+                self._optimizer_step()
+                self.global_step += 1
+                pbar.update(1)
             
             # Epoch complete
             avg_epoch_loss = epoch_loss_sum / max(1, epoch_count)
@@ -770,9 +965,9 @@ class Trainer:
                             tok_str, self.nusc, runtime=self.runtime, view_order=DEFAULT_VIEW_ORDER, strict=False
                         )
                         
-                        if not mv.get("tokens") or len(mv["tokens"]) != 6:
-                            dummy_shape = (256, 2048)  # HW=256 for 16x16 grid, D=2048
-                            mv["tokens"] = [torch.zeros(dummy_shape, device=self.device, dtype=self.amp_dtype) for _ in range(6)]
+                        if not mv.get("tokens") or len(mv["tokens"]) != NUM_VIEWS:
+                            dummy_shape = (TOKENS_PER_VIEW, PROJECTOR_DIM)  # [256, 2048] per view
+                            mv["tokens"] = [torch.zeros(dummy_shape, device=self.device, dtype=self.amp_dtype) for _ in range(NUM_VIEWS)]
                         
                         vt = [t.to(self.device) for t in mv["tokens"]]
                         
@@ -804,11 +999,13 @@ class Trainer:
                 return self._special_token_cache[txt]
             
             # Process LiDAR (if enabled)
+            # Note: VAT models now include learned output_scale internally,
+            # replacing the external prefix_scale multiplication.
             debug.start_timer("trainer", "lidar_vat")
             prefix_lidar = None
             if use_lidar_in_training:
                 debug.data_flow("trainer", "lidar_start", f"Input BEV shape={tuple(bev.shape)}")
-                prefix_lidar = self.vat_lidar(bev) * self.config["prefix_scale"]
+                prefix_lidar = self.vat_lidar(bev)  # Learned scale applied inside VAT
                 debug.shape("trainer", "prefix_lidar", prefix_lidar)
                 debug.tensor_stats("trainer", "prefix_lidar", prefix_lidar)
                 debug.data_flow("trainer", "lidar_complete", f"Output shape={tuple(prefix_lidar.shape)}")
@@ -821,7 +1018,7 @@ class Trainer:
             prefix_vision = None
             if vision_kv is not None and use_vision_in_training:
                 debug.data_flow("trainer", "vision_vat_start", f"Input shape={tuple(vision_kv.shape)}")
-                prefix_vision = self.vat_vision(vision_kv) * self.config["prefix_scale"]
+                prefix_vision = self.vat_vision(vision_kv)  # Learned scale applied inside VAT
                 debug.shape("trainer", "prefix_vision", prefix_vision)
                 debug.tensor_stats("trainer", "prefix_vision", prefix_vision)
                 debug.data_flow("trainer", "vision_vat_complete", f"Output shape={tuple(prefix_vision.shape)}")
@@ -833,58 +1030,45 @@ class Trainer:
             tok_emb = E(p_ids)
             debug.shape("trainer", "text_embeddings", tok_emb)
             
-            # Build input pieces based on toggles
-            debug.data_flow("trainer", "embedding_assembly", "Building input sequence")
-            pieces = []
-            piece_names = []
-            
-            # Add vision tokens if enabled
-            if prefix_vision is not None:
-                vision_start = get_cached_emb("<vision_start>").expand(prefix_vision.size(0), -1, -1)
-                vision_end = get_cached_emb("<vision_end>").expand(prefix_vision.size(0), -1, -1)
-                
-                pieces += [vision_start, prefix_vision, vision_end]
-                piece_names += ["vision_start", "vision_tokens", "vision_end"]
-                
-                debug.shape("trainer", "vision_start_token", vision_start)
-                debug.shape("trainer", "vision_end_token", vision_end)
-            
-            # Add LiDAR tokens if enabled
-            if prefix_lidar is not None:
-                lidar_start = get_cached_emb("<lidar_start>").expand(prefix_lidar.size(0), -1, -1)
-                lidar_end = get_cached_emb("<lidar_end>").expand(prefix_lidar.size(0), -1, -1)
-                
-                pieces += [lidar_start, prefix_lidar, lidar_end]
-                piece_names += ["lidar_start", "lidar_tokens", "lidar_end"]
-                
-                debug.shape("trainer", "lidar_start_token", lidar_start)
-                debug.shape("trainer", "lidar_end_token", lidar_end)
-            
-            # Always add text prompt
-            pieces.append(tok_emb)
-            piece_names.append("text_prompt")
-            
-            debug.debug("trainer", f"Input sequence order: {' → '.join(piece_names)}")
-            
-            inp = torch.cat(pieces, dim=1)
-            debug.shape("trainer", "concatenated_input", inp)
-            
-            # Add answer embeddings
+            # Get answer embeddings
             ans_emb = E(a_ids)
             debug.shape("trainer", "answer_embeddings", ans_emb)
             
-            inp = torch.cat([inp, ans_emb], dim=1)
+            # Build input sequence with explicit position markers
+            # Order is guaranteed: vision → lidar → text → answer
+            # See sequence_builder.py for position definitions
+            debug.data_flow("trainer", "embedding_assembly", "Building input sequence with explicit positions")
+            
+            B = bev.size(0)
+            inp, seq_info = build_training_sequence(
+                E=E,
+                device=self.device,
+                dtype=self.amp_dtype,
+                batch_size=B,
+                tok_emb=tok_emb,
+                ans_emb=ans_emb,
+                prefix_vision=prefix_vision,
+                prefix_lidar=prefix_lidar,
+                get_special_token_emb=get_cached_emb,
+            )
+            
+            debug.debug("trainer", f"Input sequence order: {' → '.join(seq_info['order'])}")
             debug.shape("trainer", "full_input_with_answer", inp)
             
-            B = inp.size(0)
             total_len = inp.size(1)
             debug.debug("trainer", f"Final sequence: batch_size={B}, total_length={total_len}")
             
             # Create labels (only answer tokens are supervised)
-            labels = torch.full((B, total_len), -100, dtype=torch.long, device=self.device)
-            labels[:, -a_ids.size(1) :] = a_ids
+            # Use explicit position info to find answer location
+            if ModalityPosition.ANSWER_TOKENS in seq_info['positions']:
+                ans_start, ans_end = seq_info['positions'][ModalityPosition.ANSWER_TOKENS]
+                labels = torch.full((B, total_len), -100, dtype=torch.long, device=self.device)
+                labels[:, ans_start:ans_end] = a_ids
+                debug.debug("trainer", f"Supervised tokens: positions {ans_start}:{ans_end} ({ans_end - ans_start} tokens)")
+            else:
+                raise RuntimeError("Answer tokens not found in sequence - this should never happen")
+            
             debug.shape("trainer", "labels", labels)
-            debug.debug("trainer", f"Supervised tokens: {a_ids.size(1)} out of {total_len}")
             
             # Create attention mask
             attn = torch.ones((B, total_len), dtype=torch.long, device=self.device)
@@ -1001,6 +1185,7 @@ class Trainer:
             clip_vit=self.runtime.clip_vit if self.config["use_vision"] else None,
             vision_adapter=self.vision_adapter if self.config["use_vision"] else None,
             projector=self.runtime.projector if self.config["use_vision"] else None,
+            sam=self.runtime.sam if self.config["use_vision"] else None,  # SAM compression head
             sched_meta=self.sched_meta,
             config=self.config,
             val_losses=self.val_losses,
@@ -1029,4 +1214,14 @@ class Trainer:
             torch.save(unwrap(self.vision_adapter).state_dict(), self.out_dir / "vision_adapter_best.pt")
             torch.save(unwrap(self.runtime.projector).state_dict(), self.out_dir / "projector_best.pt")
             unwrap(self.runtime.clip_vit).save_pretrained(self.out_dir / "clip_lora_adapter_best")
-            print(f"[best-val] saved all vision components")
+            
+            # Save SAM compression head (net_2 and net_3 - the trainable DeepEncoder/VARY layers)
+            sam_model = unwrap(self.runtime.sam)
+            sam_compression_head_state = {
+                name: param.clone() for name, param in sam_model.named_parameters()
+                if name.startswith("net_2") or name.startswith("net_3")
+            }
+            if sam_compression_head_state:
+                torch.save(sam_compression_head_state, self.out_dir / "sam_compression_head_best.pt")
+            
+            print(f"[best-val] saved all vision components (including SAM compression head)")

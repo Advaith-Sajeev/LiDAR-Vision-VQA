@@ -39,7 +39,10 @@ class InferenceEngine:
         self.d_model = models["d_model"]
         
         self.use_vision = self.config.get("use_vision", False) and self.vat_vision is not None
-        self.prefix_scale = self.config.get("prefix_scale", 0.2)
+        # DEPRECATED: prefix_scale is no longer applied externally.
+        # VAT models now include learned output_scale parameters.
+        # Keeping for backward compatibility - set to 1.0 to avoid double scaling.
+        self.prefix_scale = self.config.get("prefix_scale", 1.0)
         self.system_prompt = self.config.get("system_prompt", "")
         
         # Special token IDs
@@ -106,7 +109,8 @@ class InferenceEngine:
         
         with torch.no_grad():
             # Get camera images for this sample using DeepEncoder
-            from deepencoder.deepencoder_infer import multiview_tokens_from_sample_token, DEFAULT_VIEW_ORDER
+            from deepencoder.deepencoder_infer import multiview_tokens_from_sample_token
+            from configs.default_config import DEFAULT_VIEW_ORDER
             
             mv = multiview_tokens_from_sample_token(
                 sample_token=sample_token,
@@ -183,7 +187,8 @@ class InferenceEngine:
                 # Vision start token
                 embeds_list.append(text_embeds[:, vs:vs+1, :])
                 
-                # Vision prompts (scaled)
+                # Vision prompts (VAT models now include learned output_scale internally)
+                # prefix_scale kept for backward compatibility with old checkpoints (default 1.0)
                 embeds_list.append(vision_prompts * self.prefix_scale)
                 
                 # Vision end token
@@ -206,7 +211,8 @@ class InferenceEngine:
             # LiDAR start token
             embeds_list.append(text_embeds[:, ls:ls+1, :])
             
-            # LiDAR prompts (scaled)
+            # LiDAR prompts (VAT models now include learned output_scale internally)
+            # prefix_scale kept for backward compatibility with old checkpoints (default 1.0)
             embeds_list.append(lidar_prompts * self.prefix_scale)
             
             # LiDAR end token

@@ -147,8 +147,8 @@ def test_deepencoder_full_pipeline_shapes(patched_runtime, test_image_path):
     img_1024.save(save_path)
     print(f"\n[Saved resized/padded image] -> {save_path}")
 
-    # 3) Normalize using package helper
-    x = _pil_to_tensor_og_norm(img_1024).to(device=runtime.device, dtype=runtime.dtype)
+    # 3) Normalize using package helper (use target dtype directly to save memory)
+    x = _pil_to_tensor_og_norm(img_1024, dtype=runtime.dtype).to(device=runtime.device)
     shapes["normalized_tensor"] = tuple(x.shape)  # [1,3,1024,1024]
 
     # --- instrument _sam_features ---

@@ -43,7 +43,7 @@ class VATVision(torch.nn.Module):
         d_in: int,
         d_model: int,
         n_input_tokens: int = 1536,
-        compression_factor: int = 2,
+        n_queries: int = 768,
         n_layers: int = 4,
         n_heads: int = 8,
         mlp_ratio: float = 4.0,
@@ -54,17 +54,19 @@ class VATVision(torch.nn.Module):
         super().__init__()
         
         NUM_VIEWS = 6
-        assert n_input_tokens % compression_factor == 0
+        assert n_queries > 0
         
         self.d_in = d_in
         self.d_model = d_model
         self.n_input_tokens = n_input_tokens
-        self.compression_factor = compression_factor
-        self.n_queries = n_input_tokens // compression_factor
+        self.n_queries = n_queries
         
-        assert self.n_queries % NUM_VIEWS == 0
+        # For per-view queries, n_queries must be divisible by NUM_VIEWS
+        if use_per_view_query:
+            assert self.n_queries % NUM_VIEWS == 0, \
+                f"use_per_view_query requires n_queries ({n_queries}) divisible by NUM_VIEWS ({NUM_VIEWS})"
         
-        self.nq_per_view = self.n_queries // NUM_VIEWS
+        self.nq_per_view = self.n_queries // NUM_VIEWS if use_per_view_query else 0
         self.use_per_view_query = use_per_view_query
 
         self.query = torch.nn.Parameter(torch.randn(self.n_queries, d_in) * 0.02)
@@ -178,7 +180,7 @@ def test_vision_pipeline():
         d_in=d_model,  # VATVision receives d_model from VisionAdapter
         d_model=d_model,
         n_input_tokens=1536,
-        compression_factor=2,
+        n_queries=768,  # Direct: any positive integer
         n_layers=4,
         n_heads=8,
         dropout=0.1,
@@ -186,7 +188,6 @@ def test_vision_pipeline():
     print(f"✓ VATVision initialized")
     print(f"  Input tokens: {vat.n_input_tokens}")
     print(f"  Input dimension: {vat.d_in}")
-    print(f"  Compression factor: {vat.compression_factor}")
     print(f"  Output tokens: {vat.n_queries}")
     print(f"  Output dimension: {vat.d_model}")
     print(f"  Queries per view: {vat.nq_per_view}")
@@ -292,7 +293,7 @@ def test_vision_pipeline():
             d_in=target_dim,
             d_model=target_dim,
             n_input_tokens=1536,
-            compression_factor=2,
+            n_queries=768,  # Direct: any positive integer
             n_layers=2,
             n_heads=8,
         )

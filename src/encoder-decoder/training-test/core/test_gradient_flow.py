@@ -223,14 +223,14 @@ def test_vat_vision_gradient_flow():
     # Create VATVision
     d_model = 896
     n_input_tokens = 1536  # 6 views * 256 tokens
-    compression_factor = 128  # gives 12 queries
+    n_queries = 12  # Direct: any positive integer
     device = torch.device("cpu")
     
     vat_vision = VATVision(
         d_in=d_model,
         d_model=d_model,
         n_input_tokens=n_input_tokens,
-        compression_factor=compression_factor,
+        n_queries=n_queries,  # Direct: any positive integer
         n_layers=2,
         n_heads=4,
         mlp_ratio=4.0,
@@ -260,10 +260,9 @@ def test_vat_vision_gradient_flow():
     loss = output.sum()
     loss.backward()
     
-    expected_n_queries = n_input_tokens // compression_factor
     print(f"\nOutput shape: {output.shape}")
-    print(f"Expected shape: [2, {expected_n_queries}, {d_model}]")
-    assert output.shape == (2, expected_n_queries, d_model), f"Shape mismatch: {output.shape}"
+    print(f"Expected shape: [2, {n_queries}, {d_model}]")
+    assert output.shape == (2, n_queries, d_model), f"Shape mismatch: {output.shape}"
     
     # Check gradients on all parameters
     print("\n" + "-"*60)
@@ -331,7 +330,7 @@ def test_optimizer_parameter_groups():
         d_in=512,
         d_model=512,
         n_input_tokens=1536,
-        compression_factor=128,
+        n_queries=12,  # Direct: any positive integer
         n_layers=1,
         n_heads=4,
     ).to(device)
@@ -405,7 +404,7 @@ def test_end_to_end_gradient_flow():
     vat_lidar = VATLiDAR(c_in=128, d_model=512, n_queries=12, n_layers=1, n_heads=4).to(device)
     vision_adapter = VisionAdapter(2048, 512, dropout=0.0).to(device)
     vat_vision = VATVision(d_in=512, d_model=512, n_input_tokens=1536, 
-                           compression_factor=128, n_layers=1, n_heads=4).to(device)
+                           n_queries=12, n_layers=1, n_heads=4).to(device)
     
     # Store initial params
     initial_lidar = {n: p.clone().detach() for n, p in vat_lidar.named_parameters()}

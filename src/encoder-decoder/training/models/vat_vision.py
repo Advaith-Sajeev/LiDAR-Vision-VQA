@@ -19,24 +19,33 @@ NUM_VIEWS = 6
 
 class VATVision(nn.Module):
     """
-    Reduces vision tokens and projects embeddings to d_model dimension.
+    Compresses vision tokens via cross-attention and refines embeddings.
     
-    Two-stage compression:
-    1. Token reduction: Reduces number of tokens via cross-attention
-    2. Dimension projection: Projects token embeddings via MLP
+    Data flow:
+    1. DeepEncoder: Raw images → [256, 2048] tokens per view (CLIP + SAM features)
+    2. VisionAdapter: 6 views concatenated + projected → [1536, d_model]
+    3. VATVision (this): Cross-attention compression → [n_queries, d_model]
+    
+    Architecture:
+    - Uses learnable query tokens that cross-attend to input vision tokens
+    - Token reduction: 1536 → n_queries tokens (any value allowed)
+    - Dimension preserved: d_model → d_model (d_in == d_model in current setup)
 
     Shapes:
-      Input:  [B, N_img_tokens (1536), d_in] where d_in = d_model (from VisionAdapter)
-      After VAT: [B, n_queries (768), d_in]
-      Output: [B, n_queries (768), d_model]
+      Input:  [B, 1536, d_model] from VisionAdapter
+      Queries: [n_queries, d_model] learnable parameters
+      After VAT blocks: [B, n_queries, d_model]
+      Output: [B, n_queries, d_model]
     
-    Note: VisionAdapter projects DeepEncoder output (2048) to d_model before passing to VATVision.
+    Note: In the current architecture, d_in == d_model since VisionAdapter already
+    projects DeepEncoder's 2048-dim output to d_model before passing to VATVision.
+    The final projection layer is effectively a refinement MLP (d_model → d_model).
     
     Args:
-        d_in: Input dimension from VisionAdapter (typically d_model, e.g., 896 for Qwen2.5-0.5B)
+        d_in: Input dimension from VisionAdapter (equals d_model, e.g., 896 for Qwen2.5-0.5B)
         d_model: Target output dimension (same as d_in in current architecture)
-        n_input_tokens: Total tokens from VisionAdapter (6 * 256 = 1536)
-        compression_factor: Reduce tokens by this factor (e.g., 2 gives 768 queries)
+        n_input_tokens: Total tokens from VisionAdapter (6 views * 256 tokens = 1536)
+        n_queries: Number of output query tokens (any positive integer)
         n_layers: Number of VAT transformer blocks
         n_heads: Number of attention heads per block
         mlp_ratio: MLP hidden dimension expansion ratio
@@ -48,10 +57,10 @@ class VATVision(nn.Module):
     
     def __init__(
         self,
-        d_in: int,  # Input dimension from VisionAdapter (e.g., 2048)
-        d_model: int,  # Target output dimension (e.g., 512)
-        n_input_tokens: int = 1536,  # Total tokens from VisionAdapter (6 * 256)
-        compression_factor: int = 2,  # Reduce tokens by this factor
+        d_in: int,  # Input dimension from VisionAdapter (equals d_model, e.g., 896)
+        d_model: int,  # Output dimension (same as d_in in current architecture)
+        n_input_tokens: int = 1536,  # Total tokens from VisionAdapter (6 views * 256)
+        n_queries: int = 768,  # Number of output query tokens (any positive integer)
         n_layers: int = 4,
         n_heads: int = 8,
         mlp_ratio: float = 4.0,
@@ -62,15 +71,13 @@ class VATVision(nn.Module):
     ):
         super().__init__()
         
-        # Calculate n_queries from compression
-        assert n_input_tokens % compression_factor == 0, \
-            f"n_input_tokens ({n_input_tokens}) must be divisible by compression_factor ({compression_factor})"
+        # Store dimensions directly - no divisibility constraint needed
+        assert n_queries > 0, f"n_queries must be positive, got {n_queries}"
         
         self.d_in = d_in
         self.d_model = d_model
         self.n_input_tokens = n_input_tokens
-        self.compression_factor = compression_factor
-        self.n_queries = n_input_tokens // compression_factor  # e.g., 1536 // 2 = 768
+        self.n_queries = n_queries
         
         # Check if per-view queries are feasible
         per_view_feasible = (
@@ -139,6 +146,13 @@ class VATVision(nn.Module):
             nn.LayerNorm(d_model),
         )
         
+        # Learnable output scale for matching LLM embedding magnitudes.
+        # Initialized to 1.0 - the model learns optimal scaling during training.
+        # This replaces the arbitrary fixed prefix_scale (e.g., 0.2) that was applied
+        # externally after VAT processing. Since VAT outputs are already LayerNorm'd,
+        # the learned scale adapts to match LLM text embedding statistics.
+        self.output_scale = nn.Parameter(torch.ones(1))
+        
         # Gradient checkpointing flag
         self._gradient_checkpointing = False
     
@@ -159,13 +173,14 @@ class VATVision(nn.Module):
 
     def forward(self, kv_tokens: torch.Tensor) -> torch.Tensor:
         """
-        Compress vision tokens and project to target dimension.
+        Compress vision tokens via cross-attention.
         
         Args:
-            kv_tokens: Vision tokens from VisionAdapter [B, 1536, 2048]
+            kv_tokens: Vision tokens from VisionAdapter [B, 1536, d_model]
+                       (6 views * 256 tokens, already projected from 2048 to d_model)
             
         Returns:
-            Compressed and projected tokens [B, 768, d_model]
+            Compressed tokens [B, 768, d_model] (1536 tokens compressed to 768)
         """
         if DEBUG_AVAILABLE:
             debug.trace("vat_vision", "=" * 40)
@@ -192,7 +207,7 @@ class VATVision(nn.Module):
         
         if DEBUG_AVAILABLE:
             debug.shape("vat_vision", "initialized_queries", q)
-            debug.debug("vat_vision", f"Target queries: {self.n_queries} (compression: {self.compression_factor}x)")
+            debug.debug("vat_vision", f"Target queries: {self.n_queries} (from {self.n_input_tokens} input tokens)")
 
         # Add per-view query embeddings if enabled
         if self.use_per_view_query and self.nq_per_view > 0:
@@ -245,10 +260,15 @@ class VATVision(nn.Module):
         # This reduces the embedding dimension: 2048 -> d_model
         q = self.proj(q)  # [B, 768, d_model]
         
+        # Apply learned output scale to match LLM embedding magnitudes.
+        # This replaces external prefix_scale multiplication.
+        q = q * self.output_scale
+        
         if DEBUG_AVAILABLE:
             debug.shape("vat_vision", "output", q)
             debug.tensor_stats("vat_vision", "output", q)
             debug.debug("vat_vision", f"Dimension reduction: {self.d_in} → {self.d_model}")
+            debug.debug("vat_vision", f"output_scale: {self.output_scale.item():.4f}")
             debug.end_timer("vat_vision", "final_processing")
             debug.trace("vat_vision", "Vision VAT Complete")
         

@@ -62,7 +62,7 @@ def visualize_sector_assignments(H: int = 64, W: int = 64, save_path: Path | Non
     model = VATLiDAR(c_in=64, d_model=256, n_queries=576).to(device).eval()
 
     with torch.no_grad():
-        geom, sid = model._grid(H, W, device)
+        geom, sid = model._grid(H, W, device, torch.float32)
 
     sid_grid = sid.cpu().numpy().reshape(H, W)
 
@@ -172,8 +172,9 @@ def test_geometric_features():
     model = VATLiDAR(c_in=256, d_model=512, n_queries=576).to(device).eval()
 
     H, W = 50, 50
+    dtype = torch.float32  # Default dtype for testing
     with torch.no_grad():
-        geom, sid = model._grid(H, W, device)
+        geom, sid = model._grid(H, W, device, dtype)
 
     assert geom.shape == (H * W, 5), f"geom shape {geom.shape}, expected {(H*W, 5)}"
     assert sid.shape == (H * W,), f"sid shape {sid.shape}, expected {(H*W,)}"
@@ -190,13 +191,20 @@ def test_geometric_features():
     assert len(unique_sids) == 6, "Expected 6 unique sectors"
     assert all(0 <= v < 6 for v in unique_sids), "Sector IDs must be in [0, 5]"
 
-    # Cache check
+    # Cache check - same dtype should use cache
     with torch.no_grad():
-        geom2, sid2 = model._grid(H, W, device)
+        geom2, sid2 = model._grid(H, W, device, dtype)
     assert torch.equal(geom, geom2), "Cached geom mismatch"
     assert torch.equal(sid, sid2), "Cached sid mismatch"
+    
+    # Verify dtype-aware caching: different dtype should create new cache entry
+    dtype_bf16 = torch.bfloat16
+    with torch.no_grad():
+        geom_bf16, sid_bf16 = model._grid(H, W, device, dtype_bf16)
+    assert geom_bf16.dtype == dtype_bf16, f"Expected bf16 dtype, got {geom_bf16.dtype}"
+    assert geom.dtype == dtype, f"Original geom should still be {dtype}"
 
-    print("  ✓ Geometric features & caching OK\n")
+    print("  ✓ Geometric features & dtype-aware caching OK\n")
 
 
 def test_view_embedding_assignment():

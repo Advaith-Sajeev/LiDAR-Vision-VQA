@@ -177,25 +177,42 @@ def resize_and_pad_to_square(im: Image.Image, target: int = FIXED_IMAGE_SIZE) ->
     return canvas
 
 
-def _pil_to_tensor_og_norm(im: Image.Image) -> torch.Tensor:
+def _pil_to_tensor_og_norm(im: Image.Image, dtype: torch.dtype = torch.float32) -> torch.Tensor:
     """PIL RGB -> FloatTensor [1,3,H,W] with **OG normalization** to [-1, 1].
     Steps: convert to [0,1], then (x - 0.5) / 0.5
+    
+    Args:
+        im: PIL Image in RGB mode
+        dtype: Target dtype for the output tensor (default: float32)
+               Using target dtype directly saves memory by avoiding intermediate float32 allocation
+               
+    Returns:
+        Tensor [1,3,H,W] in range [-1, 1] with the specified dtype
     """
     if im.mode != "RGB":
         im = im.convert("RGB")
-    arr = np.array(im).astype(np.float32) / 255.0  # [0,1]
+    # Use float32 for numpy operations (required for division), then convert to target dtype
+    arr = np.array(im, dtype=np.float32) / 255.0  # [0,1]
     t = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0)  # [1,3,H,W]
     t = (t - 0.5) / 0.5  # OG normalization → [-1,1]
+    # Convert to target dtype if not float32 (saves memory when using fp16/bf16)
+    if dtype != torch.float32:
+        t = t.to(dtype=dtype)
     return t
 
 
-def load_and_preprocess_image(image_path: Optional[Path]) -> Optional[torch.Tensor]:
+def load_and_preprocess_image(
+    image_path: Optional[Path], 
+    dtype: torch.dtype = torch.float32
+) -> Optional[torch.Tensor]:
     """
     Load and preprocess a single image for vision encoding.
     This function is designed to be called in DataLoader workers (CPU-bound).
     
     Args:
         image_path: Path to the image file, or None if missing
+        dtype: Target dtype for the tensor (default: float32)
+               Pass target dtype (e.g., bfloat16) to save memory
         
     Returns:
         Preprocessed tensor [1, 3, 1024, 1024] on CPU, or None if loading fails
@@ -205,7 +222,7 @@ def load_and_preprocess_image(image_path: Optional[Path]) -> Optional[torch.Tens
     try:
         img = Image.open(str(image_path))
         img = resize_and_pad_to_square(img)
-        x = _pil_to_tensor_og_norm(img)  # [1, 3, 1024, 1024] on CPU
+        x = _pil_to_tensor_og_norm(img, dtype=dtype)  # [1, 3, 1024, 1024] on CPU
         return x
     except Exception as e:
         debug.warn(_MODULE, f"Failed to load image {image_path}: {e}")
@@ -316,7 +333,8 @@ def deepencoder_infer(
     # 1) Load and prep image → fixed 1024×1024 with OG normalization (via padding after aspect-preserving resize)
     img = Image.open(image_path)
     img = resize_and_pad_to_square(img)
-    x = _pil_to_tensor_og_norm(img).to(device=device, dtype=dtype)  # [1,3,1024,1024], [-1,1]
+    # Use target dtype directly to save memory (avoid intermediate float32 allocation)
+    x = _pil_to_tensor_og_norm(img, dtype=dtype).to(device=device)  # [1,3,1024,1024], [-1,1]
 
     # 2) Build SAM ViT-B and load checkpoint
     sam = build_sam_vit_b(checkpoint=sam_ckpt).to(device=device, dtype=dtype)
@@ -375,15 +393,8 @@ def _to_dtype(s: str) -> torch.dtype:
 from typing import List, Optional, Sequence, Tuple
 from nuscenes.nuscenes import NuScenes
 
-# Fixed 6-view order (front, front_right, front_left, back, back_right, back_left)
-DEFAULT_VIEW_ORDER: Tuple[str, ...] = (
-    "CAM_FRONT",
-    "CAM_FRONT_RIGHT",
-    "CAM_FRONT_LEFT",
-    "CAM_BACK",
-    "CAM_BACK_RIGHT",
-    "CAM_BACK_LEFT",
-)
+# Import from centralized config
+from configs.default_config import DEFAULT_VIEW_ORDER
 
 
 def resolve_cam_image_paths(
@@ -548,7 +559,8 @@ class DeepEncoderRuntime:
         img = Image.open(image_path)
         original_size = img.size
         img = resize_and_pad_to_square(img)
-        x = _pil_to_tensor_og_norm(img).to(device=self.device, dtype=self.dtype)  # [1,3,1024,1024]
+        # Use target dtype directly to save memory (avoid intermediate float32 allocation)
+        x = _pil_to_tensor_og_norm(img, dtype=self.dtype).to(device=self.device)  # [1,3,1024,1024]
         debug.trace(_MODULE, f"📐 Image: {original_size} → {img.size} → tensor {x.shape} dtype={x.dtype}")
 
         # SAM features (frozen)
@@ -754,8 +766,9 @@ class DeepEncoderRuntime:
             try:
                 img = Image.open(str(p))
                 img = resize_and_pad_to_square(img)
-                # Convert to tensor on CPU first (faster in parallel)
-                x = _pil_to_tensor_og_norm(img)  # [1, 3, 1024, 1024] on CPU
+                # Convert to tensor on CPU with target dtype
+                # Using target dtype directly saves memory during torch.cat() later
+                x = _pil_to_tensor_og_norm(img, dtype=self.dtype)  # [1, 3, 1024, 1024] on CPU
                 return (b_idx, v_idx, x)
             except Exception as e:
                 debug.warn(_MODULE, f"Failed to load image {p}: {e}")
@@ -794,8 +807,8 @@ class DeepEncoderRuntime:
         
         debug.debug(_MODULE, f"Loaded {len(all_images)} valid images out of {B * V}")
         
-        # Move to GPU and concatenate (batched transfer is more efficient)
-        batch_tensor = torch.cat(all_images, dim=0).to(device=self.device, dtype=self.dtype)  # [N_valid, 3, 1024, 1024]
+        # Move to GPU (already in target dtype from load_and_preprocess)
+        batch_tensor = torch.cat(all_images, dim=0).to(device=self.device)  # [N_valid, 3, 1024, 1024]
         
         # Batch encode all valid images on GPU
         all_tokens = self.encode_images_batch(batch_tensor)  # [N_valid, HW, 2048]

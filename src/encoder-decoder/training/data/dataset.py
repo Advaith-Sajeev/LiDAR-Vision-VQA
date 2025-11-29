@@ -7,7 +7,15 @@ from pathlib import Path
 from torch.utils.data import Dataset
 from typing import Dict, List, Optional, Sequence
 
-from .utils import load_json_any, collect_feature_tokens
+from .utils import (
+    load_json_any, 
+    collect_feature_tokens, 
+    collect_feature_tokens_with_validation,
+    validate_json_schema as _validate_json_schema,
+    validate_token_coverage as _validate_token_coverage,
+    validate_image_paths as _validate_image_paths,
+    validate_bev_dtype_and_range,
+)
 
 
 # Import debug logger
@@ -18,15 +26,19 @@ except ImportError:
     DEBUG_AVAILABLE = False
 
 
-# Default camera view order for nuScenes
-DEFAULT_VIEW_ORDER = (
-    "CAM_FRONT",
-    "CAM_FRONT_RIGHT",
-    "CAM_BACK_RIGHT",
-    "CAM_BACK",
-    "CAM_BACK_LEFT",
-    "CAM_FRONT_LEFT",
-)
+# Import camera view config from centralized config
+try:
+    from configs.default_config import DEFAULT_VIEW_ORDER
+except ImportError:
+    # Fallback if configs not in path
+    DEFAULT_VIEW_ORDER = (
+        "CAM_FRONT",
+        "CAM_FRONT_RIGHT",
+        "CAM_FRONT_LEFT",
+        "CAM_BACK",
+        "CAM_BACK_RIGHT",
+        "CAM_BACK_LEFT",
+    )
 
 
 class MixedNuDataset(Dataset):
@@ -50,6 +62,17 @@ class MixedNuDataset(Dataset):
         nusc=None,  # NuScenes object for image loading
         load_images: bool = False,  # Whether to load camera images
         view_order: Sequence[str] = DEFAULT_VIEW_ORDER,
+        # Validation settings (can be passed from config)
+        validate_bev_shapes: bool = True,
+        validate_all_bev: bool = False,
+        bev_validation_sample_fraction: float = 0.1,
+        bev_validation_min_samples: int = 10,
+        bev_validation_max_samples: int = 500,
+        bev_validation_workers: int = 16,
+        validate_json_schema: bool = True,
+        validate_token_coverage: bool = True,
+        validate_image_paths: bool = True,
+        validate_bev_dtype: bool = False,  # Slower, off by default
     ):
         if DEBUG_AVAILABLE:
             debug.info("dataset", "Initializing MixedNuDataset")
@@ -60,18 +83,79 @@ class MixedNuDataset(Dataset):
         
         self.target_field = target_field
         
+        from ..utils.distributed import is_main_process
+        
+        # =====================================================================
+        # Phase 1: JSON Schema Validation
+        # =====================================================================
+        if validate_json_schema:
+            if DEBUG_AVAILABLE:
+                debug.data_flow("dataset", "json_validation", "Validating JSON schema")
+            json_result = _validate_json_schema(
+                json_paths,
+                required_fields=("sample_token", "question"),
+                answer_fields=("answer", "answer_lidar", "answer_vision"),
+            )
+            if json_result['issues']:
+                if is_main_process():
+                    for issue in json_result['issues'][:5]:
+                        print(f"[JSON validation] WARNING: {issue}")
+        
+        # =====================================================================
+        # Phase 2: BEV Feature Collection & Shape Validation
+        # =====================================================================
         if DEBUG_AVAILABLE:
             debug.data_flow("dataset", "feature_indexing", "Scanning feature directories")
         
-        self.token2path = collect_feature_tokens(feature_dirs)
-        
-        from ..utils.distributed import is_main_process
+        if validate_bev_shapes:
+            self.token2path, self.bev_shape = collect_feature_tokens_with_validation(
+                feature_dirs, 
+                validate_all=validate_all_bev,
+                sample_fraction=bev_validation_sample_fraction,
+                min_samples=bev_validation_min_samples,
+                max_samples=bev_validation_max_samples,
+                num_workers=bev_validation_workers,
+            )
+        else:
+            self.token2path = collect_feature_tokens(feature_dirs)
+            self.bev_shape = None
         
         if is_main_process():
             print("[features] scanning roots...")
             print(f"[features] unique tokens indexed: {len(self.token2path)}")
+            if self.bev_shape is not None:
+                print(f"[features] validated BEV shape (C,H,W): {self.bev_shape}")
             if DEBUG_AVAILABLE:
                 debug.info("dataset", f"Indexed {len(self.token2path)} BEV feature files")
+                if self.bev_shape:
+                    debug.info("dataset", f"Validated BEV shape: {self.bev_shape}")
+        
+        # =====================================================================
+        # Phase 3: Token Coverage Validation
+        # =====================================================================
+        if validate_token_coverage:
+            if DEBUG_AVAILABLE:
+                debug.data_flow("dataset", "token_coverage", "Checking token coverage")
+            coverage = _validate_token_coverage(self.token2path, json_paths, target_field)
+            if coverage['coverage_percent'] < 50:
+                if is_main_process():
+                    print(f"[Token coverage] WARNING: Only {coverage['coverage_percent']:.1f}% coverage!")
+        
+        # =====================================================================
+        # Phase 4: BEV Dtype & Range Validation (optional, slower)
+        # =====================================================================
+        if validate_bev_dtype and self.token2path:
+            if DEBUG_AVAILABLE:
+                debug.data_flow("dataset", "bev_dtype", "Checking BEV dtype and ranges")
+            dtype_check = validate_bev_dtype_and_range(
+                self.token2path,
+                num_workers=bev_validation_workers,
+            )
+            if dtype_check['nan_issues'] > 0 or dtype_check['inf_issues'] > 0:
+                raise ValueError(
+                    f"BEV features contain invalid values! "
+                    f"NaN: {dtype_check['nan_issues']}, Inf: {dtype_check['inf_issues']}"
+                )
 
         rows = []
         total = 0
@@ -132,6 +216,24 @@ class MixedNuDataset(Dataset):
             self._load_and_preprocess_image = load_and_preprocess_image
             self._resolve_cam_image_paths = resolve_cam_image_paths
         
+        # =====================================================================
+        # Phase 5: Camera Image Path Validation (when loading images)
+        # =====================================================================
+        if validate_image_paths and self.load_images and nusc is not None and self.rows:
+            if DEBUG_AVAILABLE:
+                debug.data_flow("dataset", "image_path_validation", "Validating camera image paths")
+            sample_tokens = [r["sample_token"] for r in self.rows]
+            image_validation = _validate_image_paths(
+                nusc=nusc,
+                sample_tokens=sample_tokens,
+                view_order=self.view_order,
+                num_workers=bev_validation_workers,
+                # max_samples=None checks ALL samples (entire dataset)
+            )
+            if image_validation.get('tokens_with_missing', 0) > 0:
+                if is_main_process():
+                    print(f"[Image validation] ⚠️  {image_validation['tokens_with_missing']} samples have missing camera views")
+        
         if is_main_process():
             print(f"[dataset] total={total}  kept={len(self.rows)}  no_feature/qa={no_feature}/{no_qa}")
             if self.load_images:
@@ -145,6 +247,16 @@ class MixedNuDataset(Dataset):
 
     def __len__(self):
         return len(self.rows)
+    
+    @property
+    def bev_channels(self) -> Optional[int]:
+        """Return the number of BEV feature channels (C dimension)."""
+        return self.bev_shape[0] if self.bev_shape else None
+    
+    @property
+    def bev_spatial_shape(self) -> Optional[tuple[int, int]]:
+        """Return the BEV spatial dimensions (H, W)."""
+        return (self.bev_shape[1], self.bev_shape[2]) if self.bev_shape else None
     
     def _load_camera_images(self, sample_token: str) -> List[Optional[torch.Tensor]]:
         """Load and preprocess camera images for a sample (runs in DataLoader workers)."""
@@ -173,6 +285,14 @@ class MixedNuDataset(Dataset):
             debug.trace("dataset", f"Sample token: {tok}")
         
         bev = np.load(self.token2path[tok])  # [C,H,W]
+        
+        # Runtime shape validation (catches issues not found during init sampling)
+        if self.bev_shape is not None and bev.shape != self.bev_shape:
+            raise ValueError(
+                f"BEV shape mismatch at runtime! "
+                f"Expected {self.bev_shape}, got {bev.shape} for token {tok}. "
+                f"File: {self.token2path[tok]}"
+            )
         
         if DEBUG_AVAILABLE and debug.get_debug_level() >= 3:
             debug.shape("dataset", f"bev_{idx}", bev)

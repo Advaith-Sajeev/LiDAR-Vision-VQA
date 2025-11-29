@@ -12,6 +12,43 @@ try:
 except ImportError:
     _HAS_FLASH_ATTN = False
 
+# Check for PyTorch SDPA availability (PyTorch 2.0+)
+_HAS_SDPA = hasattr(F, "scaled_dot_product_attention")
+
+# One-time warnings to avoid log spam
+_WARNED_FLASH_DTYPE = False
+_WARNED_FLASH_CPU = False
+_WARNED_NO_SDPA = False
+
+
+def _chunked_attention(q, k, v, dropout_p=0.0):
+    """
+    Manual chunked attention fallback for PyTorch < 2.0.
+    q, k, v: [B, H, S, D]
+    Returns: [B, H, S, D]
+    """
+    global _WARNED_NO_SDPA
+    if not _WARNED_NO_SDPA:
+        print("[vat_blocks] ⚠️  Using chunked attention fallback (PyTorch < 2.0). "
+              "Consider upgrading to PyTorch 2.0+ for faster SDPA.")
+        _WARNED_NO_SDPA = True
+    
+    B, H, S, D = q.shape
+    chunk_size = min(1024, S)
+    dk = D ** 0.5
+    outputs = []
+    
+    for i in range(0, S, chunk_size):
+        q_chunk = q[:, :, i:i+chunk_size, :]  # [B, H, chunk, D]
+        scores = torch.matmul(q_chunk, k.transpose(-2, -1)) / dk  # [B, H, chunk, S]
+        attn = torch.softmax(scores, dim=-1)
+        if dropout_p > 0.0:
+            attn = F.dropout(attn, p=dropout_p)
+        out_chunk = torch.matmul(attn, v)  # [B, H, chunk, D]
+        outputs.append(out_chunk)
+    
+    return torch.cat(outputs, dim=2)  # [B, H, S, D]
+
 
 class FlashMultiheadAttention(nn.Module):
     """
@@ -63,27 +100,43 @@ class FlashMultiheadAttention(nn.Module):
             k_proj = qkv[:, :, 1]
             v_proj = qkv[:, :, 2]
         
-        # Use Flash Attention if available and input is on CUDA with compatible dtype
-        use_flash = (
-            _HAS_FLASH_ATTN and 
-            q.is_cuda and 
-            q.dtype in (torch.float16, torch.bfloat16)
-        )
+        # Determine attention implementation to use
+        # Priority: Flash Attention > PyTorch SDPA > Chunked fallback
+        global _WARNED_FLASH_DTYPE, _WARNED_FLASH_CPU
+        
+        use_flash = False
+        if _HAS_FLASH_ATTN:
+            if not q.is_cuda:
+                if not _WARNED_FLASH_CPU:
+                    print("[vat_blocks] ⚠️  Flash Attention available but inputs on CPU. Using SDPA fallback.")
+                    _WARNED_FLASH_CPU = True
+            elif q.dtype not in (torch.float16, torch.bfloat16):
+                if not _WARNED_FLASH_DTYPE:
+                    print(f"[vat_blocks] ⚠️  Flash Attention available but dtype={q.dtype}. "
+                          f"Enable mixed precision (fp16/bf16) for faster attention. Using SDPA fallback.")
+                    _WARNED_FLASH_DTYPE = True
+            else:
+                use_flash = True
+        
+        dropout_p = self.dropout if self.training else 0.0
         
         if use_flash:
             # Flash Attention expects [B, S, H, D] format
-            dropout_p = self.dropout if self.training else 0.0
             out = flash_attn_func(q_proj, k_proj, v_proj, dropout_p=dropout_p, causal=False)
             out = out.view(B, Sq, self.d_model)
         else:
-            # Fall back to PyTorch SDPA
-            # Transpose to [B, H, S, D] for SDPA
+            # Transpose to [B, H, S, D] for SDPA/chunked attention
             q_proj = q_proj.transpose(1, 2)
             k_proj = k_proj.transpose(1, 2)
             v_proj = v_proj.transpose(1, 2)
             
-            dropout_p = self.dropout if self.training else 0.0
-            out = F.scaled_dot_product_attention(q_proj, k_proj, v_proj, dropout_p=dropout_p)
+            if _HAS_SDPA:
+                # Use PyTorch's memory-efficient SDPA (PyTorch 2.0+)
+                out = F.scaled_dot_product_attention(q_proj, k_proj, v_proj, dropout_p=dropout_p)
+            else:
+                # Fallback: chunked manual attention for PyTorch < 2.0
+                out = _chunked_attention(q_proj, k_proj, v_proj, dropout_p=dropout_p)
+            
             out = out.transpose(1, 2).contiguous().view(B, Sq, self.d_model)
         
         return self.out_proj(out)

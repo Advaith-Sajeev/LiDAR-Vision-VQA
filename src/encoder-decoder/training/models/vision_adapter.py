@@ -1,15 +1,35 @@
-"""Vision Adapter - adds per-view embeddings and concatenates views.
+"""Vision Adapter - adds per-view embeddings, concatenates views, and projects to d_model.
 
-This version:
-- Takes 6 camera views (fixed order).
-- Adds a learned embedding specific to each camera/view.
-- Concatenates all views into a single sequence: [num_views * HW, d_in].
-- Supports batched processing for efficiency.
+Data flow (upstream):
+- DeepEncoder produces [256, 2048] tokens per view (CLIP 1024 + SAM 1024 features, projected)
+
+This module:
+1. Takes 6 camera views in fixed order (CAM_FRONT, CAM_FRONT_RIGHT, etc.)
+2. Adds a learned embedding specific to each camera/view
+3. Concatenates all views: 6 * [256, 2048] → [1536, 2048]
+4. Projects from 2048 to d_model: [1536, 2048] → [1536, d_model]
+
+Output goes to VATVision for token compression (1536 → 768 tokens).
 """
 
 import torch
 import torch.nn as nn
 from typing import List, Union
+
+# Import camera view config from centralized config
+try:
+    from configs.default_config import DEFAULT_VIEW_ORDER, CAM_VIEWS
+except ImportError:
+    # Fallback if configs not in path
+    DEFAULT_VIEW_ORDER = (
+        "CAM_FRONT",
+        "CAM_FRONT_RIGHT",
+        "CAM_FRONT_LEFT",
+        "CAM_BACK",
+        "CAM_BACK_RIGHT",
+        "CAM_BACK_LEFT",
+    )
+    CAM_VIEWS = DEFAULT_VIEW_ORDER
 
 
 # Import debug logger
@@ -20,33 +40,24 @@ except ImportError:
     DEBUG_AVAILABLE = False
 
 
-# Default view order for nuScenes cameras (6 views)
-DEFAULT_VIEW_ORDER = [
-    "CAM_FRONT",
-    "CAM_FRONT_RIGHT",
-    "CAM_FRONT_LEFT",
-    "CAM_BACK",
-    "CAM_BACK_RIGHT",
-    "CAM_BACK_LEFT",
-]
-
-CAM_VIEWS = tuple(DEFAULT_VIEW_ORDER)  # 6 views, fixed order
-
-
 class VisionAdapter(nn.Module):
     """
-    Adds learned per-view (camera-specific) embeddings to DeepEncoder tokens
-    and concatenates all views into a single sequence.
+    Adds learned per-view embeddings to DeepEncoder tokens, concatenates views,
+    and projects to LLM embedding dimension.
 
     Inputs:
-        views_tokens:
-            List of length V (here 6), where each element is a tensor [HW, d_in]
-            corresponding to one camera view in CAM_VIEWS order.
+        views_tokens: List of 6 tensors, each [256, 2048] from DeepEncoder
+                      (one per camera view in CAM_VIEWS order)
 
     Output:
-        Tensor of shape [num_views * HW, d_model], where:
-            - num_views * HW = total number of tokens (e.g., 6 * 256 = 1536)
-            - d_model = output dimension after projection
+        Tensor [1536, d_model] where:
+            - 1536 = 6 views * 256 tokens per view
+            - d_model = LLM embedding dimension (e.g., 896 for Qwen2.5-0.5B)
+    
+    Args:
+        d_in: Input dimension from DeepEncoder (2048 = CLIP 1024 + SAM 1024)
+        d_model: Output dimension matching LLM embeddings
+        dropout: Dropout rate after normalization
     """
 
     def __init__(self, d_in: int, d_model: int, dropout: float = 0.10):

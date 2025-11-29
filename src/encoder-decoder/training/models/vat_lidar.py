@@ -119,10 +119,17 @@ class VATLiDAR(nn.Module):
             nn.Dropout(post_dropout),
             nn.Linear(d_model, d_model),
         )
+        
+        # Learnable output scale for matching LLM embedding magnitudes.
+        # Initialized to 1.0 - the model learns optimal scaling during training.
+        # This replaces the arbitrary fixed prefix_scale (e.g., 0.2) that was applied
+        # externally after VAT processing. Since VAT outputs are already LayerNorm'd,
+        # the learned scale adapts to match LLM text embedding statistics.
+        self.output_scale = nn.Parameter(torch.ones(1))
 
-        # Cache for geometric grid (per (H, W, device)).
-        # Maps (H, W, device) -> (geom: [HW, 5], sid: [HW])
-        self._cache: Dict[Tuple[int, int, torch.device], Tuple[torch.Tensor, torch.Tensor]] = {}
+        # Cache for geometric grid (per (H, W, device, dtype)).
+        # Maps (H, W, device, dtype) -> (geom: [HW, 5], sid: [HW])
+        self._cache: Dict[Tuple[int, int, torch.device, torch.dtype], Tuple[torch.Tensor, torch.Tensor]] = {}
         
         # Gradient checkpointing flag
         self._gradient_checkpointing = False
@@ -142,7 +149,7 @@ class VATLiDAR(nn.Module):
         for blk in self.blocks:
             blk.gradient_checkpointing = False
 
-    def _grid(self, H: int, W: int, device: torch.device) -> Tuple[torch.Tensor, torch.Tensor]:
+    def _grid(self, H: int, W: int, device: torch.device, dtype: torch.dtype) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Build geometric features and sector IDs for an H×W BEV grid.
 
@@ -156,8 +163,10 @@ class VATLiDAR(nn.Module):
                 
         Note: Tensors are cloned when returning from cache to support torch.compile()
               with CUDA graphs, which requires fresh tensor storage on each call.
+              
+        Cache key includes dtype to handle mid-training dtype changes (e.g., fp32 → bf16).
         """
-        key = (H, W, device)
+        key = (H, W, device, dtype)
         if key in self._cache:
             # Clone cached tensors to avoid CUDA graph memory conflicts with torch.compile()
             geom, sid = self._cache[key]
@@ -165,8 +174,8 @@ class VATLiDAR(nn.Module):
 
         # Normalized coordinates: y in [-1, 1] (top→bottom), x in [-1, 1] (left→right).
         yv, xv = torch.meshgrid(
-            torch.linspace(-1.0, 1.0, H, device=device),
-            torch.linspace(-1.0, 1.0, W, device=device),
+            torch.linspace(-1.0, 1.0, H, device=device, dtype=dtype),
+            torch.linspace(-1.0, 1.0, W, device=device, dtype=dtype),
             indexing="ij",
         )
 
@@ -224,6 +233,7 @@ class VATLiDAR(nn.Module):
         
         B, C, H, W = bev.shape
         dev = bev.device
+        dt = bev.dtype  # Track dtype for cache key
         
         if DEBUG_AVAILABLE:
             debug.debug("vat_lidar", f"Input: B={B}, C={C}, H={H}, W={W}")
@@ -252,11 +262,13 @@ class VATLiDAR(nn.Module):
             debug.end_timer("vat_lidar", "projection")
 
         # 3) Add geometric PE.
+        # Note: geom is cached with input dtype (typically float32). Under torch.autocast,
+        # the geo_mlp linear layers automatically handle dtype conversion (e.g., fp32→bf16).
         if DEBUG_AVAILABLE:
             debug.start_timer("vat_lidar", "geometric_pe")
         
-        geom, sid = self._grid(H, W, dev)         # geom: [HW,5], sid: [HW]
-        geo_pe = self.geo_mlp(geom)               # [HW, d_model]
+        geom, sid = self._grid(H, W, dev, dt)     # geom: [HW,5], sid: [HW]
+        geo_pe = self.geo_mlp(geom)               # [HW, d_model] - autocast handles dtype
         x = x + geo_pe.unsqueeze(0)               # [B, HW, d_model]
         
         if DEBUG_AVAILABLE:
@@ -318,9 +330,14 @@ class VATLiDAR(nn.Module):
         q = self.final_ln(q)
         q = self.post(q)  # [B, n_queries, d_model]
         
+        # 8) Apply learned output scale to match LLM embedding magnitudes.
+        # This replaces external prefix_scale multiplication.
+        q = q * self.output_scale
+        
         if DEBUG_AVAILABLE:
             debug.shape("vat_lidar", "output", q)
             debug.tensor_stats("vat_lidar", "output", q)
+            debug.debug("vat_lidar", f"output_scale: {self.output_scale.item():.4f}")
             debug.end_timer("vat_lidar", "final_projection")
             debug.trace("vat_lidar", "LiDAR VAT Complete")
 

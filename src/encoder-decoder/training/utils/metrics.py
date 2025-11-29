@@ -211,9 +211,26 @@ def calculate_caption_metrics(predictions: List[str], references: List[str], con
     else:
         bert_score = None
     
+    # Filter out empty predictions/references to avoid metric calculation crashes
+    # pycocoevalcap and BERTScore can fail or produce undefined results with empty strings
+    valid_pairs = [
+        (i, pred, ref) for i, (pred, ref) in enumerate(zip(predictions, references))
+        if pred.strip() and ref.strip()  # Both must be non-empty after stripping whitespace
+    ]
+    
+    if not valid_pairs:
+        print("[metrics] Warning: All predictions or references are empty. Returning zero scores.")
+        return results
+    
+    # Report if any pairs were filtered
+    num_filtered = len(predictions) - len(valid_pairs)
+    if num_filtered > 0:
+        print(f"[metrics] Filtered {num_filtered}/{len(predictions)} empty prediction/reference pairs")
+    
     # Format for pycocoevalcap (expects dict format)
-    gts = {i: [ref] for i, ref in enumerate(references)}
-    res = {i: [pred] for i, pred in enumerate(predictions)}
+    # Use filtered pairs with re-indexed keys
+    gts = {i: [triplet[2]] for i, triplet in enumerate(valid_pairs)}  # references
+    res = {i: [triplet[1]] for i, triplet in enumerate(valid_pairs)}  # predictions
     
     # BLEU-4
     if needs_bleu:
@@ -243,9 +260,12 @@ def calculate_caption_metrics(predictions: List[str], references: List[str], con
             print(f"[metrics] SPICE calculation failed: {e}")
     
     # BERTScore (only if explicitly enabled - downloads RoBERTa model)
+    # Use filtered predictions/references to avoid empty string issues
     if needs_bertscore and bert_score is not None:
         try:
-            P, R, F1 = bert_score(predictions, references, lang="en", verbose=False)
+            filtered_preds = [triplet[1] for triplet in valid_pairs]
+            filtered_refs = [triplet[2] for triplet in valid_pairs]
+            P, R, F1 = bert_score(filtered_preds, filtered_refs, lang="en", verbose=False)
             results["bertscore_f1"] = F1.mean().item()
         except Exception as e:
             print(f"[metrics] BERTScore calculation failed: {e}")

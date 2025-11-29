@@ -10,6 +10,13 @@ from typing import Dict, Tuple, Optional
 
 from deepencoder.deepencoder_infer import DeepEncoderRuntime
 from deepencoder.lora_config import DeepEncoderLoRAConfig
+from configs.default_config import (
+    NUM_VIEWS,           # 6 camera views
+    TOKENS_PER_VIEW,     # 256 tokens per view (16x16 grid)
+    PROJECTOR_DIM,       # 2048 (CLIP + SAM fused)
+    TOTAL_VISION_TOKENS, # 1536 (6 * 256)
+)
+
 from ..models import (
     VATLiDAR,
     VATVision,
@@ -152,16 +159,26 @@ def setup_models(config: Dict, device: torch.device, is_main: bool):
     if use_qlora:
         if is_main:
             print("[LLM] Enabling QLoRA with 4-bit quantization")
+        
+        qlora_compute_dtype_str = config.get("qlora_compute_dtype", "bfloat16")
         quantization_config = get_bnb_config(
             use_4bit=True,
             bnb_4bit_quant_type=config.get("qlora_quant_type", "nf4"),
             bnb_4bit_use_double_quant=config.get("qlora_double_quant", True),
-            bnb_4bit_compute_dtype=config.get("qlora_compute_dtype", "bfloat16"),
+            bnb_4bit_compute_dtype=qlora_compute_dtype_str,
         )
         if is_main:
             print(f"[LLM QLoRA] quant_type={config.get('qlora_quant_type', 'nf4')}, "
                   f"double_quant={config.get('qlora_double_quant', True)}, "
-                  f"compute_dtype={config.get('qlora_compute_dtype', 'bfloat16')}")
+                  f"compute_dtype={qlora_compute_dtype_str}")
+            
+            # Warn if QLoRA compute dtype doesn't match model dtype (potential performance issue)
+            qlora_dtype_map = {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32}
+            qlora_compute_dtype = qlora_dtype_map.get(qlora_compute_dtype_str, torch.bfloat16)
+            if qlora_compute_dtype != model_dtype:
+                print(f"[LLM QLoRA] ⚠️  WARNING: QLoRA compute dtype ({qlora_compute_dtype}) differs from "
+                      f"model dtype ({model_dtype}). This may cause dtype conversion overhead.")
+                print(f"[LLM QLoRA]    Consider setting qlora_compute_dtype to match mixed_precision setting.")
 
     # Base LLM
     base = AutoModelForCausalLM.from_pretrained(
@@ -249,18 +266,29 @@ def setup_models(config: Dict, device: torch.device, is_main: bool):
         for p in runtime.sam.parameters():
             p.requires_grad = False
 
-        # Verify projector dimension (2048 -> 2048)
+        # Enable gradient checkpointing for CLIP if configured
+        if config.get("gradient_checkpointing", True):
+            # Access the base model if wrapped by PEFT/LoRA
+            clip_model = runtime.clip_vit.base_model.model if hasattr(runtime.clip_vit, 'base_model') else runtime.clip_vit
+            if hasattr(clip_model, 'gradient_checkpointing_enable'):
+                clip_model.gradient_checkpointing_enable()
+                if is_main:
+                    print(f"[CLIP ViT] Gradient checkpointing enabled")
+
+        # Verify projector dimension matches expected constant
         projector_out_dim = runtime.projector.cfg.n_embed
-        assert projector_out_dim == 2048, \
-            f"DeepEncoder projector output dimension {projector_out_dim} != 2048"
+        assert projector_out_dim == PROJECTOR_DIM, \
+            f"DeepEncoder projector output dimension {projector_out_dim} != {PROJECTOR_DIM}"
 
         # Enable gradients for projector
         for p in runtime.projector.parameters():
             p.requires_grad = True
 
         # Vision models
-        # VisionAdapter expects (d_in, d_model, dropout) - projects from 2048 to d_model
-        vision_adapter = VisionAdapter(2048, d_model, dropout=0.10).to(device)
+        # VisionAdapter: takes DeepEncoder output [TOKENS_PER_VIEW, PROJECTOR_DIM] per view,
+        # adds view embeddings, concatenates NUM_VIEWS views → [TOTAL_VISION_TOKENS, PROJECTOR_DIM],
+        # then projects to d_model → [TOTAL_VISION_TOKENS, d_model]
+        vision_adapter = VisionAdapter(PROJECTOR_DIM, d_model, dropout=0.10).to(device)
         
         # Convert vision models to match LLM dtype for consistency
         vision_adapter = vision_adapter.to(dtype=model_dtype)
@@ -270,28 +298,25 @@ def setup_models(config: Dict, device: torch.device, is_main: bool):
         # Apply torch.compile() for faster execution (PyTorch 2.0+)
         vision_adapter = maybe_compile_model(vision_adapter, config, "VisionAdapter")
         
-        # VATVision new signature: takes d_in, d_model, n_input_tokens, compression_factor
-        # n_input_tokens = 6 views * 256 tokens/view = 1536
-        # n_queries is calculated as: n_input_tokens // compression_factor
-        # To get desired n_queries from config, calculate compression_factor
-        n_input_tokens = 6 * 256  # 1536 tokens from VisionAdapter
-        desired_n_queries = config["vision_queries"]
+        # VATVision: compresses tokens via cross-attention
+        # Input: [B, n_input_tokens, d_model] from VisionAdapter
+        # Output: [B, n_queries, d_model] where n_queries is configurable
+        # 
+        # Token count is derived from deepencoder grid size (FIXED_GRID_SIDE=16 → 256 tokens/view)
+        # and number of camera views (NUM_VIEWS=6), avoiding hardcoded magic numbers.
+        n_input_tokens = NUM_VIEWS * TOKENS_PER_VIEW  # 6 * 256 = 1536 tokens
+        n_queries = config["vision_queries"]  # Any positive integer (no divisibility constraint)
         
-        # Calculate compression factor (default to 2 if exact division not possible)
-        if n_input_tokens % desired_n_queries == 0:
-            compression_factor = n_input_tokens // desired_n_queries
-        else:
-            # Fall back to compression_factor=2 (gives 768 queries)
-            compression_factor = 2
-            if is_main:
-                print(f"[VATVision] Warning: vision_queries={desired_n_queries} not compatible with n_input_tokens={n_input_tokens}")
-                print(f"[VATVision] Using compression_factor={compression_factor}, resulting in {n_input_tokens // compression_factor} queries")
+        if is_main:
+            print(f"[VATVision] n_input_tokens={n_input_tokens} → n_queries={n_queries}")
         
+        # Note: d_in == d_model since VisionAdapter already projects to d_model
+        # VATVision operates entirely in d_model dimension space
         vat_vision = VATVision(
-            d_in=d_model,  # Input dimension from VisionAdapter (already projected to d_model)
-            d_model=d_model,  # Target output dimension
+            d_in=d_model,  # Input from VisionAdapter (already projected to d_model)
+            d_model=d_model,  # Output dimension (same as input in current architecture)
             n_input_tokens=n_input_tokens,
-            compression_factor=compression_factor,
+            n_queries=n_queries,  # Direct: any positive integer allowed
             n_layers=config["vision_layers"],
             n_heads=config["vision_heads"],
             mlp_ratio=config["vision_mlp_ratio"],

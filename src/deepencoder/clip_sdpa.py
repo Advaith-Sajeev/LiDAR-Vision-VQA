@@ -287,6 +287,7 @@ class NoTPTransformer(nn.Module):
         super().__init__()
         self.cfg = cfg
         self.num_layers = cfg.num_layers
+        self._gradient_checkpointing = False
 
         self.layers = nn.ModuleList([
             NoTPTransformerBlock(cfg, layer_id=i + 1) for i in range(self.num_layers)
@@ -294,8 +295,22 @@ class NoTPTransformer(nn.Module):
 
     def forward(self, hidden_states):
         for layer in self.layers:
-            hidden_states = layer(hidden_states)
+            if self._gradient_checkpointing and self.training:
+                # Use gradient checkpointing to save memory
+                hidden_states = torch.utils.checkpoint.checkpoint(
+                    layer, hidden_states, use_reentrant=False
+                )
+            else:
+                hidden_states = layer(hidden_states)
         return hidden_states
+    
+    def gradient_checkpointing_enable(self):
+        """Enable gradient checkpointing for memory efficiency."""
+        self._gradient_checkpointing = True
+    
+    def gradient_checkpointing_disable(self):
+        """Disable gradient checkpointing."""
+        self._gradient_checkpointing = False
 
 
 # -----------------------------
@@ -341,6 +356,14 @@ class VitModel(nn.Module):
 
     def __str__(self) -> str:
         return "open_clip"
+
+    def gradient_checkpointing_enable(self):
+        """Enable gradient checkpointing for memory efficiency."""
+        self.transformer.gradient_checkpointing_enable()
+    
+    def gradient_checkpointing_disable(self):
+        """Disable gradient checkpointing."""
+        self.transformer.gradient_checkpointing_disable()
 
     def forward(self, *args, x: Optional[torch.Tensor] = None, patch_embeds: Optional[torch.Tensor] = None, 
                 pixel_values: Optional[torch.Tensor] = None, **kwargs):

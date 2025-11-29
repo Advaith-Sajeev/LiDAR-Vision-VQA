@@ -61,12 +61,17 @@ def make_collate(tokenizer, max_ans_toks: int, system_prompt: str = "", load_ima
         }
         
         # Collate camera images if present
-        if load_images and "images" in items[0]:
+        # Check all items for consistency, not just the first one
+        if load_images:
             # items[i]["images"] is List[Optional[Tensor]] with 6 views
             # We need to create List[List[Optional[Tensor]]] for batch
             batch_images: List[List[Optional[torch.Tensor]]] = []
             for it in items:
-                batch_images.append(it["images"])
+                if "images" in it:
+                    batch_images.append(it["images"])
+                else:
+                    # Fallback: create list of None for missing images
+                    batch_images.append([None] * 6)
             result["images"] = batch_images
         
         return result
