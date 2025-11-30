@@ -146,10 +146,21 @@ def get_modal_training_config() -> Dict:
 # ============================================================================
 
 @app.function(
-    # Hardware: NVIDIA H200 (141GB VRAM) + Beefy CPU
-    gpu="H200",      
-    cpu=24.0,      # 24 Physical Cores (increased for more DataLoader workers)
-    memory=65536,  # 64 GB RAM
+    # =========================================================================
+    # HARDWARE CONFIGURATION
+    # =========================================================================
+    # PHASE 1 (Validation): Use T4 (cheap) + many CPU cores for data validation
+    # PHASE 2 (Training):   Switch to H200 + fewer cores once validation passes
+    # -------------------------------------------------------------------------
+    # Phase 1 Config (validation - will OOM on model loading, that's OK):
+    gpu="H200",
+    cpu=40.0,       # 40 cores (Modal max) for parallel validation
+    memory=262144,  # 256 GB RAM
+    # -------------------------------------------------------------------------
+    # Phase 2 Config (uncomment for actual training after validation passes):
+    # gpu="H200",
+    # cpu=24.0,       # 24 cores
+    # memory=65536,   # 64 GB RAM
     
     image=image,
     volumes={"/data": volume},

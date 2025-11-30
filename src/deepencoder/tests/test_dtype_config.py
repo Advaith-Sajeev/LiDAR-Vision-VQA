@@ -241,7 +241,7 @@ class TestDefaultConfigDtype:
     
     def test_default_config_has_deep_dtype(self):
         """Test that default config includes deep_dtype."""
-        from training.config.default_config import DEFAULT_CONFIG
+        from configs.default_config import DEFAULT_CONFIG
         
         assert "deep_dtype" in DEFAULT_CONFIG
         
@@ -252,7 +252,7 @@ class TestDefaultConfigDtype:
     
     def test_default_config_has_mixed_precision(self):
         """Test that default config includes mixed_precision setting."""
-        from training.config.default_config import DEFAULT_CONFIG
+        from configs.default_config import DEFAULT_CONFIG
         
         assert "mixed_precision" in DEFAULT_CONFIG
         assert DEFAULT_CONFIG["mixed_precision"] in ["no", "fp16", "bf16"]

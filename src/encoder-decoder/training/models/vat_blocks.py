@@ -111,9 +111,16 @@ class FlashMultiheadAttention(nn.Module):
                     print("[vat_blocks] ⚠️  Flash Attention available but inputs on CPU. Using SDPA fallback.")
                     _WARNED_FLASH_CPU = True
             elif q.dtype not in (torch.float16, torch.bfloat16):
+                # Auto-cast float32 inputs to bfloat16 for Flash Attention compatibility
+                # This happens when autocast context hasn't propagated to input tensors yet
+                # (e.g., inputs loaded from numpy as float32)
+                target_dtype = torch.bfloat16  # bf16 is more stable than fp16
+                q_proj = q_proj.to(target_dtype)
+                k_proj = k_proj.to(target_dtype)
+                v_proj = v_proj.to(target_dtype)
+                use_flash = True
                 if not _WARNED_FLASH_DTYPE:
-                    print(f"[vat_blocks] ⚠️  Flash Attention available but dtype={q.dtype}. "
-                          f"Enable mixed precision (fp16/bf16) for faster attention. Using SDPA fallback.")
+                    print(f"[vat_blocks] ℹ️  Auto-casting {q.dtype} inputs to {target_dtype} for Flash Attention.")
                     _WARNED_FLASH_DTYPE = True
             else:
                 use_flash = True

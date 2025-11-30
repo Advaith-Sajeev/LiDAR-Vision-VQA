@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
+from tqdm import tqdm
 
 
 def load_json_any(path: str) -> Iterable[Dict]:
@@ -56,14 +57,16 @@ def collect_feature_tokens_with_validation(
     min_samples: int = 10,
     max_samples: int = 500,
     num_workers: int = 16,
-) -> tuple[Dict[str, str], tuple[int, int, int]]:
+    check_dtype_range: bool = True,  # NEW: Also check dtype/NaN/Inf in same pass
+) -> tuple[Dict[str, str], tuple[int, int, int], Optional[Dict]]:
     """
-    Collect feature tokens AND validate BEV feature shapes are consistent.
+    Collect feature tokens AND validate BEV features (shape + dtype/range) in ONE pass.
     
     This prevents silent failures when BEV features were generated with different
     PCDet model configurations (different channel dimensions, spatial sizes, etc.).
     
-    Validation is parallelized for speed - checking 500 files takes ~1-2 seconds.
+    OPTIMIZATION: Combines shape validation and dtype/range validation into a single
+    file read, avoiding the need to read files twice.
     
     Args:
         feature_dirs: List of directories containing .npy feature files
@@ -72,20 +75,17 @@ def collect_feature_tokens_with_validation(
         min_samples: Minimum number of files to validate (default 10)
         max_samples: Maximum number of files to validate (default 500)
         num_workers: Number of parallel workers for validation (default 8)
+        check_dtype_range: If True, also check dtype, NaN, Inf in the same pass
         
     Returns:
         Tuple of:
         - Dictionary mapping sample_token to feature file path
         - Expected BEV shape as (C, H, W) tuple
+        - Dtype/range stats dict (if check_dtype_range=True, else None)
         
     Raises:
-        ValueError: If BEV features have inconsistent shapes
+        ValueError: If BEV features have inconsistent shapes or invalid values
         RuntimeError: If no valid feature files found
-        
-    Default behavior:
-        - Samples 10% of files, bounded to [10, 500] files
-        - For 28k files: checks 500 files in parallel (~1-2s)
-        - For 100 files: checks all 100 files
     """
     import os
     import random
@@ -122,60 +122,133 @@ def collect_feature_tokens_with_validation(
         paths_to_check = random.sample(all_paths, n_samples)
     
     if is_main_process():
-        print(f"[BEV validation] Checking {len(paths_to_check)}/{n_total} files with {num_workers} workers...")
+        desc = "shape+dtype" if check_dtype_range else "shape"
+        print(f"[BEV validation] Checking {len(paths_to_check)}/{n_total} files ({desc}) with {num_workers} workers...")
     
-    # Helper function for parallel shape checking
-    def check_shape(path: str) -> tuple[str, tuple | str]:
-        """Return (path, shape) or (path, error_string)."""
+    # Helper function for parallel validation (shape + optional dtype/range)
+    def check_file(path: str) -> Dict:
+        """Return dict with shape, dtype, has_nan, has_inf, min, max, mean."""
         try:
-            arr = np.load(path, mmap_mode='r')
-            return (path, arr.shape)
+            # Use mmap for shape-only, full load for dtype check
+            if check_dtype_range:
+                arr = np.load(path)
+                return {
+                    'path': path,
+                    'shape': arr.shape,
+                    'dtype': str(arr.dtype),
+                    'has_nan': bool(np.isnan(arr).any()),
+                    'has_inf': bool(np.isinf(arr).any()),
+                    'min': float(arr.min()),
+                    'max': float(arr.max()),
+                }
+            else:
+                arr = np.load(path, mmap_mode='r')
+                return {'path': path, 'shape': arr.shape}
         except Exception as e:
-            return (path, f"LoadError: {e}")
+            return {'path': path, 'error': str(e)}
     
-    # Parallel validation
+    # Parallel validation with progress bar
     results = []
-    with ThreadPoolExecutor(max_workers=num_workers) as executor:
-        futures = {executor.submit(check_shape, p): p for p in paths_to_check}
-        for future in as_completed(futures):
-            results.append(future.result())
+    batch_size = 1000  # Yield every 1000 files for Modal heartbeat
     
-    # Analyze results
+    with ThreadPoolExecutor(max_workers=num_workers) as executor:
+        futures = {executor.submit(check_file, p): p for p in paths_to_check}
+        desc = "🔍 Validating BEV (shape+dtype)" if check_dtype_range else "🔍 Validating BEV shapes"
+        with tqdm(
+            total=len(futures),
+            desc=desc,
+            unit="file",
+            disable=not is_main_process(),
+        ) as pbar:
+            completed = 0
+            for future in as_completed(futures):
+                results.append(future.result())
+                pbar.update(1)
+                completed += 1
+                # Yield CPU every batch_size files for Modal heartbeat
+                if completed % batch_size == 0:
+                    import time
+                    time.sleep(0.1)  # 100ms yield
+    
+    # Analyze shape results
     expected_shape = None
     shape_mismatches = []
+    load_errors = []
     
-    for path, shape in results:
-        if isinstance(shape, str):  # Error string
-            shape_mismatches.append((path, shape))
-        elif expected_shape is None:
+    # Analyze dtype/range results (if enabled)
+    nan_files = []
+    inf_files = []
+    dtype_issues = []
+    all_mins = []
+    all_maxs = []
+    
+    for r in results:
+        if 'error' in r:
+            load_errors.append((r['path'], r['error']))
+            continue
+            
+        shape = r['shape']
+        if expected_shape is None:
             expected_shape = shape
         elif shape != expected_shape:
-            shape_mismatches.append((path, shape))
+            shape_mismatches.append((r['path'], shape))
+        
+        if check_dtype_range:
+            if r.get('has_nan'):
+                nan_files.append(r['path'])
+            if r.get('has_inf'):
+                inf_files.append(r['path'])
+            if r.get('dtype') != 'float32':
+                dtype_issues.append((r['path'], r['dtype']))
+            if 'min' in r:
+                all_mins.append(r['min'])
+                all_maxs.append(r['max'])
     
     if is_main_process() and expected_shape:
-        print(f"[BEV validation] Reference shape (C, H, W): {expected_shape}")
+        print(f"[BEV validation] ✓ Reference shape (C, H, W): {expected_shape}")
     
-    # Report mismatches
+    # Report shape mismatches
     if shape_mismatches:
         error_lines = [
             f"BEV feature shape inconsistency detected!",
             f"Expected shape: {expected_shape}",
             f"Found {len(shape_mismatches)} mismatches:"
         ]
-        for path, shape in shape_mismatches[:5]:  # Show first 5
+        for path, shape in shape_mismatches[:5]:
             error_lines.append(f"  - {Path(path).name}: {shape}")
         if len(shape_mismatches) > 5:
             error_lines.append(f"  ... and {len(shape_mismatches) - 5} more")
-        error_lines.append(
-            "\nThis usually means BEV features were generated with different "
-            "PCDet model configurations. Re-generate all features with the same model."
-        )
         raise ValueError("\n".join(error_lines))
     
-    if is_main_process():
-        print(f"[BEV validation] All {len(paths_to_check)} checked files have consistent shape {expected_shape}")
+    # Report dtype/range issues
+    dtype_stats = None
+    if check_dtype_range:
+        if nan_files:
+            raise ValueError(f"BEV features contain NaN values! Files: {nan_files[:5]}")
+        if inf_files:
+            raise ValueError(f"BEV features contain Inf values! Files: {inf_files[:5]}")
+        
+        global_min = min(all_mins) if all_mins else None
+        global_max = max(all_maxs) if all_maxs else None
+        
+        dtype_stats = {
+            'dtype_issues': len(dtype_issues),
+            'nan_issues': len(nan_files),
+            'inf_issues': len(inf_files),
+            'value_range': (global_min, global_max),
+        }
+        
+        if is_main_process():
+            if dtype_issues:
+                print(f"[BEV validation] ⚠ {len(dtype_issues)} files have non-float32 dtype")
+            print(f"[BEV validation] ✓ No NaN/Inf values")
+            if global_min is not None:
+                print(f"[BEV validation] ✓ Value range: [{global_min:.3f}, {global_max:.3f}]")
     
-    return token2path, expected_shape
+    if is_main_process():
+        print(f"[BEV validation] ✓ All {len(paths_to_check)} files validated successfully")
+    
+    return token2path, expected_shape, dtype_stats
 
 
 # =============================================================================
@@ -186,19 +259,29 @@ def validate_json_schema(
     json_paths: List[str],
     required_fields: List[str] = ("sample_token", "question"),
     answer_fields: List[str] = ("answer", "answer_lidar", "answer_vision"),
-) -> Dict[str, List[str]]:
+    token2path: Optional[Dict[str, str]] = None,  # NEW: If provided, also check token coverage
+) -> Dict[str, any]:
     """
-    Validate JSON/JSONL files have required schema.
+    Validate JSON/JSONL files in ONE pass: schema + token coverage.
+    
+    OPTIMIZATION: Combines JSON schema validation and token coverage check into
+    a single iteration over JSON records, avoiding reading JSONs twice.
     
     Args:
         json_paths: List of JSON/JSONL file paths
         required_fields: Fields that must be present in every record
         answer_fields: At least one of these must be present (answer content)
+        token2path: If provided, also check token coverage (sample_token -> BEV file)
         
     Returns:
         Dict with validation results:
         - 'valid_files': list of valid file paths
         - 'issues': list of issue descriptions
+        - 'total_records': total records across all files
+        - 'records_missing_fields': count of records missing required fields
+        - 'records_missing_answer': count of records missing answer content
+        - 'matched_tokens': count of tokens with BEV files (if token2path provided)
+        - 'unmatched_tokens': sample of tokens without BEV files
         
     Raises:
         ValueError: If critical schema issues found
@@ -214,50 +297,89 @@ def validate_json_schema(
     records_missing_fields = 0
     records_missing_answer = 0
     
+    # Token coverage tracking (if token2path provided)
+    matched_tokens = 0
+    unmatched_tokens = []
+    check_coverage = token2path is not None
+    
     for jp in json_paths:
         if not Path(jp).exists():
             issues.append(f"JSON file not found: {jp}")
             continue
             
         try:
+            # Count records first for progress bar
+            records_list = list(load_json_any(jp))
             file_records = 0
-            for record in load_json_any(jp):
-                file_records += 1
-                total_records += 1
-                
-                # Check required fields
-                missing = [f for f in required_fields if not record.get(f)]
-                if missing:
-                    records_missing_fields += 1
-                    if records_missing_fields <= 3:  # Only report first few
-                        issues.append(f"{Path(jp).name}: record missing {missing}")
-                
-                # Check at least one answer field exists
-                has_answer = any(record.get(f) for f in answer_fields)
-                if not has_answer:
-                    records_missing_answer += 1
+            
+            desc = f"📋 Validating {Path(jp).name}" + (" + coverage" if check_coverage else "")
+            with tqdm(
+                records_list,
+                desc=desc,
+                unit="record",
+                disable=not is_main_process(),
+            ) as pbar:
+                for record in pbar:
+                    file_records += 1
+                    total_records += 1
+                    
+                    # Check required fields
+                    missing = [f for f in required_fields if not record.get(f)]
+                    if missing:
+                        records_missing_fields += 1
+                        if records_missing_fields <= 3:  # Only report first few
+                            issues.append(f"{Path(jp).name}: record missing {missing}")
+                    
+                    # Check at least one answer field exists
+                    has_answer = any(record.get(f) for f in answer_fields)
+                    if not has_answer:
+                        records_missing_answer += 1
+                    
+                    # Check token coverage (if token2path provided)
+                    if check_coverage:
+                        tok = record.get("sample_token")
+                        if tok:
+                            if tok in token2path:
+                                matched_tokens += 1
+                            else:
+                                if len(unmatched_tokens) < 10:
+                                    unmatched_tokens.append(tok)
             
             valid_files.append(jp)
             if is_main_process():
-                print(f"[JSON validation] {Path(jp).name}: {file_records} records")
+                print(f"[JSON validation] {Path(jp).name}: {file_records} records ✓")
                 
         except Exception as e:
             issues.append(f"Error parsing {jp}: {e}")
     
     if is_main_process():
-        print(f"[JSON validation] Total: {total_records} records across {len(valid_files)} files")
+        print(f"[JSON validation] ✓ Total: {total_records} records across {len(valid_files)} files")
         if records_missing_fields > 0:
-            print(f"[JSON validation] WARNING: {records_missing_fields} records missing required fields")
+            print(f"[JSON validation] ⚠ {records_missing_fields} records missing required fields")
         if records_missing_answer > 0:
-            print(f"[JSON validation] WARNING: {records_missing_answer} records missing answer content")
+            print(f"[JSON validation] ⚠ {records_missing_answer} records missing answer content")
+        
+        # Report token coverage
+        if check_coverage:
+            coverage_pct = (matched_tokens / total_records * 100) if total_records > 0 else 0
+            print(f"[Token coverage] ✓ {matched_tokens}/{total_records} ({coverage_pct:.1f}%) tokens have BEV features")
+            if unmatched_tokens:
+                print(f"[Token coverage] ⚠ Missing BEV for: {unmatched_tokens[:5]}...")
     
-    return {
+    result = {
         'valid_files': valid_files,
         'issues': issues,
         'total_records': total_records,
         'records_missing_fields': records_missing_fields,
         'records_missing_answer': records_missing_answer,
     }
+    
+    if check_coverage:
+        result['matched_tokens'] = matched_tokens
+        result['unmatched_tokens'] = unmatched_tokens
+        result['coverage_percent'] = (matched_tokens / total_records * 100) if total_records > 0 else 0
+    
+    return result
 
 
 def validate_token_coverage(
@@ -293,17 +415,27 @@ def validate_token_coverage(
     for jp in json_paths:
         if not Path(jp).exists():
             continue
-        for record in load_json_any(jp):
-            tok = record.get("sample_token")
-            if not tok:
-                continue
-            total_tokens += 1
-            
-            if tok in token2path:
-                matched_tokens += 1
-            else:
-                if len(unmatched_tokens) < 10:  # Keep first 10 for reporting
-                    unmatched_tokens.append(tok)
+        
+        # Load records for progress bar
+        records_list = list(load_json_any(jp))
+        
+        with tqdm(
+            records_list,
+            desc=f"🔗 Checking token coverage ({Path(jp).name})",
+            unit="token",
+            disable=not is_main_process(),
+        ) as pbar:
+            for record in pbar:
+                tok = record.get("sample_token")
+                if not tok:
+                    continue
+                total_tokens += 1
+                
+                if tok in token2path:
+                    matched_tokens += 1
+                else:
+                    if len(unmatched_tokens) < 10:  # Keep first 10 for reporting
+                        unmatched_tokens.append(tok)
     
     coverage_pct = (matched_tokens / total_tokens * 100) if total_tokens > 0 else 0
     
@@ -370,12 +502,19 @@ def validate_image_paths(
             missing.append(f"error:{e}")
         return (token, missing)
     
-    # Parallel validation
+    # Parallel validation with progress bar
     results = []
     with ThreadPoolExecutor(max_workers=num_workers) as executor:
         futures = {executor.submit(check_token_images, t): t for t in tokens_to_check}
-        for future in as_completed(futures):
-            results.append(future.result())
+        with tqdm(
+            total=len(futures),
+            desc="📷 Validating image paths",
+            unit="sample",
+            disable=not is_main_process(),
+        ) as pbar:
+            for future in as_completed(futures):
+                results.append(future.result())
+                pbar.update(1)
     
     # Analyze
     tokens_with_missing = [(t, m) for t, m in results if m]
@@ -446,12 +585,19 @@ def validate_bev_dtype_and_range(
         except Exception as e:
             return {'path': path, 'error': str(e)}
     
-    # Parallel check
+    # Parallel check with progress bar
     results = []
     with ThreadPoolExecutor(max_workers=num_workers) as executor:
         futures = {executor.submit(check_file, p): p for p in paths_to_check}
-        for future in as_completed(futures):
-            results.append(future.result())
+        with tqdm(
+            total=len(futures),
+            desc="🔢 Validating BEV dtype/range",
+            unit="file",
+            disable=not is_main_process(),
+        ) as pbar:
+            for future in as_completed(futures):
+                results.append(future.result())
+                pbar.update(1)
     
     # Analyze
     dtype_issues = [r for r in results if r.get('dtype') and r['dtype'] != expected_dtype]

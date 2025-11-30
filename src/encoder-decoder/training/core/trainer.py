@@ -39,8 +39,8 @@ from configs.default_config import (
     TOKENS_PER_VIEW,
     PROJECTOR_DIM,
     NUM_VIEWS,
+    validate_config,
 )
-from ..config.default_config import validate_config
 
 
 class Trainer:
@@ -230,6 +230,11 @@ class Trainer:
         # Check if we should load images in DataLoader workers
         load_images = self.config.get("use_vision", False)
         
+        # Master validation toggle - if True, skip ALL validation checks
+        skip_all = self.config.get("skip_all_validation", False)
+        if skip_all and is_main_process():
+            print("[dataset] ⚠️  skip_all_validation=True - ALL data validation disabled!")
+        
         # Full dataset with comprehensive validation
         # All validation settings are configurable via config
         ds_full = MixedNuDataset(
@@ -241,17 +246,17 @@ class Trainer:
             nusc=self.nusc if load_images else None,
             load_images=load_images,
             # BEV shape validation (defaults match default_config.py)
-            validate_bev_shapes=self.config.get("validate_bev_shapes", True),
-            validate_all_bev=self.config.get("validate_all_bev_shapes", True),  # Validate ALL by default
-            bev_validation_sample_fraction=self.config.get("bev_validation_sample_fraction", 1.0),  # 100% by default
+            validate_bev_shapes=False if skip_all else self.config.get("validate_bev_shapes", True),
+            validate_all_bev=False if skip_all else self.config.get("validate_all_bev_shapes", True),
+            bev_validation_sample_fraction=self.config.get("bev_validation_sample_fraction", 1.0),
             bev_validation_min_samples=self.config.get("bev_validation_min_samples", 10),
-            bev_validation_max_samples=self.config.get("bev_validation_max_samples", 100000),  # Effectively unlimited
+            bev_validation_max_samples=self.config.get("bev_validation_max_samples", 100000),
             bev_validation_workers=self.config.get("bev_validation_workers", 16),
             # Additional validations (defaults match default_config.py)
-            validate_json_schema=self.config.get("validate_json_schema", True),
-            validate_token_coverage=self.config.get("validate_token_coverage", True),
-            validate_image_paths=self.config.get("validate_image_paths", True),
-            validate_bev_dtype=self.config.get("validate_bev_dtype", True),  # Check dtype/NaN/Inf by default
+            validate_json_schema=False if skip_all else self.config.get("validate_json_schema", True),
+            validate_token_coverage=False if skip_all else self.config.get("validate_token_coverage", True),
+            validate_image_paths=False if skip_all else self.config.get("validate_image_paths", True),
+            validate_bev_dtype=False if skip_all else self.config.get("validate_bev_dtype", True),
         )
         
         # Train/val split

@@ -38,7 +38,12 @@ def sdp_attention(q, k, v, attn_mask=None):
     global _WARNED_SDP
     
     # Try Flash Attention first (fastest, but requires CUDA + fp16/bf16 + no mask)
-    if _HAS_FLASH_ATTN and attn_mask is None and q.is_cuda and q.dtype in (torch.float16, torch.bfloat16):
+    if _HAS_FLASH_ATTN and attn_mask is None and q.is_cuda:
+        # Auto-cast float32 inputs to bfloat16 for Flash Attention compatibility
+        if q.dtype not in (torch.float16, torch.bfloat16):
+            q = q.to(torch.bfloat16)
+            k = k.to(torch.bfloat16)
+            v = v.to(torch.bfloat16)
         debug.trace(_MODULE, f"📐 Using Flash Attention with q.shape={q.shape}")
         # Flash attention expects [B, S, H, D] format, we have [B, H, S, D]
         q_flash = q.transpose(1, 2)  # [B, S, H, D]

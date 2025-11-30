@@ -78,17 +78,31 @@ def get_modal_training_config() -> Dict:
         
         # Maximum number of samples to use (None = use all data)
         # Set to small number (e.g., 10) for quick testing
-        "max_samples": 25_000,  # None for full dataset
+        "max_samples": 20_000,  # None for full dataset
+        
+        # =========================================================================
+        # VALIDATION TOGGLE (for phased deployment)
+        # =========================================================================
+        # Phase 1: Run with skip_all_validation=False on cheap T4 to validate data
+        # Phase 2: Set skip_all_validation=True and switch to H200 for training
+        # When True, skips ALL data validation checks for faster startup
+        "skip_all_validation": True,
+        
+        # BEV validation workers (for parallel shape/dtype checking of 37K+ files)
+        # NOTE: Too many workers blocks Modal heartbeat! Keep at 16-20 max.
+        # Phase 1: Use 16 workers (leaves CPU for system/heartbeat)
+        # Phase 2: Not used when skip_all_validation=True
+        "bev_validation_workers": 16,
         
         
         # ==================== Training Configuration ====================
         # Number of training epochs
-        "epochs": 50,
+        "epochs": 100,
         
         # Batch size per GPU
         # NOTE: Reduced from 4 to 2 due to OOM on A100-40GB with full multimodal setup
         # Using grad_accum=2 to maintain effective batch size of 4
-        "batch_size": 16,
+        "batch_size": 20,
         
         # Gradient accumulation steps (effective_batch = batch_size * grad_accum * num_gpus)
         # Increased to compensate for smaller batch_size (2 * 2 = 4 effective)
@@ -96,12 +110,14 @@ def get_modal_training_config() -> Dict:
         
         # Number of DataLoader workers for parallel data loading
         # Higher = better GPU utilization (overlaps data loading with training)
-        # Recommended: num_workers ≈ CPU_cores / 2 (with 24 cores, use 12-16)
+        # NOTE: Too many workers can block Modal heartbeat! Keep at 16-20 max.
+        # Phase 1 (T4 validation): Use 16 workers (leaves CPU for Modal heartbeat)
+        # Phase 2 (H200 training): Use 16 workers with 24 cores
         "num_workers": 16,
         
         # Prefetch factor: batches to prefetch per worker (requires num_workers > 0)
         # Higher = more memory usage but better GPU utilization
-        "prefetch_factor": 4,
+        "prefetch_factor": 2,
         
         # Random seed for reproducibility
         "seed": 42,
@@ -149,7 +165,7 @@ def get_modal_training_config() -> Dict:
         
         # Total number of samples to generate (must be divisible by 4 for equal distribution)
         # 50% caption, 25% det_area, 25% det_object
-        "inference_samples_n": 20,
+        "inference_samples_n": 40,
         
         # Test JSON files for inference sampling
         "inference_caption_json": "/data/Datasets/Test/LiDAR-LLM-Nu-Caption-val.json",
@@ -223,7 +239,7 @@ def get_modal_training_config() -> Dict:
         # Number of learnable query tokens for LiDAR VAT
         # MUST be divisible by 6 (for 6 spatial sectors)
         # Recommended: 12 (testing), 576 (medium), 768 (large)
-        "vat_queries": 576,
+        "vat_queries": 768,
         
         # Number of transformer layers in LiDAR VAT
         "vat_layers": 4,
@@ -291,10 +307,10 @@ def get_modal_training_config() -> Dict:
         
         # LoRA rank (higher = more parameters, more expressive)
         # Typical values: 8-16 for QLoRA (can use higher rank due to memory savings)
-        "lora_r": 16,
+        "lora_r": 32,
         
         # LoRA alpha (scaling factor, typically 2*r)
-        "lora_alpha": 32,
+        "lora_alpha": 64,
         
         # LoRA dropout rate
         "lora_dropout": 0.05,

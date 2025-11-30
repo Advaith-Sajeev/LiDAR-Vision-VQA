@@ -12,9 +12,7 @@ from .utils import (
     collect_feature_tokens, 
     collect_feature_tokens_with_validation,
     validate_json_schema as _validate_json_schema,
-    validate_token_coverage as _validate_token_coverage,
     validate_image_paths as _validate_image_paths,
-    validate_bev_dtype_and_range,
 )
 
 
@@ -86,39 +84,26 @@ class MixedNuDataset(Dataset):
         from ..utils.distributed import is_main_process
         
         # =====================================================================
-        # Phase 1: JSON Schema Validation
+        # Phase 1: BEV Feature Collection & Validation (shape + dtype/range)
         # =====================================================================
-        if validate_json_schema:
-            if DEBUG_AVAILABLE:
-                debug.data_flow("dataset", "json_validation", "Validating JSON schema")
-            json_result = _validate_json_schema(
-                json_paths,
-                required_fields=("sample_token", "question"),
-                answer_fields=("answer", "answer_lidar", "answer_vision"),
-            )
-            if json_result['issues']:
-                if is_main_process():
-                    for issue in json_result['issues'][:5]:
-                        print(f"[JSON validation] WARNING: {issue}")
-        
-        # =====================================================================
-        # Phase 2: BEV Feature Collection & Shape Validation
-        # =====================================================================
+        # OPTIMIZATION: Combines shape validation and dtype/range check in ONE pass
         if DEBUG_AVAILABLE:
             debug.data_flow("dataset", "feature_indexing", "Scanning feature directories")
         
         if validate_bev_shapes:
-            self.token2path, self.bev_shape = collect_feature_tokens_with_validation(
+            self.token2path, self.bev_shape, dtype_stats = collect_feature_tokens_with_validation(
                 feature_dirs, 
                 validate_all=validate_all_bev,
                 sample_fraction=bev_validation_sample_fraction,
                 min_samples=bev_validation_min_samples,
                 max_samples=bev_validation_max_samples,
                 num_workers=bev_validation_workers,
+                check_dtype_range=validate_bev_dtype,  # Combined with shape check
             )
         else:
             self.token2path = collect_feature_tokens(feature_dirs)
             self.bev_shape = None
+            dtype_stats = None
         
         if is_main_process():
             print("[features] scanning roots...")
@@ -131,31 +116,27 @@ class MixedNuDataset(Dataset):
                     debug.info("dataset", f"Validated BEV shape: {self.bev_shape}")
         
         # =====================================================================
-        # Phase 3: Token Coverage Validation
+        # Phase 2: JSON Schema + Token Coverage Validation (combined in ONE pass)
         # =====================================================================
-        if validate_token_coverage:
+        # OPTIMIZATION: Combines JSON schema check and token coverage in ONE iteration
+        if validate_json_schema or validate_token_coverage:
             if DEBUG_AVAILABLE:
-                debug.data_flow("dataset", "token_coverage", "Checking token coverage")
-            coverage = _validate_token_coverage(self.token2path, json_paths, target_field)
-            if coverage['coverage_percent'] < 50:
-                if is_main_process():
-                    print(f"[Token coverage] WARNING: Only {coverage['coverage_percent']:.1f}% coverage!")
-        
-        # =====================================================================
-        # Phase 4: BEV Dtype & Range Validation (optional, slower)
-        # =====================================================================
-        if validate_bev_dtype and self.token2path:
-            if DEBUG_AVAILABLE:
-                debug.data_flow("dataset", "bev_dtype", "Checking BEV dtype and ranges")
-            dtype_check = validate_bev_dtype_and_range(
-                self.token2path,
-                num_workers=bev_validation_workers,
+                debug.data_flow("dataset", "json_validation", "Validating JSON schema + token coverage")
+            json_result = _validate_json_schema(
+                json_paths,
+                required_fields=("sample_token", "question"),
+                answer_fields=("answer", "answer_lidar", "answer_vision"),
+                token2path=self.token2path if validate_token_coverage else None,  # Combined check
             )
-            if dtype_check['nan_issues'] > 0 or dtype_check['inf_issues'] > 0:
-                raise ValueError(
-                    f"BEV features contain invalid values! "
-                    f"NaN: {dtype_check['nan_issues']}, Inf: {dtype_check['inf_issues']}"
-                )
+            if json_result['issues']:
+                if is_main_process():
+                    for issue in json_result['issues'][:5]:
+                        print(f"[JSON validation] WARNING: {issue}")
+            
+            # Check coverage threshold
+            if validate_token_coverage and json_result.get('coverage_percent', 100) < 50:
+                if is_main_process():
+                    print(f"[Token coverage] WARNING: Only {json_result['coverage_percent']:.1f}% coverage!")
 
         rows = []
         total = 0
