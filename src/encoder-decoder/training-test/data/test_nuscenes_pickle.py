@@ -24,19 +24,58 @@ import sys
 import tempfile
 from pathlib import Path
 
+import pytest
+from torch.utils.data import Dataset
+
+
+# Module-level class so it can be pickled (local classes can't be pickled)
+class MockDatasetWithoutNusc(Dataset):
+    """Mimics MixedNuDataset with nusc=None."""
+    def __init__(self):
+        self.nusc = None  # Safe: no NuScenes object
+        self.samples = [{"token": f"tok_{i}"} for i in range(10)]
+    
+    def __len__(self):
+        return len(self.samples)
+    
+    def __getitem__(self, idx):
+        if self.nusc is None:
+            # This is what _load_camera_images does when nusc is None
+            images = [None] * 6
+        return {"idx": idx, "token": self.samples[idx]["token"]}
+
+
+# Module-level class so it can be pickled (local classes can't be pickled)
+class MockDatasetWithNusc(Dataset):
+    """Mimics MixedNuDataset structure with NuScenes object."""
+    def __init__(self, nusc):
+        self.nusc = nusc
+        self.samples = list(nusc.sample)[:10]  # Just use 10 samples
+    
+    def __len__(self):
+        return len(self.samples)
+    
+    def __getitem__(self, idx):
+        sample = self.samples[idx]
+        # Simulate what _load_camera_images does
+        if self.nusc is not None:
+            # Access nusc.get() like the real code does
+            _ = self.nusc.get("sample", sample["token"])
+        return {"idx": idx, "token": sample["token"]}
+
 
 def test_nuscenes_pickle_basic():
     """Test if NuScenes object can be pickled."""
     try:
         from nuscenes.nuscenes import NuScenes
     except ImportError:
-        print("SKIP: nuscenes not installed")
-        return {"status": "skip", "reason": "nuscenes not installed"}
+        pytest.skip("nuscenes not installed")
     
     # Try to find NuScenes data
     possible_paths = [
-        "/data/nuscenes",
-        "/data/Datasets/nuscenes", 
+        "/data/Datasets/nuScenes",     # Modal volume mount (from modal_config.py)
+        "/data/nuscenes",              # Alternative lowercase
+        "/data/Datasets/nuscenes",     # Alternative lowercase
         "/home/j_bindu/fyp-26-grp-38/Datasets/nuscenes",
         Path.home() / "data" / "nuscenes",
     ]
@@ -52,8 +91,7 @@ def test_nuscenes_pickle_basic():
             break
     
     if dataroot is None:
-        print("SKIP: No NuScenes data found at common paths")
-        return {"status": "skip", "reason": "no nuscenes data found"}
+        pytest.skip("No NuScenes data found at common paths")
     
     # Try mini first, then trainval
     version = "v1.0-mini" if (Path(dataroot) / "v1.0-mini").exists() else "v1.0-trainval"
@@ -103,13 +141,7 @@ def test_nuscenes_pickle_basic():
             else:
                 print(f"[test]   {attr}: {val_type}")
     
-    return {
-        "status": "pass" if pickle_works else "fail",
-        "pickle_works": pickle_works,
-        "dataroot": dataroot,
-        "version": version,
-        "num_samples": len(nusc.sample),
-    }
+    assert pickle_works, "NuScenes should be picklable for multi-worker DataLoader"
 
 
 def test_dataset_with_nuscenes_pickle():
@@ -117,14 +149,14 @@ def test_dataset_with_nuscenes_pickle():
     try:
         from nuscenes.nuscenes import NuScenes
     except ImportError:
-        print("SKIP: nuscenes not installed")
-        return {"status": "skip", "reason": "nuscenes not installed"}
+        pytest.skip("nuscenes not installed")
     
     import torch
     from torch.utils.data import Dataset, DataLoader
     
     # Find NuScenes data
     possible_paths = [
+        "/data/Datasets/nuScenes",     # Modal volume mount (from modal_config.py)
         "/data/nuscenes",
         "/data/Datasets/nuscenes",
         "/home/j_bindu/fyp-26-grp-38/Datasets/nuscenes",
@@ -138,31 +170,14 @@ def test_dataset_with_nuscenes_pickle():
             break
     
     if dataroot is None:
-        print("SKIP: No NuScenes data found")
-        return {"status": "skip", "reason": "no nuscenes data found"}
+        pytest.skip("No NuScenes data found")
     
     version = "v1.0-mini" if (Path(dataroot) / "v1.0-mini").exists() else "v1.0-trainval"
     
     print(f"\n[test] Creating mock dataset with NuScenes...")
     nusc = NuScenes(version=version, dataroot=dataroot, verbose=False)
     
-    class MockDatasetWithNusc(Dataset):
-        """Mimics MixedNuDataset structure."""
-        def __init__(self, nusc):
-            self.nusc = nusc
-            self.samples = list(nusc.sample)[:10]  # Just use 10 samples
-        
-        def __len__(self):
-            return len(self.samples)
-        
-        def __getitem__(self, idx):
-            sample = self.samples[idx]
-            # Simulate what _load_camera_images does
-            if self.nusc is not None:
-                # Access nusc.get() like the real code does
-                _ = self.nusc.get("sample", sample["token"])
-            return {"idx": idx, "token": sample["token"]}
-    
+    # Use module-level MockDatasetWithNusc class (local classes can't be pickled)
     dataset = MockDatasetWithNusc(nusc)
     
     # Test 1: Pickle the dataset
@@ -174,8 +189,7 @@ def test_dataset_with_nuscenes_pickle():
         dataset_pickle_works = True
     except Exception as e:
         print(f"[test] ❌ Dataset with NuScenes CANNOT be pickled: {type(e).__name__}: {e}")
-        dataset_pickle_works = False
-        return {"status": "fail", "dataset_pickle_works": False, "error": str(e)}
+        pytest.fail(f"Dataset with NuScenes should be picklable: {e}")
     
     # Test 2: DataLoader with num_workers=0 (no pickling)
     print("\n[test] Test 2: DataLoader with num_workers=0...")
@@ -197,35 +211,16 @@ def test_dataset_with_nuscenes_pickle():
         print(f"[test] ❌ num_workers=2 failed: {type(e).__name__}: {e}")
         multiworker_works = False
     
-    return {
-        "status": "pass" if multiworker_works else "fail",
-        "dataset_pickle_works": dataset_pickle_works,
-        "multiworker_works": multiworker_works,
-    }
+    assert multiworker_works, "Multi-worker DataLoader should work with NuScenes dataset"
 
 
 def test_dataset_without_nuscenes_pickle():
     """Test that dataset works when nusc=None (the safe path)."""
-    import torch
-    from torch.utils.data import Dataset, DataLoader
+    from torch.utils.data import DataLoader
     
     print("\n[test] Testing dataset with nusc=None (safe path)...")
     
-    class MockDatasetWithoutNusc(Dataset):
-        """Mimics MixedNuDataset with nusc=None."""
-        def __init__(self):
-            self.nusc = None  # Safe: no NuScenes object
-            self.samples = [{"token": f"tok_{i}"} for i in range(10)]
-        
-        def __len__(self):
-            return len(self.samples)
-        
-        def __getitem__(self, idx):
-            if self.nusc is None:
-                # This is what _load_camera_images does when nusc is None
-                images = [None] * 6
-            return {"idx": idx, "token": self.samples[idx]["token"]}
-    
+    # Use module-level MockDatasetWithoutNusc class (local classes can't be pickled)
     dataset = MockDatasetWithoutNusc()
     
     # Test pickle
@@ -234,9 +229,12 @@ def test_dataset_without_nuscenes_pickle():
         pickled = pickle.dumps(dataset)
         unpickled = pickle.loads(pickled)
         print(f"[test] ✅ Dataset with nusc=None CAN be pickled! Size: {len(pickled):,} bytes")
+        pickle_works = True
     except Exception as e:
         print(f"[test] ❌ Unexpected: nusc=None dataset failed pickle: {e}")
-        return {"status": "fail", "error": str(e)}
+        pickle_works = False
+    
+    assert pickle_works, "Dataset with nusc=None should be picklable"
     
     # Test multi-worker
     print("[test] Test 2: DataLoader with num_workers=2...")
@@ -244,14 +242,16 @@ def test_dataset_without_nuscenes_pickle():
         loader = DataLoader(dataset, batch_size=2, num_workers=2)
         batch = next(iter(loader))
         print(f"[test] ✅ num_workers=2 works with nusc=None")
-        return {"status": "pass"}
+        multiworker_works = True
     except Exception as e:
         print(f"[test] ❌ num_workers=2 failed: {e}")
-        return {"status": "fail", "error": str(e)}
+        multiworker_works = False
+    
+    assert multiworker_works, "Multi-worker DataLoader should work with nusc=None"
 
 
 def main():
-    """Run all tests and summarize."""
+    """Run all tests and summarize when running as a script."""
     print("=" * 70)
     print("NuScenes Pickle Compatibility Tests")
     print("=" * 70)
@@ -259,34 +259,60 @@ def main():
     print("Issue: With num_workers > 0, PyTorch pickles the dataset to workers.")
     print("=" * 70)
     
-    results = {}
+    results = {"basic_pickle": "unknown", "dataset_pickle": "unknown", "without_nusc": "unknown"}
     
     # Test 1: Basic NuScenes pickle
     print("\n" + "=" * 70)
     print("TEST 1: Basic NuScenes Pickle")
     print("=" * 70)
-    results["basic_pickle"] = test_nuscenes_pickle_basic()
+    try:
+        test_nuscenes_pickle_basic()
+        results["basic_pickle"] = "pass"
+    except pytest.skip.Exception as e:
+        results["basic_pickle"] = f"skip: {e}"
+    except AssertionError as e:
+        results["basic_pickle"] = f"fail: {e}"
+    except Exception as e:
+        results["basic_pickle"] = f"error: {e}"
     
     # Test 2: Dataset with NuScenes
     print("\n" + "=" * 70)
     print("TEST 2: Dataset with NuScenes Pickle")
     print("=" * 70)
-    results["dataset_pickle"] = test_dataset_with_nuscenes_pickle()
+    try:
+        test_dataset_with_nuscenes_pickle()
+        results["dataset_pickle"] = "pass"
+    except pytest.skip.Exception as e:
+        results["dataset_pickle"] = f"skip: {e}"
+    except AssertionError as e:
+        results["dataset_pickle"] = f"fail: {e}"
+    except Exception as e:
+        results["dataset_pickle"] = f"error: {e}"
     
     # Test 3: Dataset without NuScenes (safe path)
     print("\n" + "=" * 70)
     print("TEST 3: Dataset without NuScenes (nusc=None)")
     print("=" * 70)
-    results["without_nusc"] = test_dataset_without_nuscenes_pickle()
+    try:
+        test_dataset_without_nuscenes_pickle()
+        results["without_nusc"] = "pass"
+    except AssertionError as e:
+        results["without_nusc"] = f"fail: {e}"
+    except Exception as e:
+        results["without_nusc"] = f"error: {e}"
     
     # Summary
     print("\n" + "=" * 70)
     print("SUMMARY")
     print("=" * 70)
     
-    for name, result in results.items():
-        status = result.get("status", "unknown")
-        emoji = "✅" if status == "pass" else "⏭️" if status == "skip" else "❌"
+    for name, status in results.items():
+        if status == "pass":
+            emoji = "✅"
+        elif status.startswith("skip"):
+            emoji = "⏭️"
+        else:
+            emoji = "❌"
         print(f"{emoji} {name}: {status}")
     
     # Recommendation
@@ -294,15 +320,15 @@ def main():
     print("RECOMMENDATION:")
     print("-" * 70)
     
-    basic = results.get("basic_pickle", {})
-    dataset = results.get("dataset_pickle", {})
+    all_pass = all(s == "pass" for s in results.values())
+    any_skip = any(s.startswith("skip") if isinstance(s, str) else False for s in results.values())
     
-    if basic.get("pickle_works") and dataset.get("multiworker_works"):
+    if all_pass:
         print("✅ NuScenes IS picklable and works with multi-worker DataLoader!")
         print("   Issue 5.2 is NOT a problem for this NuScenes version.")
         print("   You can safely use num_workers > 0 with load_images=True.")
-    elif basic.get("status") == "skip":
-        print("⚠️  Could not test - NuScenes not available.")
+    elif any_skip:
+        print("⚠️  Could not fully test - NuScenes not available.")
         print("   Run this test on your training server.")
     else:
         print("❌ NuScenes has pickling issues!")

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from training.utils import logging as logging_utils
+from training.utils import logging_utils
 
 
 class DummyStdout:

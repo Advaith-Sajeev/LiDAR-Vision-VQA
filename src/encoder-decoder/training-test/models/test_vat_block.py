@@ -34,7 +34,7 @@ PROJECT_ROOT = THIS_DIR.parent.parent               # .../encoder-decoder
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from training.models.vat_blocks import VATBlock  # noqa: E402
+from training.models.vat_blocks import VATBlock, FlashMultiheadAttention  # noqa: E402
 
 
 # -----------------------------------------------------------------------------
@@ -203,6 +203,147 @@ def test_vat_block_multi_configs():
     print("\n✓ All VATBlock configs passed.\n")
 
 
+def test_flash_multihead_attention_self():
+    """Test FlashMultiheadAttention in self-attention mode."""
+    print("\n" + "=" * 60)
+    print("TEST: FlashMultiheadAttention (self-attention)")
+    print("=" * 60)
+    
+    device = get_device()
+    print(f"Using device: {device}")
+    
+    d_model = 256
+    n_heads = 8
+    dropout = 0.0  # No dropout for deterministic test
+    
+    attn = FlashMultiheadAttention(d_model, n_heads, dropout=dropout, is_cross_attn=False).to(device)
+    attn.eval()
+    
+    B, S = 2, 64
+    q = torch.randn(B, S, d_model, device=device)
+    
+    with torch.no_grad():
+        out = attn(q)
+    
+    print(f"Input q shape:  {tuple(q.shape)}")
+    print(f"Output shape:   {tuple(out.shape)}")
+    
+    assert out.shape == (B, S, d_model), f"Expected {(B, S, d_model)}, got {tuple(out.shape)}"
+    assert not torch.isnan(out).any(), "Output contains NaNs"
+    assert not torch.isinf(out).any(), "Output contains Infs"
+    
+    print("✓ Self-attention test passed.\n")
+
+
+def test_flash_multihead_attention_cross():
+    """Test FlashMultiheadAttention in cross-attention mode."""
+    print("\n" + "=" * 60)
+    print("TEST: FlashMultiheadAttention (cross-attention)")
+    print("=" * 60)
+    
+    device = get_device()
+    
+    d_model = 256
+    n_heads = 8
+    dropout = 0.0
+    
+    attn = FlashMultiheadAttention(d_model, n_heads, dropout=dropout, is_cross_attn=True).to(device)
+    attn.eval()
+    
+    B, Sq, Sk = 2, 64, 128
+    q = torch.randn(B, Sq, d_model, device=device)
+    k = torch.randn(B, Sk, d_model, device=device)
+    v = torch.randn(B, Sk, d_model, device=device)
+    
+    with torch.no_grad():
+        out = attn(q, k, v)
+    
+    print(f"Input q shape:  {tuple(q.shape)}")
+    print(f"Input k shape:  {tuple(k.shape)}")
+    print(f"Input v shape:  {tuple(v.shape)}")
+    print(f"Output shape:   {tuple(out.shape)}")
+    
+    assert out.shape == (B, Sq, d_model), f"Expected {(B, Sq, d_model)}, got {tuple(out.shape)}"
+    assert not torch.isnan(out).any(), "Output contains NaNs"
+    assert not torch.isinf(out).any(), "Output contains Infs"
+    
+    print("✓ Cross-attention test passed.\n")
+
+
+def test_vat_block_gradient_checkpointing():
+    """Test VATBlock with gradient checkpointing enabled."""
+    print("\n" + "=" * 60)
+    print("TEST: VATBlock gradient checkpointing")
+    print("=" * 60)
+    
+    device = get_device()
+    print(f"Using device: {device}")
+    
+    d_model = 256
+    n_heads = 8
+    d_mlp = 1024
+    dropout = 0.1
+    
+    block = VATBlock(d_model, n_heads, d_mlp, dropout).to(device)
+    block.train()
+    
+    # Enable gradient checkpointing
+    block.gradient_checkpointing = True
+    
+    B, Nq, Nk = 2, 64, 128
+    q = torch.randn(B, Nq, d_model, device=device, requires_grad=True)
+    kv = torch.randn(B, Nk, d_model, device=device, requires_grad=True)
+    
+    # Forward pass
+    out = block(q, kv)
+    
+    print(f"Output shape: {tuple(out.shape)}")
+    assert out.shape == (B, Nq, d_model)
+    
+    # Backward pass should work
+    loss = out.sum()
+    loss.backward()
+    
+    assert q.grad is not None, "Gradients should flow to q"
+    assert kv.grad is not None, "Gradients should flow to kv"
+    
+    print("✓ Gradient checkpointing test passed.\n")
+
+
+def test_vat_block_gradient_checkpointing_disabled():
+    """Test VATBlock with gradient checkpointing disabled."""
+    print("\n" + "=" * 60)
+    print("TEST: VATBlock gradient checkpointing disabled")
+    print("=" * 60)
+    
+    device = get_device()
+    
+    d_model = 256
+    n_heads = 8
+    d_mlp = 1024
+    dropout = 0.1
+    
+    block = VATBlock(d_model, n_heads, d_mlp, dropout).to(device)
+    block.train()
+    
+    # Ensure gradient checkpointing is disabled
+    block.gradient_checkpointing = False
+    
+    B, Nq, Nk = 2, 64, 128
+    q = torch.randn(B, Nq, d_model, device=device, requires_grad=True)
+    kv = torch.randn(B, Nk, d_model, device=device, requires_grad=True)
+    
+    # Forward + backward
+    out = block(q, kv)
+    loss = out.sum()
+    loss.backward()
+    
+    assert out.shape == (B, Nq, d_model)
+    assert q.grad is not None
+    
+    print("✓ Gradient checkpointing disabled test passed.\n")
+
+
 # -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
@@ -215,6 +356,10 @@ def main():
     try:
         test_vat_block_single_config()
         test_vat_block_multi_configs()
+        test_flash_multihead_attention_self()
+        test_flash_multihead_attention_cross()
+        test_vat_block_gradient_checkpointing()
+        test_vat_block_gradient_checkpointing_disabled()
 
         print("\n" + "=" * 70)
         print(" " * 24 + "ALL VATBlock TESTS COMPLETED")

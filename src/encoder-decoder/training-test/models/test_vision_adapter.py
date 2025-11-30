@@ -239,8 +239,134 @@ def test_vision_adapter():
     print("="*60)
 
 
+def test_vision_adapter_forward_batch():
+    """Test VisionAdapter batched forward pass"""
+    
+    print("\n" + "="*60)
+    print("Testing VisionAdapter forward_batch")
+    print("="*60)
+    
+    # Configuration
+    d_in = 2048
+    d_model = 1024
+    num_views = 6
+    hw = 256
+    batch_size = 4
+    
+    adapter = VisionAdapter(d_in=d_in, d_model=d_model, dropout=0.1)
+    adapter.eval()
+    
+    # Test 1: Basic batched forward pass
+    print("\n" + "-"*40)
+    print("Test 1: Basic batched forward pass")
+    print("-"*40)
+    
+    # Create batched input: List[B][V] of tensors [HW, d_in]
+    batch_views = [
+        [torch.randn(hw, d_in) for _ in range(num_views)]
+        for _ in range(batch_size)
+    ]
+    
+    print(f"Batch size: {batch_size}")
+    print(f"Views per sample: {num_views}")
+    print(f"Tokens per view: {hw}")
+    
+    output = adapter.forward_batch(batch_views)
+    
+    expected_shape = (batch_size, num_views * hw, d_model)
+    print(f"Output shape: {tuple(output.shape)}")
+    print(f"Expected shape: {expected_shape}")
+    
+    assert output.shape == expected_shape, f"Shape mismatch! Got {output.shape}"
+    print("✓ Batched output shape correct!")
+    
+    # Test 2: Consistency with single-sample forward
+    print("\n" + "-"*40)
+    print("Test 2: Consistency with single forward")
+    print("-"*40)
+    
+    adapter_clean = VisionAdapter(d_in=d_in, d_model=d_model, dropout=0.0)
+    adapter_clean.eval()
+    
+    # Process samples individually
+    single_outputs = []
+    for sample_views in batch_views:
+        single_out = adapter_clean(sample_views)  # [V*HW, d_model]
+        single_outputs.append(single_out.unsqueeze(0))  # [1, V*HW, d_model]
+    
+    single_stacked = torch.cat(single_outputs, dim=0)  # [B, V*HW, d_model]
+    
+    # Process batch
+    batch_output = adapter_clean.forward_batch(batch_views)  # [B, V*HW, d_model]
+    
+    diff = torch.abs(single_stacked - batch_output).max()
+    print(f"Max difference between single and batch: {diff:.8f}")
+    assert diff < 1e-5, f"Batch and single processing should match! Diff: {diff}"
+    print("✓ Batch processing matches single processing!")
+    
+    # Test 3: Empty batch should raise error
+    print("\n" + "-"*40)
+    print("Test 3: Empty batch raises error")
+    print("-"*40)
+    
+    try:
+        adapter.forward_batch([])
+        print("✗ Should have raised ValueError!")
+    except ValueError as e:
+        print(f"✓ Correctly raised ValueError: {str(e)}")
+    
+    # Test 4: Wrong number of views in batch
+    print("\n" + "-"*40)
+    print("Test 4: Wrong number of views in batch")
+    print("-"*40)
+    
+    wrong_batch = [[torch.randn(hw, d_in) for _ in range(4)] for _ in range(2)]  # 4 views instead of 6
+    try:
+        adapter.forward_batch(wrong_batch)
+        print("✗ Should have raised ValueError!")
+    except ValueError as e:
+        print(f"✓ Correctly raised ValueError: {str(e)[:60]}...")
+    
+    # Test 5: Gradient flow in batched forward
+    print("\n" + "-"*40)
+    print("Test 5: Gradient flow in batched forward")
+    print("-"*40)
+    
+    adapter_train = VisionAdapter(d_in=d_in, d_model=d_model, dropout=0.1)
+    adapter_train.train()
+    
+    batch_views_grad = [
+        [torch.randn(hw, d_in, requires_grad=True) for _ in range(num_views)]
+        for _ in range(batch_size)
+    ]
+    
+    output = adapter_train.forward_batch(batch_views_grad)
+    loss = output.sum()
+    loss.backward()
+    
+    # Check gradients on inputs
+    has_input_grads = all(
+        all(v.grad is not None for v in sample_views)
+        for sample_views in batch_views_grad
+    )
+    print(f"Input gradients exist: {has_input_grads}")
+    
+    # Check gradients on view embeddings
+    has_embed_grad = adapter_train.view_embed.grad is not None
+    print(f"View embedding gradients exist: {has_embed_grad}")
+    
+    assert has_input_grads, "Input should have gradients"
+    assert has_embed_grad, "View embeddings should have gradients"
+    print("✓ Gradients flow correctly in batched mode!")
+    
+    print("\n" + "="*60)
+    print("All batched forward tests passed! ✓")
+    print("="*60)
+
+
 if __name__ == "__main__":
     # Set random seed for reproducibility
     torch.manual_seed(42)
     
     test_vision_adapter()
+    test_vision_adapter_forward_batch()

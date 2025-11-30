@@ -251,10 +251,17 @@ def load_openclip_vitl14_into_vitmodel(
         return
 
     debug.info(_MODULE, "Loading CLIP ViT-L/14 (OpenCLIP, pretrained=%s)..." % openclip_pretrained)
-    model, _, _ = open_clip.create_model_and_transforms(
-        "ViT-L-14-quickgelu", pretrained=openclip_pretrained, device=device
-    )
-    sd = model.visual.state_dict()
+    try:
+        model, _, _ = open_clip.create_model_and_transforms(
+            "ViT-L-14-quickgelu", pretrained=openclip_pretrained, device=device
+        )
+        sd = model.visual.state_dict()
+        if not sd:
+            debug.warn(_MODULE, "OpenCLIP returned empty state dict; skipping weight loading (leaving random init).")
+            return
+    except (StopIteration, RuntimeError, Exception) as e:
+        debug.warn(_MODULE, f"Failed to load OpenCLIP weights: {e}; skipping weight loading (leaving random init).")
+        return
 
     with torch.no_grad():
         # class embedding

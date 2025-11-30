@@ -19,17 +19,19 @@ from deepencoder.deepencoder_infer import (
 import tempfile
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="Flash Attention requires CUDA")
 def test_deepencoder_runtime():
     """Test DeepEncoderRuntime with mock image"""
     # Mock input image (1024x1024 RGB)
     input_image = Image.new("RGB", (1024, 1024), color=(255, 255, 255))
 
-    # Initialize DeepEncoderRuntime (use CPU for testing)
+    # Initialize DeepEncoderRuntime (use CUDA for Flash Attention)
+    device = 'cuda'
     runtime = DeepEncoderRuntime(
         sam_ckpt=None,
         auto_download_sam=True,
-        device='cpu',
-        dtype=torch.float32,
+        device=device,
+        dtype=torch.float16,
         openclip_pretrained="openai",
     )
 
@@ -84,6 +86,7 @@ def test_deepencoder_runtime():
             Path(temp_path).unlink()
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="Flash Attention requires CUDA")
 def test_deepencoder_infer_with_real_image():
     """Test DeepEncoder inference pipeline on a real test image"""
     

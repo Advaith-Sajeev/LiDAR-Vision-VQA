@@ -235,7 +235,14 @@ class NoTPAttention(nn.Module):
         B, S, C = x.shape
         qkv = self.qkv_proj(x).view(B, S, 3, self.num_heads, self.head_dim)  # [B,S,3,H,D]
 
-        if self.use_flash_attention:
+        # Flash Attention only supports float16 and bfloat16, and requires CUDA
+        use_flash = (
+            self.use_flash_attention 
+            and x.is_cuda 
+            and x.dtype in (torch.float16, torch.bfloat16)
+        )
+
+        if use_flash:
             # flash_attn expects [B,S,3,H,D]
             out = flash_attn_qkvpacked_func(qkv, dropout_p=0.0, causal=False)  # [B,S,H*D]
             out = out.view(B, S, -1)

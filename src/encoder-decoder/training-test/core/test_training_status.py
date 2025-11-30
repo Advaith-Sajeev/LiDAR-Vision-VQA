@@ -14,17 +14,58 @@ src_root = current_dir.parent.parent.parent
 sys.path.insert(0, str(training_root))
 sys.path.insert(0, str(src_root))
 
-# Mock external dependencies before importing
-sys.modules['nuscenes'] = MagicMock()
-sys.modules['nuscenes.nuscenes'] = MagicMock()
-sys.modules['deepencoder'] = MagicMock()
-sys.modules['deepencoder.deepencoder_infer'] = MagicMock()
-sys.modules['deepencoder.lora_config'] = MagicMock()
+# Store original modules to restore later
+_original_modules = {}
+
+class _SafeModuleMock(MagicMock):
+    """MagicMock that explicitly returns None for pytest_plugins.
+    
+    This prevents pytest from interpreting the mock as a plugin provider
+    during test collection.
+    """
+    @property
+    def pytest_plugins(self):
+        return None
+    
+    @property
+    def tests(self):
+        return None
+
+
+def _create_safe_mock():
+    """Create a MagicMock that won't interfere with pytest plugin discovery."""
+    return _SafeModuleMock()
+
+def _mock_modules():
+    """Mock external dependencies before importing."""
+    modules_to_mock = [
+        'nuscenes', 'nuscenes.nuscenes',
+        'deepencoder', 'deepencoder.deepencoder_infer', 'deepencoder.lora_config',
+    ]
+    for mod in modules_to_mock:
+        if mod in sys.modules:
+            _original_modules[mod] = sys.modules[mod]
+        sys.modules[mod] = _create_safe_mock()
+
+def _restore_modules():
+    """Restore original modules."""
+    for mod in ['nuscenes', 'nuscenes.nuscenes', 'deepencoder',
+                'deepencoder.deepencoder_infer', 'deepencoder.lora_config']:
+        if mod in _original_modules:
+            sys.modules[mod] = _original_modules[mod]
+        elif mod in sys.modules and isinstance(sys.modules[mod], MagicMock):
+            del sys.modules[mod]
+
+# Apply mocks before import
+_mock_modules()
 
 # Import model classes directly
 from models.vat_lidar import VATLiDAR
 from models.vat_vision import VATVision
 from models.vision_adapter import VisionAdapter
+
+# Restore modules after import so other tests aren't affected
+_restore_modules()
 
 
 def analyze_module_training_status(model, module_name="Model"):
@@ -90,35 +131,62 @@ def print_module_status(status_dict):
         print(f"{detail['name']:<50} {shape_str:<20} {detail['status']:<15}")
 
 
-def test_sam_frozen_status():
-    """Verify SAM is completely frozen"""
+def test_sam_partial_freeze_status():
+    """Verify SAM backbone is frozen but net_2/net_3 compression head is trainable"""
     print("\n" + "="*80)
-    print("TEST 1: SAM (Segment Anything Model) - Should be FROZEN")
+    print("TEST 1: SAM (Segment Anything Model) - Backbone FROZEN, Compression Head TRAINABLE")
     print("="*80)
     
-    # Create mock SAM model
-    sam = nn.Sequential(
-        nn.Conv2d(3, 64, 7, stride=2, padding=3),
-        nn.BatchNorm2d(64),
-        nn.ReLU(),
-        nn.Conv2d(64, 128, 3, padding=1),
-    )
+    # Create mock SAM model with both backbone and compression head
+    class MockSAM(nn.Module):
+        def __init__(self):
+            super().__init__()
+            # Backbone (frozen)
+            self.image_encoder = nn.Conv2d(3, 64, 7, stride=2, padding=3)
+            self.prompt_encoder = nn.Linear(64, 64)
+            self.mask_decoder = nn.Linear(64, 32)
+            
+            # Compression head net_2 and net_3 (trainable - DeepEncoder/VARY layers)
+            self.net_2 = nn.Sequential(
+                nn.Conv2d(64, 256, 3, padding=1),
+                nn.ReLU(),
+            )
+            self.net_3 = nn.Conv2d(256, 512, 3, padding=1)
     
-    # Freeze all parameters (as done in DeepEncoderRuntime)
-    for param in sam.parameters():
-        param.requires_grad = False
+    sam = MockSAM()
     
-    status = analyze_module_training_status(sam, "SAM (Segment Anything)")
+    # Apply freeze pattern from DeepEncoderRuntime:
+    # net_2 and net_3 are trainable, everything else is frozen
+    for name, param in sam.named_parameters():
+        if name.startswith("net_2") or name.startswith("net_3"):
+            param.requires_grad = True   # Trainable compression head
+        else:
+            param.requires_grad = False  # Frozen SAM backbone
+    
+    status = analyze_module_training_status(sam, "SAM (Segment Anything + Compression Head)")
     print_module_status(status)
     
-    # Verify all frozen
-    assert status['frozen_params'] == status['total_params'], \
-        f"SAM should be completely frozen! Found {status['trainable_params']} trainable params"
-    assert status['trainable_params'] == 0, \
-        "SAM should have 0 trainable parameters!"
+    # Verify net_2 and net_3 are trainable
+    trainable_names = [d['name'] for d in status['param_details'] if d['requires_grad']]
+    frozen_names = [d['name'] for d in status['param_details'] if not d['requires_grad']]
+    
+    # All trainable params should be net_2 or net_3
+    for name in trainable_names:
+        assert name.startswith("net_2") or name.startswith("net_3"), \
+            f"Only net_2/net_3 should be trainable, but found: {name}"
+    
+    # Backbone should be frozen
+    for name in frozen_names:
+        assert not (name.startswith("net_2") or name.startswith("net_3")), \
+            f"net_2/net_3 should NOT be frozen, but found: {name}"
+    
+    assert status['trainable_params'] > 0, \
+        "SAM compression head (net_2/net_3) should have trainable parameters!"
+    assert status['frozen_params'] > 0, \
+        "SAM backbone should have frozen parameters!"
     
     print(f"\n{'✓'*40}")
-    print("✓ SAM IS COMPLETELY FROZEN")
+    print("✓ SAM BACKBONE FROZEN, COMPRESSION HEAD (net_2/net_3) TRAINABLE")
     print(f"{'✓'*40}")
 
 
@@ -355,19 +423,20 @@ def test_overall_training_summary():
     print("="*80)
     
     components = [
-        ("SAM (Segment Anything)", "FROZEN", "✗", "All parameters frozen"),
+        ("SAM Backbone", "FROZEN", "✗", "Image encoder, prompt encoder, mask decoder frozen"),
+        ("SAM Compression Head", "TRAINABLE", "✓", "net_2 and net_3 (DeepEncoder/VARY layers)"),
         ("CLIP ViT Backbone", "FROZEN", "✗", "Base weights frozen"),
         ("CLIP LoRA Adapters", "TRAINABLE", "✓", "Low-rank adapters for efficient fine-tuning"),
         ("LLM Decoder Backbone", "FROZEN", "✗", "Base weights frozen"),
         ("LLM LoRA Adapters", "TRAINABLE", "✓", "Low-rank adapters for efficient fine-tuning"),
         ("DeepEncoder Projector", "TRAINABLE", "✓", "Full parameters trainable"),
         ("VisionAdapter", "TRAINABLE", "✓", "Full parameters trainable"),
-        ("VATVision", "TRAINABLE", "✓", "Full parameters trainable"),
-        ("VATLiDAR", "TRAINABLE", "✓", "Full parameters trainable"),
+        ("VATVision", "TRAINABLE", "✓", "Full parameters trainable (+ learnable output_scale)"),
+        ("VATLiDAR", "TRAINABLE", "✓", "Full parameters trainable (+ learnable output_scale)"),
     ]
     
     print(f"\n{'Component':<30} {'Status':<15} {'Symbol':<8} {'Description':<40}")
-    print("-"*80)
+    print("-"*93)
     
     for component, status, symbol, desc in components:
         print(f"{component:<30} {status:<15} {symbol:<8} {desc:<40}")
@@ -376,26 +445,31 @@ def test_overall_training_summary():
     print("TRAINING STRATEGY:")
     print("="*80)
     print("1. Frozen Backbones:")
-    print("   - SAM: Completely frozen (pre-trained segmentation)")
+    print("   - SAM Backbone: Image encoder, prompt encoder, mask decoder frozen")
     print("   - CLIP: Base weights frozen (pre-trained vision encoder)")
     print("   - LLM: Base weights frozen (pre-trained language model)")
     print()
-    print("2. LoRA Fine-tuning:")
+    print("2. Trainable Compression Head:")
+    print("   - SAM net_2/net_3: DeepEncoder/VARY compression layers")
+    print("   - These are saved separately in sam_compression_head_latest.pt")
+    print()
+    print("3. LoRA Fine-tuning:")
     print("   - CLIP: Low-rank adapters on attention layers")
     print("   - LLM: Low-rank adapters on Q, K, V, O, Gate, Up, Down projections")
     print("   - Efficient: Only ~1-5% of total parameters trainable")
     print()
-    print("3. Full Training:")
+    print("4. Full Training:")
     print("   - DeepEncoder Projector: Maps SAM features to CLIP space")
     print("   - VisionAdapter: Adds per-view embeddings + projects to LLM dim")
-    print("   - VATVision: Vision tokens → compressed queries for LLM")
-    print("   - VATLiDAR: LiDAR BEV features → queries for LLM")
+    print("   - VATVision: Vision tokens → compressed queries for LLM (+ output_scale)")
+    print("   - VATLiDAR: LiDAR BEV features → queries for LLM (+ output_scale)")
     print()
     print("="*80)
     print("GRADIENT FLOW:")
     print("="*80)
-    print("Input → SAM (frozen) → Projector (train) → CLIP (LoRA) →")
-    print("VisionAdapter (train) → VATVision (train) → LLM (LoRA) + VATLiDAR (train)")
+    print("Input → SAM Backbone (frozen) → SAM net_2/net_3 (train) →")
+    print("Projector (train) → CLIP (LoRA) → VisionAdapter (train) →")
+    print("VATVision (train) → LLM (LoRA) + VATLiDAR (train)")
     print("="*80)
 
 
@@ -407,7 +481,7 @@ if __name__ == "__main__":
     print("="*80)
     
     # Run all tests
-    test_sam_frozen_status()
+    test_sam_partial_freeze_status()
     test_clip_lora_trainable()
     test_llm_lora_trainable()
     test_vat_lidar_full_training()
@@ -420,7 +494,8 @@ if __name__ == "__main__":
     print("ALL TRAINING STATUS TESTS PASSED ✓")
     print("="*80)
     print("\nSummary:")
-    print("  ✗ SAM: FROZEN (as expected)")
+    print("  ✗ SAM Backbone: FROZEN (as expected)")
+    print("  ✓ SAM Compression Head (net_2/net_3): TRAINABLE (as expected)")
     print("  ✓ CLIP LoRA: TRAINABLE (as expected)")
     print("  ✓ LLM LoRA: TRAINABLE (as expected)")
     print("  ✓ DeepEncoder Projector: TRAINABLE (as expected)")

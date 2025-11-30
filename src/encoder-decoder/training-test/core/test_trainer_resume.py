@@ -15,15 +15,59 @@ import pytest
 import torch
 import torch.nn as nn
 
-# Mock external dependencies before importing trainer
-sys.modules['nuscenes'] = MagicMock()
-sys.modules['nuscenes.nuscenes'] = MagicMock()
-sys.modules['deepencoder'] = MagicMock()
-sys.modules['deepencoder.deepencoder_infer'] = MagicMock()
-sys.modules['deepencoder.lora_config'] = MagicMock()
-sys.modules['peft'] = MagicMock()
-sys.modules['safetensors'] = MagicMock()
-sys.modules['safetensors.torch'] = MagicMock()
+# Store original modules to restore later
+_original_modules = {}
+
+class _SafeModuleMock(MagicMock):
+    """MagicMock that explicitly returns None for pytest_plugins.
+    
+    This prevents pytest from interpreting the mock as a plugin provider
+    during test collection.
+    """
+    @property
+    def pytest_plugins(self):
+        return None
+    
+    @property
+    def tests(self):
+        return None
+
+
+def _create_safe_mock():
+    """Create a MagicMock that won't interfere with pytest plugin discovery."""
+    return _SafeModuleMock()
+
+def _mock_modules():
+    """Mock external dependencies before importing trainer."""
+    modules_to_mock = [
+        'nuscenes', 'nuscenes.nuscenes',
+        'deepencoder', 'deepencoder.deepencoder_infer', 'deepencoder.lora_config',
+        'peft', 'safetensors', 'safetensors.torch',
+    ]
+    for mod in modules_to_mock:
+        if mod in sys.modules:
+            _original_modules[mod] = sys.modules[mod]
+        sys.modules[mod] = _create_safe_mock()
+
+def _restore_modules():
+    """Restore original modules."""
+    for mod in ['nuscenes', 'nuscenes.nuscenes', 'deepencoder',
+                'deepencoder.deepencoder_infer', 'deepencoder.lora_config',
+                'peft', 'safetensors', 'safetensors.torch']:
+        if mod in _original_modules:
+            sys.modules[mod] = _original_modules[mod]
+        elif mod in sys.modules and isinstance(sys.modules[mod], MagicMock):
+            del sys.modules[mod]
+
+# Apply mocks before import
+_mock_modules()
+
+# Pytest fixture to restore modules after all tests in this module complete
+@pytest.fixture(scope="module", autouse=True)
+def restore_mocked_modules():
+    """Restore mocked modules after all tests complete."""
+    yield
+    _restore_modules()
 
 
 # ============================================================================

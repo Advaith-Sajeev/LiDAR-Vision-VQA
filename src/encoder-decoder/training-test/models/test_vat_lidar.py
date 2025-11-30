@@ -298,6 +298,68 @@ def test_vat_lidar_forward():
     print("\n  ✓ All forward configs passed.\n")
 
 
+def test_vat_lidar_gradient_checkpointing():
+    """Test VATLiDAR gradient checkpointing enable/disable."""
+    print("\n" + "=" * 60)
+    print("TEST: VATLiDAR GRADIENT CHECKPOINTING")
+    print("=" * 60)
+    
+    device = get_device()
+    print(f"  Using device: {device}")
+    
+    model = VATLiDAR(c_in=128, d_model=256, n_queries=576, n_layers=2).to(device)
+    model.train()
+    
+    # Test enable
+    model.gradient_checkpointing_enable()
+    assert model._gradient_checkpointing == True, "gradient_checkpointing should be True"
+    for blk in model.blocks:
+        assert blk.gradient_checkpointing == True, "block gradient_checkpointing should be True"
+    
+    print("  ✓ gradient_checkpointing_enable() works")
+    
+    # Test disable
+    model.gradient_checkpointing_disable()
+    assert model._gradient_checkpointing == False, "gradient_checkpointing should be False"
+    for blk in model.blocks:
+        assert blk.gradient_checkpointing == False, "block gradient_checkpointing should be False"
+    
+    print("  ✓ gradient_checkpointing_disable() works")
+    
+    # Test forward with gradient checkpointing
+    model.gradient_checkpointing_enable()
+    bev = torch.randn(2, 128, 64, 64, device=device, requires_grad=True)
+    
+    out = model(bev)
+    assert out.shape == (2, 576, 256)
+    
+    loss = out.sum()
+    loss.backward()
+    
+    assert bev.grad is not None, "Gradients should flow back to input"
+    print("  ✓ Forward/backward with gradient checkpointing works")
+    
+    print("\n  ✓ Gradient checkpointing test passed.\n")
+
+
+def test_vat_lidar_output_scale():
+    """Test that VATLiDAR output_scale parameter is learnable."""
+    print("\n" + "=" * 60)
+    print("TEST: VATLiDAR OUTPUT SCALE")
+    print("=" * 60)
+    
+    device = get_device()
+    
+    model = VATLiDAR(c_in=128, d_model=256, n_queries=576, n_layers=1).to(device)
+    
+    # Check output_scale is learnable
+    assert model.output_scale.requires_grad, "output_scale should be learnable"
+    assert model.output_scale.item() == 1.0, "output_scale should be initialized to 1.0"
+    
+    print(f"  Initial output_scale: {model.output_scale.item():.4f}")
+    print("  ✓ output_scale is learnable and initialized correctly.\n")
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -314,6 +376,8 @@ def main():
         test_geometric_features()
         test_view_embedding_assignment()
         test_vat_lidar_forward()
+        test_vat_lidar_gradient_checkpointing()
+        test_vat_lidar_output_scale()
 
         print("\nGenerating sector assignment visualization (H=256, W=256)...")
         viz_path = out_dir / "sector_assignment_visualization.png"

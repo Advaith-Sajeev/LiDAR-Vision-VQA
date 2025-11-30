@@ -5,14 +5,17 @@ Verifies that SAM is frozen, CLIP has LoRA, and projector is trainable.
 
 import sys
 from pathlib import Path
+from unittest.mock import patch, MagicMock
 import pytest
 
-# Add deepencoder to path
-deepencoder_dir = Path(__file__).parent.parent.parent.parent / "deepencoder"
-if str(deepencoder_dir) not in sys.path:
-    sys.path.insert(0, str(deepencoder_dir))
+# Add src/ directory to path (contains deepencoder package)
+src_dir = Path(__file__).parent.parent.parent.parent
+if str(src_dir) not in sys.path:
+    sys.path.insert(0, str(src_dir))
 
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
 # Skip entire module if deepencoder not available
 pytest.importorskip("deepencoder")
@@ -20,23 +23,71 @@ pytest.importorskip("deepencoder")
 from deepencoder import DeepEncoderRuntime, DeepEncoderLoRAConfig
 
 
+# ---------- Lightweight stand-ins for heavy models ----------
+
+class DummySAM(nn.Module):
+    """Minimal SAM-like encoder for testing."""
+    def __init__(self):
+        super().__init__()
+        self.conv = nn.Conv2d(3, 1024, kernel_size=1)
+        # Add net_2 and net_3 for the compression head (these should be trainable)
+        self.net_2 = nn.Conv2d(1024, 1024, kernel_size=1)
+        self.net_3 = nn.Conv2d(1024, 1024, kernel_size=1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        y = self.conv(x)
+        y = F.adaptive_avg_pool2d(y, (16, 16))
+        return y
+
+
+class DummyCLIP(nn.Module):
+    """Minimal CLIP-ViT-like head for testing."""
+    def __init__(self):
+        super().__init__()
+        self.embed_dim = 1024
+        self.embeddings = nn.Module()
+        self.embeddings.class_embedding = nn.Parameter(torch.zeros(1024))
+        self.embeddings.position_embedding = nn.Embedding(257, 1024)
+        self.embeddings.num_positions = 257
+        self.embeddings.patch_embedding = nn.Conv2d(3, 1024, kernel_size=14, stride=14)
+        
+        self.transformer = nn.Module()
+        self.transformer.layers = nn.ModuleList()
+        
+        # Add qkv_proj for LoRA targeting
+        self.qkv_proj = nn.Linear(1024, 3072)
+
+    def forward(self, x: torch.Tensor, patch_embeds: torch.Tensor) -> torch.Tensor:
+        B, C, H, W = patch_embeds.shape
+        tokens = patch_embeds.flatten(2).transpose(1, 2)
+        cls = torch.zeros(B, 1, self.embed_dim, device=x.device, dtype=x.dtype)
+        return torch.cat([cls, tokens], dim=1)
+
+
 @pytest.fixture(scope="module")
 def deepencoder_runtime():
-    """Create DeepEncoder runtime with LoRA config for testing."""
-    lora_config = DeepEncoderLoRAConfig(
-        enabled=True,
-        r=1,
-        lora_alpha=2,
-        lora_dropout=0.05,
-        target_modules=["qkv_proj"],
-    )
+    """Create DeepEncoder runtime with LoRA config for testing (with mocked models)."""
+    import deepencoder.deepencoder_infer as dei
     
-    runtime = DeepEncoderRuntime(
-        device="cpu",
-        dtype=torch.float32,
-        lora_config=lora_config,
-        freeze_clip_backbone_when_lora_enabled=True,
-    )
+    # Mock download and model builders
+    with patch.object(dei, 'download_sam_if_needed', return_value="/tmp/dummy_sam.pth"):
+        with patch.object(dei, 'build_sam_vit_b', return_value=DummySAM()):
+            with patch.object(dei, 'build_clip_l', return_value=DummyCLIP()):
+                with patch.object(dei, 'load_openclip_vitl14_into_vitmodel'):
+                    lora_config = DeepEncoderLoRAConfig(
+                        enabled=True,
+                        r=1,
+                        lora_alpha=2,
+                        lora_dropout=0.05,
+                        target_modules=["qkv_proj"],
+                    )
+                    
+                    runtime = DeepEncoderRuntime(
+                        device="cpu",
+                        dtype=torch.float32,
+                        lora_config=lora_config,
+                        freeze_clip_backbone_when_lora_enabled=True,
+                    )
     
     return runtime
 

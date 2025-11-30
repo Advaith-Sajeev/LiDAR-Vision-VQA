@@ -165,7 +165,9 @@ class TestCaptionMetrics:
         metrics = calculate_caption_metrics(preds, refs)
         
         assert "bleu4" in metrics
-        assert metrics["bleu4"] == 0.0
+        # Use approximate comparison - BLEU can return very small non-zero values
+        # due to smoothing or floating point precision
+        assert metrics["bleu4"] < 1e-6, f"Expected BLEU4 ≈ 0, got {metrics['bleu4']}"
     
     def test_partial_match(self):
         """Test metrics for partially matching captions"""
@@ -233,7 +235,7 @@ class TestMetricsByType:
                 "ground_truth": "A red car"
             },
             {
-                "dataset_type": "grounding",
+                "dataset_type": "grounding_det_area",
                 "prediction": "Car at [1.0, 3.0, 2.0, 4.0, 3.0, 5.0, 0.0]",
                 "ground_truth": "Car at [1.0, 3.0, 2.0, 4.0, 3.0, 5.0, 0.0]"
             }
@@ -242,9 +244,9 @@ class TestMetricsByType:
         metrics = calculate_metrics_by_type(results)
         
         assert "caption_dashboard" in metrics
-        assert "grounding_dashboard" in metrics
+        assert "grounding_det_area_dashboard" in metrics
         assert metrics["caption_dashboard"]["num_samples"] == 1
-        assert metrics["grounding_dashboard"]["num_samples"] == 1
+        assert metrics["grounding_det_area_dashboard"]["num_samples"] == 1
     
     def test_empty_results(self):
         """Test with empty results list"""
@@ -253,9 +255,9 @@ class TestMetricsByType:
         
         # Should return dashboards with 0 samples
         assert "caption_dashboard" in metrics
-        assert "grounding_dashboard" in metrics
+        assert "grounding_det_area_dashboard" in metrics
         assert metrics["caption_dashboard"]["num_samples"] == 0
-        assert metrics["grounding_dashboard"]["num_samples"] == 0
+        assert metrics["grounding_det_area_dashboard"]["num_samples"] == 0
     
     def test_caption_only(self):
         """Test with only caption tasks"""
@@ -267,9 +269,9 @@ class TestMetricsByType:
         metrics = calculate_metrics_by_type(results)
         
         assert "caption_dashboard" in metrics
-        assert "grounding_dashboard" in metrics
+        assert "grounding_det_area_dashboard" in metrics
         assert metrics["caption_dashboard"]["num_samples"] == 2
-        assert metrics["grounding_dashboard"]["num_samples"] == 0
+        assert metrics["grounding_det_area_dashboard"]["num_samples"] == 0
 
 
 if __name__ == "__main__":

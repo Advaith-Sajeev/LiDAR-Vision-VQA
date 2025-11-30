@@ -181,9 +181,10 @@ class TestVATBlocksDtypeFallback:
         
         for dtype in [torch.float16, torch.bfloat16]:
             mha_typed = mha.to(dtype)
-            x = torch.randn(seq_len, batch, embed_dim, device="cuda", dtype=dtype)
+            # FlashMultiheadAttention expects [B, S, D] format
+            x = torch.randn(batch, seq_len, embed_dim, device="cuda", dtype=dtype)
             
-            out, _ = mha_typed(x, x, x)
+            out = mha_typed(x)  # Returns single tensor, not tuple
             assert out.dtype == dtype
             assert out.shape == x.shape
     
@@ -199,10 +200,11 @@ class TestVATBlocksDtypeFallback:
         
         seq_len = 16
         batch = 2
-        x = torch.randn(seq_len, batch, embed_dim, device="cuda", dtype=torch.float32)
+        # FlashMultiheadAttention expects [B, S, D] format
+        x = torch.randn(batch, seq_len, embed_dim, device="cuda", dtype=torch.float32)
         
         # Should fall back to F.scaled_dot_product_attention for float32
-        out, _ = mha(x, x, x)
+        out = mha(x)  # Returns single tensor, not tuple
         assert out.dtype == torch.float32
         assert out.shape == x.shape
 

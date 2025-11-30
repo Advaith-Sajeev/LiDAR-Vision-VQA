@@ -44,6 +44,16 @@ class DummyCLIP(nn.Module):
     def __init__(self):
         super().__init__()
         self.embed_dim = 1024
+        # Add embeddings attribute to satisfy load_openclip_vitl14_into_vitmodel checks
+        self.embeddings = nn.Module()
+        self.embeddings.class_embedding = nn.Parameter(torch.zeros(1024))
+        self.embeddings.position_embedding = nn.Embedding(257, 1024)
+        self.embeddings.num_positions = 257  # Required by load_openclip_vitl14_into_vitmodel
+        self.embeddings.patch_embedding = nn.Conv2d(3, 1024, kernel_size=14, stride=14)
+        
+        # Add transformer attribute with layers for weight loading
+        self.transformer = nn.Module()
+        self.transformer.layers = nn.ModuleList()
 
     def forward(self, x: torch.Tensor, patch_embeds: torch.Tensor) -> torch.Tensor:
         B, C, H, W = patch_embeds.shape

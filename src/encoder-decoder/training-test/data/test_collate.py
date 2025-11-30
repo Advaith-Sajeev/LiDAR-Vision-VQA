@@ -263,6 +263,111 @@ class TestMakeCollate:
         # Should be called twice: once for prompts, once for answers
         # Answer tokenization should use max_ans_toks
         assert max_ans_toks in max_lens_used
+    
+    def test_collate_with_load_images_true(self):
+        """Test collate function with load_images=True"""
+        def mock_tokenizer_call(texts, **kwargs):
+            batch_size = len(texts)
+            return {
+                "input_ids": torch.randint(0, 1000, (batch_size, 10)),
+                "attention_mask": torch.ones(batch_size, 10, dtype=torch.long)
+            }
+        
+        self.tokenizer.side_effect = mock_tokenizer_call
+        
+        collate_fn = make_collate(self.tokenizer, max_ans_toks=50, load_images=True)
+        
+        # Create sample items with images
+        items = [
+            {
+                "bev": torch.randn(128, 64, 64),
+                "token": "token1",
+                "question": "Q1",
+                "answer": "A1",
+                "images": [torch.randn(1, 3, 1024, 1024) for _ in range(6)]
+            },
+            {
+                "bev": torch.randn(128, 64, 64),
+                "token": "token2",
+                "question": "Q2",
+                "answer": "A2",
+                "images": [torch.randn(1, 3, 1024, 1024) for _ in range(6)]
+            }
+        ]
+        
+        batch = collate_fn(items)
+        
+        assert "images" in batch
+        assert len(batch["images"]) == 2  # Batch size
+        assert len(batch["images"][0]) == 6  # 6 views per sample
+    
+    def test_collate_with_load_images_missing_key(self):
+        """Test collate with load_images=True handles missing images key"""
+        def mock_tokenizer_call(texts, **kwargs):
+            batch_size = len(texts)
+            return {
+                "input_ids": torch.randint(0, 1000, (batch_size, 10)),
+                "attention_mask": torch.ones(batch_size, 10, dtype=torch.long)
+            }
+        
+        self.tokenizer.side_effect = mock_tokenizer_call
+        
+        collate_fn = make_collate(self.tokenizer, max_ans_toks=50, load_images=True)
+        
+        # One item with images, one without
+        items = [
+            {
+                "bev": torch.randn(128, 64, 64),
+                "token": "token1",
+                "question": "Q1",
+                "answer": "A1",
+                "images": [torch.randn(1, 3, 1024, 1024) for _ in range(6)]
+            },
+            {
+                "bev": torch.randn(128, 64, 64),
+                "token": "token2",
+                "question": "Q2",
+                "answer": "A2",
+                # No "images" key
+            }
+        ]
+        
+        batch = collate_fn(items)
+        
+        assert "images" in batch
+        assert len(batch["images"]) == 2
+        # Second item should have list of 6 None values
+        assert len(batch["images"][1]) == 6
+        assert all(img is None for img in batch["images"][1])
+    
+    def test_collate_without_load_images(self):
+        """Test collate function with load_images=False (default)"""
+        def mock_tokenizer_call(texts, **kwargs):
+            batch_size = len(texts)
+            return {
+                "input_ids": torch.randint(0, 1000, (batch_size, 10)),
+                "attention_mask": torch.ones(batch_size, 10, dtype=torch.long)
+            }
+        
+        self.tokenizer.side_effect = mock_tokenizer_call
+        
+        collate_fn = make_collate(self.tokenizer, max_ans_toks=50, load_images=False)
+        
+        # Items with images (should be ignored)
+        items = [
+            {
+                "bev": torch.randn(128, 64, 64),
+                "token": "token1",
+                "question": "Q1",
+                "answer": "A1",
+                "images": [torch.randn(1, 3, 1024, 1024) for _ in range(6)]
+            }
+        ]
+        
+        batch = collate_fn(items)
+        
+        # Images should not be included in batch
+        assert "images" not in batch
 
 
 if __name__ == "__main__":
