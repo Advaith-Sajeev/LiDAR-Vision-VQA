@@ -54,8 +54,8 @@ def find_image(files: List[str], target_view: str, sample_dir: Path) -> Optional
     return None
 
 
-FIG_SIZE = (11.7, 5.8)  # A4 landscape width with reduced height
-TEXT_WRAP_WIDTH = 90
+FIG_SIZE = (16.0, 4.5)  # Extra-wide panel with reduced height
+TEXT_WRAP_WIDTH = 110
 TEXT_FONT_SIZE = 12
 
 
