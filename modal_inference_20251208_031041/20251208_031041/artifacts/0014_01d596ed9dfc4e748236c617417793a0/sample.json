@@ -1,0 +1,29 @@
+{
+  "sample_token": "01d596ed9dfc4e748236c617417793a0",
+  "dataset_type": "caption",
+  "question": "This is the car's front right view. Are there any potential hazards or obstructions on the road that a driver should be aware of?",
+  "ground_truth": "Yes, there are potential hazards and obstructions on the road that a driver should be aware of. In the scene, there is a construction site with a fence and a building under construction. The fence is blocking the view of the road, which could cause drivers to miss seeing other vehicles or pedestrians. Additionally, the construction site may have debris, equipment, or workers on the road, which could pose a risk to drivers and pedestrians. It is important for drivers to exercise caution and be vigilant in such areas to avoid accidents and ensure the safety of everyone involved.",
+  "prediction": "It is important for drivers to be aware of potential hazards and obstructions on the road. In this case, the scene shows a car driving down a street with a tree in the background. Drivers should be cautious of the tree, as it could potentially fall onto the road or obstruct the view of the driver. Additionally, the presence of a tree in the background may also indicate that there are other trees or obstacles nearby, so drivers should be vigilant and prepared to react to any unexpected changes in the road conditions.",
+  "metrics": {
+    "exact_match": false,
+    "precision": 0.5268817204301075,
+    "recall": 0.494949494949495,
+    "f1": 0.5104166666666666,
+    "prediction_len": 93,
+    "ground_truth_len": 99,
+    "token_overlap": 49
+  },
+  "sequence_id": 14,
+  "created_at": "2025-12-07T21:50:15Z",
+  "artifacts": {
+    "copied_bev_file": "bev_01d596ed9dfc4e748236c617417793a0.npy",
+    "copied_image_files": [
+      "00_CAM_FRONT_n008-2018-09-18-13-10-39-0400__CAM_FRONT__1537290919362404.jpg",
+      "01_CAM_FRONT_RIGHT_n008-2018-09-18-13-10-39-0400__CAM_FRONT_RIGHT__1537290919370482.jpg",
+      "02_CAM_FRONT_LEFT_n008-2018-09-18-13-10-39-0400__CAM_FRONT_LEFT__1537290919354799.jpg",
+      "03_CAM_BACK_n008-2018-09-18-13-10-39-0400__CAM_BACK__1537290919387558.jpg",
+      "04_CAM_BACK_RIGHT_n008-2018-09-18-13-10-39-0400__CAM_BACK_RIGHT__1537290919378113.jpg",
+      "05_CAM_BACK_LEFT_n008-2018-09-18-13-10-39-0400__CAM_BACK_LEFT__1537290919397405.jpg"
+    ]
+  }
+}

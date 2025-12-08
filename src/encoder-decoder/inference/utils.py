@@ -2,11 +2,21 @@
 Utility functions for inference
 """
 
+import json
+import random
+import shutil
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Union, TYPE_CHECKING
+
 import numpy as np
 import torch
-from pathlib import Path
-from typing import Union, Dict, List
-import json
+
+from configs.default_config import DEFAULT_VIEW_ORDER
+from deepencoder.deepencoder_infer import resolve_cam_image_paths
+
+if TYPE_CHECKING:
+    from inference.inference_engine import InferenceEngine
 
 
 def load_bev_feature(feature_path: Union[str, Path]) -> torch.Tensor:
@@ -19,13 +29,14 @@ def load_bev_feature(feature_path: Union[str, Path]) -> torch.Tensor:
     Returns:
         BEV tensor [C, H, W]
     """
-    bev = np.load(feature_path)
+    bev = np.load(feature_path, allow_pickle=False)
     return torch.from_numpy(bev).float()
 
 
 def format_prompt(
     question: str,
     use_vision: bool = True,
+    use_lidar: bool = True,
     system_prompt: str = ""
 ) -> str:
     """
@@ -34,18 +45,32 @@ def format_prompt(
     Args:
         question: User question
         use_vision: Whether to include vision tokens
+        use_lidar: Whether to include LiDAR tokens
         system_prompt: Optional system prompt to prepend
         
     Returns:
         Formatted prompt string
     """
-    if system_prompt:
-        question = f"{system_prompt}\n\n{question}"
+    parts = []
     
+    # Add system prompt if provided
+    if system_prompt:
+        parts.append(system_prompt)
+        parts.append("\n\n")
+    
+    # Add vision tokens if enabled
     if use_vision:
-        return f"<vision_start><vision_end><lidar_start><lidar_end>{question}\nAnswer:"
-    else:
-        return f"<lidar_start><lidar_end>{question}\nAnswer:"
+        parts.append("<vision_start><vision_end>")
+    
+    # Add LiDAR tokens if enabled
+    if use_lidar:
+        parts.append("<lidar_start><lidar_end>")
+    
+    # Add question and answer prompt
+    parts.append(question)
+    parts.append("\nAnswer:")
+    
+    return "".join(parts)
 
 
 def load_qa_pairs(json_path: Union[str, Path]) -> List[Dict]:
@@ -168,3 +193,160 @@ def format_output(
     lines.append("=" * width)
     
     return "\n".join(lines)
+
+
+def _sanitize_folder_name(value: str) -> str:
+    """Convert arbitrary strings to filesystem-friendly folder names."""
+    if not value:
+        return "sample"
+    safe = []
+    for ch in value:
+        if ch.isalnum() or ch in ("-", "_"):
+            safe.append(ch)
+        else:
+            safe.append("_")
+    return "".join(safe)
+
+
+def save_inference_artifacts(
+    *,
+    artifact_dir: Optional[str],
+    sample_payload: Dict[str, Any],
+    bev_path: Optional[str],
+    engine: "InferenceEngine",
+    sequence_id: Optional[int] = None,
+    vision_requested: bool = True,
+) -> Optional[Path]:
+    """Persist artifacts + per-sample JSON in a dedicated folder."""
+    if not artifact_dir:
+        return None
+
+    dest_root = Path(artifact_dir)
+    dest_root.mkdir(parents=True, exist_ok=True)
+
+    sample_token = sample_payload.get("sample_token")
+    seq_id = sequence_id or sample_payload.get("sequence_id") or 0
+
+    slug = _sanitize_folder_name(sample_token or "sample")
+    base_name = f"{seq_id:04d}_{slug}" if seq_id else slug
+    target_dir = dest_root / base_name
+    suffix = 1
+    while target_dir.exists():
+        suffix += 1
+        target_dir = dest_root / f"{base_name}_{suffix:02d}"
+    target_dir.mkdir(parents=True, exist_ok=False)
+
+    copied_bev = None
+    if bev_path:
+        bev_src = Path(bev_path)
+        if bev_src.exists():
+            bev_dest = target_dir / f"bev_{bev_src.name}"
+            shutil.copy2(bev_src, bev_dest)
+            copied_bev = bev_dest.name
+        else:
+            print(f"[artifacts] Warning: BEV file not found: {bev_src}")
+
+    copied_images: List[str] = []
+    copy_images = (
+        vision_requested
+        and engine.use_vision
+        and sample_token is not None
+        and engine.nusc is not None
+    )
+    if copy_images:
+        try:
+            image_paths = resolve_cam_image_paths(engine.nusc, sample_token, view_order=DEFAULT_VIEW_ORDER)
+            for idx, (view_name, img_path) in enumerate(zip(DEFAULT_VIEW_ORDER, image_paths)):
+                if img_path is None:
+                    continue
+                img_src = Path(img_path)
+                if not img_src.exists():
+                    continue
+                dest_name = f"{idx:02d}_{view_name}_{img_src.name}"
+                img_dest = target_dir / dest_name
+                shutil.copy2(img_src, img_dest)
+                copied_images.append(dest_name)
+        except Exception as exc:
+            print(f"[artifacts] Warning: Failed to copy camera images: {exc}")
+    elif vision_requested and sample_token and engine.nusc is None:
+        print("[artifacts] Warning: nuScenes handle missing; skipping image copy")
+
+    record = dict(sample_payload)
+    record.setdefault("sequence_id", seq_id)
+    record.setdefault("sample_token", sample_token)
+    record.setdefault("created_at", datetime.utcnow().isoformat(timespec="seconds") + "Z")
+    record.setdefault("metrics", sample_payload.get("metrics", {}))
+    record["artifacts"] = {
+        "copied_bev_file": copied_bev,
+        "copied_image_files": copied_images,
+    }
+
+    with open(target_dir / "sample.json", "w", encoding="utf-8") as f:
+        json.dump(record, f, indent=2)
+
+    print(f"[artifacts] Saved inference artifacts to {target_dir}")
+    return target_dir
+
+
+def select_random_samples(
+    samples: List[Dict],
+    *,
+    count: int,
+    split: str,
+    seed: int,
+    val_split: float,
+) -> tuple[List[Dict], Dict[str, int]]:
+    """Mirror training split logic and select a random subset without replacement."""
+    total = len(samples)
+    if total == 0 or count <= 0:
+        return [] if count > 0 else samples, {
+            "total": total,
+            "train_size": 0,
+            "val_size": 0,
+            "available": total,
+            "requested": count,
+            "selected": 0,
+        }
+
+    val_fraction = max(0.0, min(1.0, float(val_split)))
+    val_size = int(total * val_fraction)
+    val_size = max(1, val_size) if total > 1 else min(1, total)
+    val_size = min(val_size, total)
+    train_size = max(0, total - val_size)
+
+    generator = torch.Generator().manual_seed(int(seed))
+    perm = torch.randperm(total, generator=generator).tolist()
+    train_indices = perm[:train_size]
+    val_indices = perm[train_size:]
+
+    if split == "val":
+        pool = val_indices
+    else:
+        pool = train_indices
+
+    available = len(pool)
+    if available == 0:
+        return [], {
+            "total": total,
+            "train_size": train_size,
+            "val_size": val_size,
+            "available": available,
+            "requested": count,
+            "selected": 0,
+        }
+
+    rng = random.Random(int(seed) + (1 if split == "val" else 0))
+    rng.shuffle(pool)
+    take = min(count, available)
+    chosen = pool[:take]
+    selected = [samples[i] for i in chosen]
+
+    info = {
+        "total": total,
+        "train_size": train_size,
+        "val_size": val_size,
+        "available": available,
+        "requested": count,
+        "selected": len(selected),
+    }
+    return selected, info

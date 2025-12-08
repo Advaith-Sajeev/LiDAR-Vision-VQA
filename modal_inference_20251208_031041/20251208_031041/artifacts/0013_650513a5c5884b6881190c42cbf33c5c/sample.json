@@ -1,0 +1,29 @@
+{
+  "sample_token": "650513a5c5884b6881190c42cbf33c5c",
+  "dataset_type": "caption",
+  "question": "This is the car's front right view. If you are driving, please describe the objects you think would affect your driving.",
+  "ground_truth": "If you are driving, you may notice a large black dumpster sitting on the side of the road. This object may affect your driving by taking up space on the road, making it difficult to navigate around it. Additionally, the dumpster may obstruct your view of the road, making it harder to see other vehicles, pedestrians, or potential hazards. You may need to slow down or change lanes to avoid the dumpster and ensure your safety and the safety of others.",
+  "prediction": "When driving, there are several objects that can affect your driving. These include traffic lights, road signs, pedestrians, other vehicles, and road markings. Traffic lights control the flow of traffic at intersections, and drivers must obey them to ensure safety. Road signs provide important information about speed limits, lane closures, and other regulations. Pedestrians and cyclists may also be present on the road, and drivers must be cautious and yield to them. Other vehicles, such as cars and trucks, can be a source of distraction or potential hazards, so drivers must be aware of their surroundings and maintain a safe distance. Road markings, such as lanes,",
+  "metrics": {
+    "exact_match": false,
+    "precision": 0.2169811320754717,
+    "recall": 0.2839506172839506,
+    "f1": 0.2459893048128342,
+    "prediction_len": 106,
+    "ground_truth_len": 81,
+    "token_overlap": 23
+  },
+  "sequence_id": 13,
+  "created_at": "2025-12-07T21:50:15Z",
+  "artifacts": {
+    "copied_bev_file": "bev_650513a5c5884b6881190c42cbf33c5c.npy",
+    "copied_image_files": [
+      "00_CAM_FRONT_n008-2018-08-06-15-06-32-0400__CAM_FRONT__1533582454162404.jpg",
+      "01_CAM_FRONT_RIGHT_n008-2018-08-06-15-06-32-0400__CAM_FRONT_RIGHT__1533582454170482.jpg",
+      "02_CAM_FRONT_LEFT_n008-2018-08-06-15-06-32-0400__CAM_FRONT_LEFT__1533582454154799.jpg",
+      "03_CAM_BACK_n008-2018-08-06-15-06-32-0400__CAM_BACK__1533582454188897.jpg",
+      "04_CAM_BACK_RIGHT_n008-2018-08-06-15-06-32-0400__CAM_BACK_RIGHT__1533582454178113.jpg",
+      "05_CAM_BACK_LEFT_n008-2018-08-06-15-06-32-0400__CAM_BACK_LEFT__1533582454197405.jpg"
+    ]
+  }
+}

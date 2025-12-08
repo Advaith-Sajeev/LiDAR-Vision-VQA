@@ -1,0 +1,647 @@
+{
+  "epoch": "modal",
+  "best_step": 27000,
+  "timestamp": "2025-12-08T03:20:13.628450",
+  "samples": [
+    {
+      "sample_token": "666e070e6a4e4c53ac42fe92c615f83a",
+      "dataset_type": "caption",
+      "question": "This is the car's back right view. Could you find and tell me what is most relevant to driving?",
+      "ground_truth": "The most relevant information to driving in this scene is the presence of the orange traffic cones, which are likely placed there to indicate a temporary change in traffic patterns or road conditions. The cones may be used to block off a specific area, redirect traffic, or warn drivers of potential hazards. It is important for drivers to pay attention to these cones and follow any instructions or warnings they may provide.",
+      "prediction": "The most relevant information to driving in this scene is the presence of a car parked in the parking lot. The car is located near the center of the scene, and it is surrounded by a few other cars. The parking lot is also filled with people, indicating that it is a busy area. The weather appears to be sunny, and the time of the day is likely daytime.",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.36231884057971014,
+        "recall": 0.3472222222222222,
+        "f1": 0.35460992907801425,
+        "prediction_len": 69,
+        "ground_truth_len": 72,
+        "token_overlap": 25
+      }
+    },
+    {
+      "sample_token": "e3e418eb4963404da9b331789d74dea6",
+      "dataset_type": "caption",
+      "question": "This is the car's back view. Identify any potential obstacles or hazards in the road scene and provide a brief description of them.",
+      "ground_truth": "In the scene, there are several potential obstacles and hazards that the truck driver and other road users should be aware of. These include:\n\n1. The presence of a traffic light: The traffic light in the scene is located on the left side of the road, and it is essential for drivers to pay attention to it to ensure they follow the traffic rules and avoid accidents.\n2. The wet road: The road appears to be wet, which can make it slippery and increase the risk of skidding or hydroplaning. Drivers should exercise caution and reduce their speed when driving on wet roads.\n3. The truck: The truck is a large vehicle, and it may have a longer stopping distance and larger blind spots than smaller cars. Drivers should maintain a safe distance from the truck and be prepared to react to any sudden movements or changes in direction.\n4. The presence of other vehicles: There are other cars on the road, which means that drivers should be cautious and attentive to avoid collisions. They should also be prepared to change lanes or slow down if necessary to maintain a safe distance from other vehicles.\n5. The time of day:",
+      "prediction": "In the scene, there are a few potential obstacles or hazards that drivers should be aware of. First, there is a construction zone with orange cones, which indicates that the road may be undergoing maintenance or construction work. Drivers should exercise caution and follow the instructions provided by the cones to ensure their safety and the safety of the workers. Second, there is a truck driving down the road, which may be a potential obstacle for other vehicles, especially if it is a large or heavy truck. Drivers should maintain a safe distance from the truck and be prepared to adjust their speed accordingly. Lastly, there are multiple cars on the road, which can create",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.6782608695652174,
+        "recall": 0.39,
+        "f1": 0.4952380952380953,
+        "prediction_len": 115,
+        "ground_truth_len": 200,
+        "token_overlap": 78
+      }
+    },
+    {
+      "sample_token": "f5ef1b7681c94100862d2ca21f7d1a1a",
+      "dataset_type": "caption",
+      "question": "This is the car's back left view. What are the important objects in the current scene? Those objects will be considered for the future reasoning and driving decision.",
+      "ground_truth": "The important objects in the scene are the bicycle and the sign. The bicycle is parked next to the sign, which could be a street sign or a sign for a business. The presence of the bicycle and the sign will be considered for future reasoning and driving decisions, such as determining the correct route to take or identifying a specific location.",
+      "prediction": "The important objects in the scene are the two cars, one of which is a truck, and the person walking nearby. The presence of these objects and the person walking could impact the driver's decision-making, as they may need to be aware of pedestrians and other vehicles on the road. The weather, color, and time of day are not relevant to the scene and should not be included in the response.",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.4084507042253521,
+        "recall": 0.46774193548387094,
+        "f1": 0.4360902255639098,
+        "prediction_len": 71,
+        "ground_truth_len": 62,
+        "token_overlap": 29
+      }
+    },
+    {
+      "sample_token": "7597ff3fbea3484fa1d5531a9d9442f4",
+      "dataset_type": "caption",
+      "question": "This is the car's back view. Provide an overview of the surrounding landscape or environment.",
+      "ground_truth": "The scene shows a street scene with a tree-lined road, which suggests that the area has a natural, green environment. The presence of trees and the absence of buildings or other urban structures indicate that the location is likely a suburban or rural area. The street appears to be empty, with no cars or pedestrians visible in the scene.",
+      "prediction": "The scene shows a street with a tree-lined road, which suggests that the area has a natural, green environment. The street is empty, with no cars or pedestrians visible. The weather appears to be sunny, and the time of the day is likely early morning or late afternoon, as the sun is shining brightly.",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.7222222222222222,
+        "recall": 0.6610169491525424,
+        "f1": 0.6902654867256637,
+        "prediction_len": 54,
+        "ground_truth_len": 59,
+        "token_overlap": 39
+      }
+    },
+    {
+      "sample_token": "4b9b2c02a4cc49158e3ad9425889daf2",
+      "dataset_type": "caption",
+      "question": "This is the car's front left view. Please describe the current scene.",
+      "ground_truth": "The scene shows a white double-decker bus driving down a street. The bus is likely a public transit vehicle, as double-decker buses are commonly used in urban areas for transporting passengers. The bus is likely in motion, as it is described as \"driving\" down the street. The street itself may be busy with other vehicles, pedestrians, or various urban elements, but the specific details of the weather, time of day, or color of the bus are not provided.",
+      "prediction": "The scene shows a busy city street with a mix of vehicles, including cars and trucks, driving down the road. The street is lined with buildings, and there are traffic lights at intersections to control the flow of traffic. The presence of a construction site nearby indicates that the city is undergoing development or maintenance work. The scene captures a typical urban environment with people going about their daily activities, and the vehicles navigating the streets to reach their destinations.",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.3375,
+        "recall": 0.34615384615384615,
+        "f1": 0.34177215189873417,
+        "prediction_len": 80,
+        "ground_truth_len": 78,
+        "token_overlap": 27
+      }
+    },
+    {
+      "sample_token": "c20acbb875b84ae0880f4dfe695f5106",
+      "dataset_type": "caption",
+      "question": "This is the car's front left view. If you are driving, please describe the objects you think would affect your driving.",
+      "ground_truth": "When driving, there are several objects that can affect your driving. These include traffic lights, road signs, and parked vehicles. In the scene, there is a traffic light, which indicates when to stop or proceed, depending on the color of the light. Road signs provide information about speed limits, directions, and other important rules to follow. Parked vehicles, such as the one in the scene, can obstruct your view of the road, make it difficult to maneuver, or even cause accidents if you are not cautious. Additionally, weather conditions, such as rain or fog, can affect visibility and road conditions, requiring drivers to adjust their driving behavior accordingly.",
+      "prediction": "When driving, there are several objects that can affect your driving. These include traffic lights, road signs, pedestrians, other vehicles, and road markings. Traffic lights control the flow of traffic at intersections, and drivers must obey them to ensure safety. Road signs provide important information about speed limits, lane closures, and other regulations. Pedestrians and cyclists may also be present on the road, and drivers must be cautious and attentive to avoid accidents. Other vehicles, such as cars and trucks, can be a source of distraction or potential hazards, so drivers must maintain a safe distance and be prepared to react to any unexpected actions. Finally, road",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.4485981308411215,
+        "recall": 0.4444444444444444,
+        "f1": 0.44651162790697674,
+        "prediction_len": 107,
+        "ground_truth_len": 108,
+        "token_overlap": 48
+      }
+    },
+    {
+      "sample_token": "917d22b02fa448f88b131b7f33e30725",
+      "dataset_type": "caption",
+      "question": "This is the car's front view. Considering the driving perspective, which elements in the scene appear to be the most crucial?",
+      "ground_truth": "From the driving perspective, the most crucial elements in the scene are the traffic lights and the road signs. The traffic lights indicate when to stop or proceed, while the road signs provide essential information such as directions, speed limits, and road conditions. These elements are essential for drivers to navigate safely and efficiently through the intersection and the city streets.",
+      "prediction": "From the driving perspective, the most crucial elements in the scene are the traffic lights and the road signs. Traffic lights indicate when to stop or proceed, ensuring the smooth flow of traffic and preventing accidents. Road signs provide essential information about road conditions, speed limits, and directions, helping drivers navigate the road safely and efficiently. In the scene, there are multiple traffic lights and road signs, which are essential for maintaining a safe and orderly traffic flow.",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.6153846153846154,
+        "recall": 0.7868852459016393,
+        "f1": 0.6906474820143885,
+        "prediction_len": 78,
+        "ground_truth_len": 61,
+        "token_overlap": 48
+      }
+    },
+    {
+      "sample_token": "bfbd5f3880b84785919b2c52c041b432",
+      "dataset_type": "caption",
+      "question": "This is the car's back right view. How would you describe the overall road conditions in this scene?",
+      "ground_truth": "The road conditions in this scene are relatively clear and well-lit, as the street is illuminated by streetlights and the car headlights. The presence of streetlights and car headlights indicates that the weather is likely not too dark, and the road is not covered in snow or ice. The road appears to be in a residential area, as there are houses and apartment buildings visible in the background.",
+      "prediction": "The overall road conditions in this scene are good. The road is clear and well-maintained, with no visible obstructions or debris. The presence of a sidewalk and a tree line indicates that the area is likely designed for pedestrian and vehicular traffic, with some greenery to enhance the aesthetics of the surroundings. The weather appears to be sunny, and the time of the day is likely early morning or late afternoon, as there are no people or vehicles in motion.",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.4875,
+        "recall": 0.5735294117647058,
+        "f1": 0.527027027027027,
+        "prediction_len": 80,
+        "ground_truth_len": 68,
+        "token_overlap": 39
+      }
+    },
+    {
+      "sample_token": "344a77dc91594b6791801958c1c02adf",
+      "dataset_type": "caption",
+      "question": "This is the car's front left view. In terms of driving, which elements in the current scene would demand the most attention or immediate action?",
+      "ground_truth": "In the scene, there are multiple cars on the road, and a truck is also visible. The most important elements to pay attention to in this scene would be the traffic lights, as they control the flow of traffic and ensure safety. The traffic lights are located at various points along the road, and drivers must obey them to avoid accidents. Additionally, the presence of other vehicles, including the truck, requires drivers to be cautious and maintain a safe distance to avoid collisions. The time of the day, weather conditions, and color of the sky are not relevant to the immediate action required while driving in this scene.",
+      "prediction": "In the scene, there are several elements that would demand attention or immediate action from a driver. These include the presence of a car, a truck, and a person walking on the sidewalk. The car and the truck are both moving, which means that the driver should be cautious and aware of their surroundings to avoid collisions. The person walking on the sidewalk is also a potential hazard, as they may not be paying attention to the moving vehicles. The driver should be vigilant and prepared to stop or slow down if necessary to ensure the safety of the pedestrian. Additionally, the driver should be mindful of the traffic lights, as they control the flow of",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.49137931034482757,
+        "recall": 0.5277777777777778,
+        "f1": 0.5089285714285714,
+        "prediction_len": 116,
+        "ground_truth_len": 108,
+        "token_overlap": 57
+      }
+    },
+    {
+      "sample_token": "ffbe9a1ca3a54a6a8988edb7bf1ff759",
+      "dataset_type": "caption",
+      "question": "This is the car's back view. Please describe the current scene.",
+      "ground_truth": "The scene shows a busy city street with cars driving down the road. The street is lined with trees and buildings, creating a pleasant urban environment. The traffic appears to be moving smoothly, and there are no signs of congestion or accidents. The weather appears to be sunny and clear, with a bright blue sky in the background.",
+      "prediction": "The scene shows a busy city street with a car driving down the road. There are several other cars on the street, and a truck is also visible. The street is lined with trees, providing a pleasant atmosphere. The scene does not depict the weather, color, or time of the day.",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.5686274509803921,
+        "recall": 0.5,
+        "f1": 0.5321100917431193,
+        "prediction_len": 51,
+        "ground_truth_len": 58,
+        "token_overlap": 29
+      }
+    },
+    {
+      "sample_token": "29d8897b908e42488675021edafee34b",
+      "dataset_type": "caption",
+      "question": "This is the car's back left view. What are the important objects in the current scene? Those objects will be considered for the future reasoning and driving decision.",
+      "ground_truth": "The important objects in the current scene are the people walking on the sidewalk and the cars driving on the road. These objects will be considered for the future reasoning and driving decision, as they are the primary factors that drivers need to be aware of while navigating the area.",
+      "prediction": "The important objects in the scene are the two cars, one of which is a truck, and the person walking nearby. The presence of these objects and the person walking could impact the driver's decision-making, as they may need to be aware of their surroundings and adjust their driving accordingly.",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.5,
+        "recall": 0.5,
+        "f1": 0.5,
+        "prediction_len": 50,
+        "ground_truth_len": 50,
+        "token_overlap": 25
+      }
+    },
+    {
+      "sample_token": "c32126dc01a54834a49c28c19653369c",
+      "dataset_type": "caption",
+      "question": "This is the car's front left view. In terms of driving, which elements in the current scene would demand the most attention or immediate action?",
+      "ground_truth": "In the scene, there are two cars driving on a city street, with one car being a taxi. The most important elements that would demand attention or immediate action are the traffic lights and the pedestrian crossing. The traffic lights are located at various points along the street, and drivers must pay close attention to them to ensure they follow the traffic rules and avoid accidents. The pedestrian crossing, on the other hand, is a designated area for pedestrians to cross the street safely. Drivers must be cautious and prepared to stop when the pedestrian crossing signal is activated to protect pedestrians and avoid collisions.",
+      "prediction": "In the scene, there are several elements that would demand attention from a driver. The first is the presence of a car on the road, which would require the driver to be cautious and maintain a safe distance from the vehicle. The second element is the tree, which could potentially obstruct the driver's view of the road or other vehicles, so the driver should be aware of its presence and adjust their driving accordingly. The third element is the traffic light, which indicates that the driver should be prepared to stop or slow down if the light turns red. The driver should also be mindful of pedestrians and cyclists in the area, as there are a few",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.358974358974359,
+        "recall": 0.4,
+        "f1": 0.37837837837837845,
+        "prediction_len": 117,
+        "ground_truth_len": 105,
+        "token_overlap": 42
+      }
+    },
+    {
+      "sample_token": "650513a5c5884b6881190c42cbf33c5c",
+      "dataset_type": "caption",
+      "question": "This is the car's front right view. If you are driving, please describe the objects you think would affect your driving.",
+      "ground_truth": "If you are driving, you may notice a large black dumpster sitting on the side of the road. This object may affect your driving by taking up space on the road, making it difficult to navigate around it. Additionally, the dumpster may obstruct your view of the road, making it harder to see other vehicles, pedestrians, or potential hazards. You may need to slow down or change lanes to avoid the dumpster and ensure your safety and the safety of others.",
+      "prediction": "When driving, there are several objects that can affect your driving. These include traffic lights, road signs, pedestrians, other vehicles, and road markings. Traffic lights control the flow of traffic at intersections, and drivers must obey them to ensure safety. Road signs provide important information about speed limits, lane closures, and other regulations. Pedestrians and cyclists may also be present on the road, and drivers must be cautious and yield to them. Other vehicles, such as cars and trucks, can be a source of distraction or potential hazards, so drivers must be aware of their surroundings and maintain a safe distance. Road markings, such as lanes,",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.2169811320754717,
+        "recall": 0.2839506172839506,
+        "f1": 0.2459893048128342,
+        "prediction_len": 106,
+        "ground_truth_len": 81,
+        "token_overlap": 23
+      }
+    },
+    {
+      "sample_token": "01d596ed9dfc4e748236c617417793a0",
+      "dataset_type": "caption",
+      "question": "This is the car's front right view. Are there any potential hazards or obstructions on the road that a driver should be aware of?",
+      "ground_truth": "Yes, there are potential hazards and obstructions on the road that a driver should be aware of. In the scene, there is a construction site with a fence and a building under construction. The fence is blocking the view of the road, which could cause drivers to miss seeing other vehicles or pedestrians. Additionally, the construction site may have debris, equipment, or workers on the road, which could pose a risk to drivers and pedestrians. It is important for drivers to exercise caution and be vigilant in such areas to avoid accidents and ensure the safety of everyone involved.",
+      "prediction": "It is important for drivers to be aware of potential hazards and obstructions on the road. In this case, the scene shows a car driving down a street with a tree in the background. Drivers should be cautious of the tree, as it could potentially fall onto the road or obstruct the view of the driver. Additionally, the presence of a tree in the background may also indicate that there are other trees or obstacles nearby, so drivers should be vigilant and prepared to react to any unexpected changes in the road conditions.",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.5268817204301075,
+        "recall": 0.494949494949495,
+        "f1": 0.5104166666666666,
+        "prediction_len": 93,
+        "ground_truth_len": 99,
+        "token_overlap": 49
+      }
+    },
+    {
+      "sample_token": "158d6771ad7749e994acc5feced75851",
+      "dataset_type": "caption",
+      "question": "This is the car's back view. Are there any potential hazards or obstructions on the road that a driver should be aware of?",
+      "ground_truth": "Yes, there are potential hazards and obstructions on the road that a driver should be aware of. In the scene, there are multiple cars and a truck driving down the wet road. The wet road conditions can lead to reduced traction and increased stopping distances, which can pose a risk to drivers and pedestrians. Additionally, the presence of multiple vehicles on the road increases the risk of accidents due to limited visibility, distractions, and the possibility of collisions. Drivers should exercise caution, maintain a safe distance from other vehicles, and be prepared to react to sudden changes in road conditions or the actions of other drivers.",
+      "prediction": "It is important for drivers to be aware of potential hazards and obstructions on the road. In this case, the scene shows a car driving down a street with a tree in the background. Drivers should be cautious of the tree, as it could potentially fall onto the road or obstruct the view of the driver. Additionally, drivers should be mindful of any other vehicles or pedestrians that may be in the area, as well as any road signs or markings that could indicate upcoming turns or changes in traffic flow. By being aware of their surroundings and following traffic rules, drivers can help ensure a safe driving environment for themselves and others.",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.40707964601769914,
+        "recall": 0.4339622641509434,
+        "f1": 0.4200913242009132,
+        "prediction_len": 113,
+        "ground_truth_len": 106,
+        "token_overlap": 46
+      }
+    },
+    {
+      "sample_token": "1ca1a5dceea54e48aaa255c900232d7d",
+      "dataset_type": "caption",
+      "question": "This is the car's back left view. From the current scene, identify any potential challenges a driver might face.",
+      "ground_truth": "A potential challenge a driver might face in this scene is the limited visibility due to the darkness. The scene is taken at night, and the street appears to be empty. The lack of lighting and the absence of streetlights or other illumination sources can make it difficult for drivers to see the road, pedestrians, and obstacles clearly. This can increase the risk of accidents and make it more challenging to navigate the area safely.",
+      "prediction": "A potential challenge a driver might face in this scene is the presence of a large tree in the middle of the road. The tree could obstruct the driver's view of the road ahead, making it difficult to navigate safely. Additionally, the tree might cause a traffic jam or slow down the flow of vehicles, especially if it is blocking the entire road. The driver would need to exercise caution and be prepared to maneuver around the tree to avoid accidents or delays.",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.4457831325301205,
+        "recall": 0.49333333333333335,
+        "f1": 0.4683544303797468,
+        "prediction_len": 83,
+        "ground_truth_len": 75,
+        "token_overlap": 37
+      }
+    },
+    {
+      "sample_token": "8c99931fb4e14d658050bdaac6c19b8a",
+      "dataset_type": "caption",
+      "question": "This is the car's front view. How would you uniquely describe the road scene?",
+      "ground_truth": "The road scene is unique because it is a tree-lined street with a long, straight road that appears to be empty. The street is lined with trees, which adds a sense of tranquility and natural beauty to the environment. The absence of cars and pedestrians creates a calm and peaceful atmosphere, making it an ideal setting for a leisurely walk or a quiet drive. The presence of trees also provides shade and a pleasant ambiance, making the street a pleasant place to be.",
+      "prediction": "The road scene is unique because it is a busy city street with a mix of vehicles, including cars and trucks, driving in both directions. The street is lined with tall buildings, which adds to the urban atmosphere. The presence of a traffic light indicates that the street is regulated for traffic flow, and the overall scene suggests a bustling city environment with a mix of transportation modes.",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.5441176470588235,
+        "recall": 0.4457831325301205,
+        "f1": 0.49006622516556286,
+        "prediction_len": 68,
+        "ground_truth_len": 83,
+        "token_overlap": 37
+      }
+    },
+    {
+      "sample_token": "eb42f7d870224c26b5a8818bb717b33e",
+      "dataset_type": "caption",
+      "question": "This is the car's front left view. Identify any potential obstacles or hazards in the road scene and provide a brief description of them.",
+      "ground_truth": "The scene shows a road scene with a black car and a white truck. There are no visible obstacles or hazards in the scene. The weather appears to be sunny, and the time of the day is not discernible from the scene.",
+      "prediction": "In the scene, there are a few potential obstacles or hazards that drivers should be aware of. First, there is a large truck driving down the street, which may be difficult to maneuver around or pass due to its size and weight. Second, there is a car parked on the side of the road, which could obstruct the view of oncoming traffic for drivers. Third, there is a traffic light in the scene, which drivers should pay attention to while navigating the road. Lastly, the presence of a fire hydrant on the side of the road indicates that there is a water source nearby, which could be a potential hazard if drivers are",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.19469026548672566,
+        "recall": 0.5238095238095238,
+        "f1": 0.2838709677419355,
+        "prediction_len": 113,
+        "ground_truth_len": 42,
+        "token_overlap": 22
+      }
+    },
+    {
+      "sample_token": "84445d7fd1804a4d93df223a386a2e53",
+      "dataset_type": "caption",
+      "question": "This is the car's front left view. Could you find and tell me what is most relevant to driving?",
+      "ground_truth": "The most relevant information to driving in this scene is the presence of a car parked on the side of the street. The car is a white SUV, and it is parked next to a building. This information is important for drivers to be aware of when navigating the area, as it could potentially obstruct their view or be in their path.",
+      "prediction": "The most relevant information to driving in this scene is the presence of a car parked on the side of the road. The car is located near the center of the scene, and it is surrounded by a grassy area with trees. This information is important for drivers to be aware of when navigating the area, as they may need to be cautious of the parked car and the potential for pedestrians or other vehicles to be in the area.",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.6,
+        "recall": 0.7741935483870968,
+        "f1": 0.676056338028169,
+        "prediction_len": 80,
+        "ground_truth_len": 62,
+        "token_overlap": 48
+      }
+    },
+    {
+      "sample_token": "e13e0e971c504e878ffa9124a614006a",
+      "dataset_type": "caption",
+      "question": "This is the car's front view. From the current scene, identify any potential challenges a driver might face.",
+      "ground_truth": "A potential challenge a driver might face in this scene is the wet road conditions. The presence of rain can make the road slippery and more difficult to navigate, increasing the risk of accidents. Drivers need to exercise caution and adjust their driving behavior accordingly, such as driving at a slower speed, maintaining a greater distance from other vehicles, and using their headlights to improve visibility.",
+      "prediction": "A potential challenge a driver might face in this scene is the presence of a large truck, which is driving down the street. The truck is a significant vehicle, and its size and weight can make it more difficult to maneuver in tight spaces or when changing lanes. Additionally, the driver of the truck must be cautious of other vehicles, pedestrians, and cyclists sharing the road, as the truck's size and visibility can be limited. The driver must also be aware of the weather conditions, as rain can make the road slippery and visibility reduced.",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.3684210526315789,
+        "recall": 0.5303030303030303,
+        "f1": 0.4347826086956521,
+        "prediction_len": 95,
+        "ground_truth_len": 66,
+        "token_overlap": 35
+      }
+    },
+    {
+      "sample_token": "09d8cc873e54426bb4003f6514fe4bfd",
+      "dataset_type": "caption",
+      "question": "This is the car's front right view. Summarize the traffic content of the scene.",
+      "ground_truth": "The scene shows a busy street with cars and trucks driving by. There are multiple vehicles on the road, including cars and trucks, indicating a bustling urban environment.",
+      "prediction": "The scene shows a busy street with a lot of traffic, including cars and trucks. The street is filled with vehicles, and there are traffic lights to control the flow of traffic.",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.46875,
+        "recall": 0.5357142857142857,
+        "f1": 0.5,
+        "prediction_len": 32,
+        "ground_truth_len": 28,
+        "token_overlap": 15
+      }
+    },
+    {
+      "sample_token": "f87542a27d26414a9b39670d2794c195",
+      "dataset_type": "caption",
+      "question": "This is the car's front view. What is the content of the current scene? Please focus on topics related to driving.",
+      "ground_truth": "The current scene shows a car driving down a road at night, with the headlights illuminating the road ahead. The driver is looking through the windshield, focusing on the road and the traffic ahead.",
+      "prediction": "The current scene shows a busy city street with a mix of cars and trucks driving in both directions. There are traffic lights at the intersection, which help regulate the flow of traffic. The street is lined with tall buildings, indicating that the scene takes place in an urban area. The presence of multiple vehicles and traffic lights suggests that the street is a major thoroughfare in the city, possibly a main route for commuters and commercial vehicles.",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.23076923076923078,
+        "recall": 0.5294117647058824,
+        "f1": 0.32142857142857145,
+        "prediction_len": 78,
+        "ground_truth_len": 34,
+        "token_overlap": 18
+      }
+    },
+    {
+      "sample_token": "6dd6a51f069d460abe6cf78ff4bca7d3",
+      "dataset_type": "caption",
+      "question": "This is the car's back left view. How would you uniquely describe the road scene?",
+      "ground_truth": "The road scene is unique because it features a tree-lined street with a fence and a guardrail, which is not a common sight in most road scenes. The presence of the fence and guardrail adds an element of safety and protection to the street, making it stand out from other road scenes that may not have such features.",
+      "prediction": "The road scene is unique because it features a tree-lined street with a mix of cars and pedestrians. There are several cars parked along the street, and a few people are walking on the sidewalk. The presence of the tree-lined street adds a touch of nature to the urban setting, creating a pleasant atmosphere for both drivers and pedestrians. The scene captures a moment in time, but the weather, color, and time of day are not described, so it is not possible to provide a unique description of the weather, color, and time of day.",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.3368421052631579,
+        "recall": 0.5517241379310345,
+        "f1": 0.41830065359477125,
+        "prediction_len": 95,
+        "ground_truth_len": 58,
+        "token_overlap": 32
+      }
+    },
+    {
+      "sample_token": "c3d61b8b66424ed9b1faa5114a0749e8",
+      "dataset_type": "caption",
+      "question": "This is the car's front view. Are there any potential hazards or obstructions on the road that a driver should be aware of?",
+      "ground_truth": "It is important for drivers to be aware of potential hazards and obstructions on the road. In this case, the scene shows a row of parked cars on the side of the road, which could obstruct the view of oncoming traffic for drivers. Additionally, the presence of a tree in the background might also be a potential hazard, as it could block the driver's view of the road or even fall onto the road if it is not properly maintained. Drivers should always be cautious and attentive when navigating through areas with parked cars and trees, as these elements can pose risks to their safety and the safety of others on the road.",
+      "prediction": "It is important for drivers to be aware of potential hazards and obstructions on the road. In this case, the road is a two-lane street with a center divider, and there are trees on both sides of the street. Drivers should be cautious of the trees, as they could potentially fall onto the road or obstruct the view of oncoming traffic. Additionally, drivers should be mindful of pedestrians and cyclists who may be using the sidewalk or crossing the street. It is essential for drivers to maintain a safe speed, be attentive to the road, and be prepared to react to any unexpected situations that may arise.",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.5794392523364486,
+        "recall": 0.5486725663716814,
+        "f1": 0.5636363636363636,
+        "prediction_len": 107,
+        "ground_truth_len": 113,
+        "token_overlap": 62
+      }
+    },
+    {
+      "sample_token": "ca9aa3083a6a416d80ed73be211ceb57",
+      "dataset_type": "caption",
+      "question": "This is the car's back left view. Summarize the traffic content of the scene.",
+      "ground_truth": "The scene shows a person riding a bicycle on a city street, with a car and a truck in the background. The street is empty, and there are no other people or vehicles visible in the scene.",
+      "prediction": "The scene shows a busy street with a lot of traffic, including cars and trucks. The street is filled with vehicles, and there are traffic lights to control the flow of traffic.",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.4375,
+        "recall": 0.3783783783783784,
+        "f1": 0.40579710144927533,
+        "prediction_len": 32,
+        "ground_truth_len": 37,
+        "token_overlap": 14
+      }
+    },
+    {
+      "sample_token": "e4fd8f16247741aba2013ed5731ad039",
+      "dataset_type": "caption",
+      "question": "This is the car's back right view. Provide an overview of the surrounding landscape or environment.",
+      "ground_truth": "The scene shows a street scene with a car parked on the side of the road. There are buildings in the background, and the area appears to be a residential or commercial neighborhood. The presence of the car and the buildings suggests that this is a busy urban area with people going about their daily activities. The weather appears to be sunny, and the time of the day is likely early morning or late afternoon, as the sun is shining brightly.",
+      "prediction": "The scene shows a city street with a tall building in the background. The street is lined with trees, providing a pleasant and green atmosphere. There are also a few cars parked along the street, and a person is walking down the sidewalk. The overall environment appears to be urban, with a mix of natural elements and man-made structures.",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.4745762711864407,
+        "recall": 0.345679012345679,
+        "f1": 0.3999999999999999,
+        "prediction_len": 59,
+        "ground_truth_len": 81,
+        "token_overlap": 28
+      }
+    },
+    {
+      "sample_token": "9609adc3c8714a74b0630f128956d032",
+      "dataset_type": "caption",
+      "question": "This is the car's front right view. Identify any potential obstacles or hazards in the road scene and provide a brief description of them.",
+      "ground_truth": "In the scene, there are a few potential obstacles or hazards that drivers should be aware of. First, there is a car parked on the side of the road, which could obstruct the view of oncoming traffic for drivers. Second, there is a person walking on the sidewalk, which could be a pedestrian crossing the street or walking towards the road. Drivers should be cautious and yield to pedestrians in such situations. Lastly, there is a bus in the scene, which could be a potential obstacle for drivers if it is parked or stopped in the road. Drivers should be aware of their surroundings and be prepared to react to any unexpected situations that may arise.",
+      "prediction": "In the scene, there are a few potential obstacles or hazards that drivers should be aware of. First, there is a tree in the middle of the road, which could obstruct the view of oncoming traffic or pedestrians. Drivers should exercise caution when approaching this tree and be prepared to slow down or stop if necessary. Second, there is a fire hydrant located near the middle of the road, which is a common obstacle in urban areas. Drivers should be cautious when passing near fire hydrants and follow the posted speed limits to avoid accidents. Lastly, there is a car parked on the side of the road, which could be a potential obstacle",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.6814159292035398,
+        "recall": 0.6637931034482759,
+        "f1": 0.6724890829694323,
+        "prediction_len": 113,
+        "ground_truth_len": 116,
+        "token_overlap": 77
+      }
+    },
+    {
+      "sample_token": "b325756f3b804cecb663f66128da6312",
+      "dataset_type": "caption",
+      "question": "This is the car's front view. Please describe the current scene.",
+      "ground_truth": "The scene shows a busy city street with a lot of traffic. There are cars driving in both directions, and the street is filled with vehicles. The street is lined with tall buildings, indicating that the city is densely populated and urban. The traffic appears to be moving at a steady pace, and the overall atmosphere suggests a bustling city environment.",
+      "prediction": "The scene shows a busy city street with a mix of vehicles, including cars and trucks, driving down the road. The street is lined with buildings, and there are traffic lights at intersections to control the flow of traffic. The presence of a construction site nearby indicates that the city is undergoing development or maintenance work. The scene captures a typical urban environment with people going about their daily routines, and the vehicles navigating the city streets.",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.4935064935064935,
+        "recall": 0.6229508196721312,
+        "f1": 0.5507246376811594,
+        "prediction_len": 77,
+        "ground_truth_len": 61,
+        "token_overlap": 38
+      }
+    },
+    {
+      "sample_token": "c4a237a9383743e5817831a6eefea9b9",
+      "dataset_type": "caption",
+      "question": "This is the car's front view. Summarize the traffic content of the scene.",
+      "ground_truth": "The scene shows a busy city street with a mix of cars and trucks driving in different directions. The street is filled with traffic, and there are multiple vehicles on the road.",
+      "prediction": "The scene shows a busy city street with a mix of cars and trucks driving in both directions. The street is filled with traffic, and the vehicles are moving along the road.",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.875,
+        "recall": 0.875,
+        "f1": 0.875,
+        "prediction_len": 32,
+        "ground_truth_len": 32,
+        "token_overlap": 28
+      }
+    },
+    {
+      "sample_token": "0036750ff63145b1ab611faecbab12f5",
+      "dataset_type": "caption",
+      "question": "This is the car's front right view. Provide an overview of the surrounding landscape or environment.",
+      "ground_truth": "The scene shows a large, empty lot with a tall, green metal gate. The gate is closed, and there is no visible activity or people in the area. The surrounding environment appears to be industrial or commercial, with the presence of the gate suggesting that it may be a secure or restricted area.",
+      "prediction": "The scene shows a city street with a tall building in the background. The street is lined with trees, providing a pleasant and green atmosphere. There are also a few cars parked along the street, and a person is walking down the sidewalk. The overall environment appears to be urban, with a mix of natural elements and man-made structures.",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.4067796610169492,
+        "recall": 0.4528301886792453,
+        "f1": 0.4285714285714286,
+        "prediction_len": 59,
+        "ground_truth_len": 53,
+        "token_overlap": 24
+      }
+    },
+    {
+      "sample_token": "f392c4fbc3664f23be14145f9a9a362e",
+      "dataset_type": "caption",
+      "question": "This is the car's front view. Can you provide a description for the road scene such that it sets it apart from others?",
+      "ground_truth": "The road scene is set apart from others due to the presence of a large number of traffic lights. These traffic lights are scattered across the street, with some positioned closer to the foreground and others further in the background. The traffic lights are a significant feature of the scene, as they control the flow of traffic and help maintain safety on the road. The presence of so many traffic lights creates a unique visual element that distinguishes this scene from others.",
+      "prediction": "The road scene is set in a city, with a street lined with trees and a sidewalk. The street is empty, with no cars or pedestrians visible. The scene is not particularly unique or remarkable, as many city streets have trees and sidewalks. The weather, color, and time of day are not described in the scene, so they do not contribute to the uniqueness of the scene.",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.43283582089552236,
+        "recall": 0.35365853658536583,
+        "f1": 0.38926174496644295,
+        "prediction_len": 67,
+        "ground_truth_len": 82,
+        "token_overlap": 29
+      }
+    },
+    {
+      "sample_token": "3b88aaf7a61c4c25ba12d3fb2d1c33e3",
+      "dataset_type": "caption",
+      "question": "This is the car's back right view. What is the content of the current scene? Please focus on topics related to driving.",
+      "ground_truth": "The current scene shows a busy street with cars driving on it. There are multiple cars on the road, some of which are moving in the same direction, while others are driving in the opposite direction. The street is lined with buildings, and there are trees and bushes along the side of the road. The presence of cars and the road layout suggest that this is an urban area with a well-developed transportation infrastructure.",
+      "prediction": "The current scene shows a busy street with cars driving in both directions. There are multiple cars on the road, some of which are closer to the camera, while others are further away. The street appears to be a typical urban environment with traffic lights and other road infrastructure.",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.6938775510204082,
+        "recall": 0.4594594594594595,
+        "f1": 0.5528455284552845,
+        "prediction_len": 49,
+        "ground_truth_len": 74,
+        "token_overlap": 34
+      }
+    },
+    {
+      "sample_token": "fae0ea72c4514f81b982ebbb2944fa2d",
+      "dataset_type": "caption",
+      "question": "This is the car's front right view. From the current scene, identify any potential challenges a driver might face.",
+      "ground_truth": "A potential challenge a driver might face in this scene is navigating the narrow street with parked cars on both sides. The street appears to be a one-way street, which means that drivers must be cautious and aware of oncoming traffic. The presence of parked cars on both sides of the street may limit visibility for drivers, making it difficult to see pedestrians, cyclists, or other vehicles that may be approaching from behind the parked cars. Additionally, the parked cars may obstruct the view of traffic lights, making it harder for drivers to see when it's safe to proceed or stop. It is essential for drivers to be vigilant and patient in such situations to ensure the safety of all road users.",
+      "prediction": "A potential challenge a driver might face in this scene is the presence of a large tree in the middle of the road. The tree could obstruct the driver's view of the road ahead, making it difficult to navigate safely. Additionally, the tree might cause a delay in traffic or even lead to accidents if drivers are not cautious while approaching the tree.",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.6190476190476191,
+        "recall": 0.319672131147541,
+        "f1": 0.42162162162162165,
+        "prediction_len": 63,
+        "ground_truth_len": 122,
+        "token_overlap": 39
+      }
+    },
+    {
+      "sample_token": "c9e812f2705b4b198f4675dfaa33812d",
+      "dataset_type": "caption",
+      "question": "This is the car's back view. How would you uniquely describe the road scene?",
+      "ground_truth": "The road scene is unique because it features a white truck driving down a wet road at night. The wet road and the darkness of the night create a contrasting visual effect, making the truck and its surroundings stand out. The presence of the truck and the wet road suggests that it has recently rained, and the road might be slippery, which could impact the driver's ability to maintain control of the vehicle.",
+      "prediction": "The road scene is unique because it is a long, straight road with a tree-lined median in the middle. The road is empty, with no cars or pedestrians visible. The road is also situated in a park, which adds to the serene and natural atmosphere of the scene. The weather appears to be cloudy, and the time of the day is likely early morning or late afternoon, as the sun is not shining brightly and the sky is overcast.",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.3924050632911392,
+        "recall": 0.4246575342465753,
+        "f1": 0.40789473684210525,
+        "prediction_len": 79,
+        "ground_truth_len": 73,
+        "token_overlap": 31
+      }
+    },
+    {
+      "sample_token": "6fd22503063f46dd935eebe525756bb4",
+      "dataset_type": "caption",
+      "question": "This is the car's back right view. If you are driving, please describe the objects you think would affect your driving.",
+      "ground_truth": "When driving, there are several factors that can affect your driving. These include:\n\n1. Visibility: The weather conditions, such as rain, snow, fog, or heavy winds, can reduce visibility, making it difficult to see the road, other vehicles, and pedestrians.\n2. Traffic: The amount of traffic on the road can affect your driving. Heavy traffic can slow you down, make it difficult to change lanes, and increase the risk of accidents.\n3. Road conditions: The condition of the road, such as potholes, debris, ice, or wet surfaces, can affect your driving. You may need to adjust your speed, braking, and steering to navigate safely.\n4. Vehicle maintenance: The condition of your vehicle, such as worn tires, a broken headlight, or a faulty brake system, can affect your driving. If your vehicle is not in good working order, it may be more challenging to control your vehicle and respond to road conditions.\n5. Driver behavior: The behavior of other drivers, such as tailgating, sudden lane changes, or aggressive driving, can affect your driving. You may need to",
+      "prediction": "When driving, there are several objects that can affect your driving. These include traffic lights, road signs, pedestrians, other vehicles, and road markings. Traffic lights control the flow of traffic at intersections, and drivers must obey them to ensure safety. Road signs provide important information about road conditions, speed limits, and directions. Pedestrians and cyclists may also be present on the road, and drivers must be cautious and yield to them. Other vehicles, such as cars and trucks, can be a source of danger if they are not driving safely or if they are too close to the driver. Road markings, such as lanes, traffic lines,",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.44339622641509435,
+        "recall": 0.26704545454545453,
+        "f1": 0.3333333333333333,
+        "prediction_len": 106,
+        "ground_truth_len": 176,
+        "token_overlap": 47
+      }
+    },
+    {
+      "sample_token": "296039a3162749ffb20296490eefa449",
+      "dataset_type": "caption",
+      "question": "This is the car's back left view. Please describe the current scene.",
+      "ground_truth": "The scene shows a park with a sidewalk and a tree-lined path. The path is lined with trees and bushes, creating a pleasant and shaded walkway. The park is located near a street, and there is a bench situated on the sidewalk. The park is likely a popular spot for people to relax and enjoy the natural surroundings.",
+      "prediction": "The scene shows a large, empty parking lot with a fence surrounding it. The fence is made of metal and is topped with barbed wire. There are no cars or people visible in the parking lot. The weather appears to be sunny and clear, and the time of the day is likely daytime.",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.41509433962264153,
+        "recall": 0.3793103448275862,
+        "f1": 0.3963963963963964,
+        "prediction_len": 53,
+        "ground_truth_len": 58,
+        "token_overlap": 22
+      }
+    },
+    {
+      "sample_token": "1ae9d8e114634b889a008a3e977d3821",
+      "dataset_type": "caption",
+      "question": "This is the car's back right view. How would you describe the overall road conditions in this scene?",
+      "ground_truth": "The road conditions in the scene are clear and well-maintained, with a smooth surface and no visible obstructions or debris.",
+      "prediction": "The overall road conditions in this scene are good. The road is clear and well-maintained, with no visible obstructions or debris. The presence of a sidewalk and a tree line indicates that the area is likely designed for pedestrian and vehicular traffic, with some greenery to enhance the aesthetics of the surroundings. The weather appears to be sunny, and the time of the day is likely early morning or late afternoon, as there are no people or vehicles in motion.",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.225,
+        "recall": 0.9,
+        "f1": 0.36000000000000004,
+        "prediction_len": 80,
+        "ground_truth_len": 20,
+        "token_overlap": 18
+      }
+    },
+    {
+      "sample_token": "49ce117d7644491d87f1d33ba4d2c0db",
+      "dataset_type": "caption",
+      "question": "This is the car's back right view. How would you uniquely describe the road scene?",
+      "ground_truth": "The road scene is unique because it features a large truck, specifically a dump truck, driving down a street. The truck is carrying a large white trailer, which is not a common sight on most streets. The presence of the dump truck and the trailer suggests that it might be involved in construction or waste management work, which is not a typical activity for a regular vehicle. The scene also includes a few pedestrians, indicating that the area is populated or has some activity happening nearby. The weather, color, and time of the day are not relevant to the uniqueness of the scene, as they are not specific enough to describe the road scene.",
+      "prediction": "The road scene is unique because it features a tree-lined street with a mix of cars and pedestrians. There are several cars parked along the street, and a few people are walking on the sidewalk. The presence of the tree-lined street adds a touch of nature to the urban setting, creating a pleasant atmosphere for both drivers and pedestrians. The scene captures a moment in time, but the weather, color, and time of day are not described, so it is not possible to provide a unique description of the weather, color, and time of day.",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.4842105263157895,
+        "recall": 0.40350877192982454,
+        "f1": 0.44019138755980863,
+        "prediction_len": 95,
+        "ground_truth_len": 114,
+        "token_overlap": 46
+      }
+    },
+    {
+      "sample_token": "105737a1956a45f2b74a98a5a1872108",
+      "dataset_type": "caption",
+      "question": "This is the car's back right view. Can you provide a description for the road scene such that it sets it apart from others?",
+      "ground_truth": "The road scene is set apart from others due to the presence of a red sports car driving down the street. The car is a Porsche, which is a luxury and high-performance vehicle known for its sleek design and powerful engine. The red color of the car adds to its distinctive appearance, making it stand out from other vehicles on the road. The car is also driving in a city setting, which is a common environment for such vehicles. However, the combination of the red color and the Porsche brand make this scene unique compared to other road scenes.",
+      "prediction": "The road scene is set in a city, with a large building in the background. The road is lined with trees, which adds a touch of greenery to the urban environment. The presence of a traffic light indicates that the road is a busy intersection, and the parked cars and trucks suggest that it is a commercial or residential area. The scene is not particularly unique, as many cities have streets with buildings, trees, and traffic lights. However, the combination of these elements creates a familiar urban landscape that is typical of a city environment.",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.4105263157894737,
+        "recall": 0.3939393939393939,
+        "f1": 0.4020618556701031,
+        "prediction_len": 95,
+        "ground_truth_len": 99,
+        "token_overlap": 39
+      }
+    },
+    {
+      "sample_token": "27da1407861d4f7499b8800b9de5d07b",
+      "dataset_type": "caption",
+      "question": "This is the car's front left view. Provide an overview of the surrounding landscape or environment.",
+      "ground_truth": "The scene shows a grassy hillside with a pole in the foreground. The hill is covered in grass, and there are no visible signs of human activity or buildings in the immediate vicinity. The weather appears to be cloudy, and the time of the day is not discernible from the scene.",
+      "prediction": "The scene shows a city street with a tall building in the background. The street is lined with trees, providing a pleasant and green atmosphere. There are also a few cars parked along the street, and a person is walking down the sidewalk. The overall scene suggests a busy urban environment with a touch of nature.",
+      "metrics": {
+        "exact_match": false,
+        "precision": 0.3392857142857143,
+        "recall": 0.37254901960784315,
+        "f1": 0.35514018691588783,
+        "prediction_len": 56,
+        "ground_truth_len": 51,
+        "token_overlap": 19
+      }
+    }
+  ]
+}

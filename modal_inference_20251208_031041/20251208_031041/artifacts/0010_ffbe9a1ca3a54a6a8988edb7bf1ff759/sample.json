@@ -1,0 +1,29 @@
+{
+  "sample_token": "ffbe9a1ca3a54a6a8988edb7bf1ff759",
+  "dataset_type": "caption",
+  "question": "This is the car's back view. Please describe the current scene.",
+  "ground_truth": "The scene shows a busy city street with cars driving down the road. The street is lined with trees and buildings, creating a pleasant urban environment. The traffic appears to be moving smoothly, and there are no signs of congestion or accidents. The weather appears to be sunny and clear, with a bright blue sky in the background.",
+  "prediction": "The scene shows a busy city street with a car driving down the road. There are several other cars on the street, and a truck is also visible. The street is lined with trees, providing a pleasant atmosphere. The scene does not depict the weather, color, or time of the day.",
+  "metrics": {
+    "exact_match": false,
+    "precision": 0.5686274509803921,
+    "recall": 0.5,
+    "f1": 0.5321100917431193,
+    "prediction_len": 51,
+    "ground_truth_len": 58,
+    "token_overlap": 29
+  },
+  "sequence_id": 10,
+  "created_at": "2025-12-07T21:50:15Z",
+  "artifacts": {
+    "copied_bev_file": "bev_ffbe9a1ca3a54a6a8988edb7bf1ff759.npy",
+    "copied_image_files": [
+      "00_CAM_FRONT_n015-2018-07-24-11-13-19+0800__CAM_FRONT__1532402011612460.jpg",
+      "01_CAM_FRONT_RIGHT_n015-2018-07-24-11-13-19+0800__CAM_FRONT_RIGHT__1532402011620339.jpg",
+      "02_CAM_FRONT_LEFT_n015-2018-07-24-11-13-19+0800__CAM_FRONT_LEFT__1532402011604844.jpg",
+      "03_CAM_BACK_n015-2018-07-24-11-13-19+0800__CAM_BACK__1532402011637525.jpg",
+      "04_CAM_BACK_RIGHT_n015-2018-07-24-11-13-19+0800__CAM_BACK_RIGHT__1532402011627893.jpg",
+      "05_CAM_BACK_LEFT_n015-2018-07-24-11-13-19+0800__CAM_BACK_LEFT__1532402011647425.jpg"
+    ]
+  }
+}

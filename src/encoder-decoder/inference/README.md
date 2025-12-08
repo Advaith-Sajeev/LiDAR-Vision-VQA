@@ -71,6 +71,14 @@ answers = engine.generate_batch(
 
 See `infer.py` for a complete command-line interface.
 
+#### Saving per-sample artifacts
+
+Add `--artifact-dir path/to/archive` (and optionally `--ground-truth "..."` in interactive mode) to copy the BEV `.npy`, the six nuScenes camera images, and a `metadata.json` file containing the question, ground truth, and prediction into numbered subfolders for each inference run.
+
+#### Random split sampling
+
+Combine `--sample-random N` with `--json ... --feature-dirs ...` to run sequential inference on `N` random samples drawn from the same train/val split definition used in training (seed + `val_split` read from the checkpoint config). Use `--split val` to target the validation shard; otherwise it defaults to the training shard.
+
 ## Generation Parameters
 
 - `max_new_tokens`: Maximum tokens to generate (default: 64)
@@ -92,9 +100,10 @@ These are automatically inserted by the inference engine.
 
 - Trained checkpoint directory with:
   - `config.json`: Training configuration
-  - `lora.pt`: LLM LoRA weights
-  - `vat_lidar.pt`: LiDAR VAT weights
-  - `vat_vision.pt`: Vision VAT weights (if vision enabled)
-  - `vision_adapter.pt`: Vision adapter weights (if vision enabled)
-  - `clip_lora.pt`: CLIP LoRA weights (if vision enabled)
-  - `projector.pt`: DeepEncoder projector weights (if vision enabled)
+  - `qwen2_lora_adapter_latest/`: LLM LoRA adapter directory (or legacy `lora.pt`)
+  - `vat_lidar_latest.pt`: LiDAR VAT weights
+  - `vat_vision_latest.pt`: Vision VAT weights (if vision enabled)
+  - `vision_adapter_latest.pt`: Vision adapter weights (if vision enabled)
+  - `clip_lora_adapter_latest/`: CLIP LoRA adapter directory (if vision enabled)
+  - `projector_latest.pt`: DeepEncoder projector weights (if vision enabled)
+- `sam_compression_head_latest.pt`: Trainable SAM compression head weights (if vision enabled)

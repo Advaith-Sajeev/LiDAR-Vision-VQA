@@ -1,0 +1,29 @@
+{
+  "sample_token": "bfbd5f3880b84785919b2c52c041b432",
+  "dataset_type": "caption",
+  "question": "This is the car's back right view. How would you describe the overall road conditions in this scene?",
+  "ground_truth": "The road conditions in this scene are relatively clear and well-lit, as the street is illuminated by streetlights and the car headlights. The presence of streetlights and car headlights indicates that the weather is likely not too dark, and the road is not covered in snow or ice. The road appears to be in a residential area, as there are houses and apartment buildings visible in the background.",
+  "prediction": "The overall road conditions in this scene are good. The road is clear and well-maintained, with no visible obstructions or debris. The presence of a sidewalk and a tree line indicates that the area is likely designed for pedestrian and vehicular traffic, with some greenery to enhance the aesthetics of the surroundings. The weather appears to be sunny, and the time of the day is likely early morning or late afternoon, as there are no people or vehicles in motion.",
+  "metrics": {
+    "exact_match": false,
+    "precision": 0.4875,
+    "recall": 0.5735294117647058,
+    "f1": 0.527027027027027,
+    "prediction_len": 80,
+    "ground_truth_len": 68,
+    "token_overlap": 39
+  },
+  "sequence_id": 8,
+  "created_at": "2025-12-07T21:50:14Z",
+  "artifacts": {
+    "copied_bev_file": "bev_bfbd5f3880b84785919b2c52c041b432.npy",
+    "copied_image_files": [
+      "00_CAM_FRONT_n015-2018-11-14-19-09-14+0800__CAM_FRONT__1542194041162460.jpg",
+      "01_CAM_FRONT_RIGHT_n015-2018-11-14-19-09-14+0800__CAM_FRONT_RIGHT__1542194041171146.jpg",
+      "02_CAM_FRONT_LEFT_n015-2018-11-14-19-09-14+0800__CAM_FRONT_LEFT__1542194041154927.jpg",
+      "03_CAM_BACK_n015-2018-11-14-19-09-14+0800__CAM_BACK__1542194041187525.jpg",
+      "04_CAM_BACK_RIGHT_n015-2018-11-14-19-09-14+0800__CAM_BACK_RIGHT__1542194041177893.jpg",
+      "05_CAM_BACK_LEFT_n015-2018-11-14-19-09-14+0800__CAM_BACK_LEFT__1542194041197423.jpg"
+    ]
+  }
+}

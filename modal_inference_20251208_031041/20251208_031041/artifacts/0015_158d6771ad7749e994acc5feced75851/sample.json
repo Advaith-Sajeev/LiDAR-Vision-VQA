@@ -1,0 +1,29 @@
+{
+  "sample_token": "158d6771ad7749e994acc5feced75851",
+  "dataset_type": "caption",
+  "question": "This is the car's back view. Are there any potential hazards or obstructions on the road that a driver should be aware of?",
+  "ground_truth": "Yes, there are potential hazards and obstructions on the road that a driver should be aware of. In the scene, there are multiple cars and a truck driving down the wet road. The wet road conditions can lead to reduced traction and increased stopping distances, which can pose a risk to drivers and pedestrians. Additionally, the presence of multiple vehicles on the road increases the risk of accidents due to limited visibility, distractions, and the possibility of collisions. Drivers should exercise caution, maintain a safe distance from other vehicles, and be prepared to react to sudden changes in road conditions or the actions of other drivers.",
+  "prediction": "It is important for drivers to be aware of potential hazards and obstructions on the road. In this case, the scene shows a car driving down a street with a tree in the background. Drivers should be cautious of the tree, as it could potentially fall onto the road or obstruct the view of the driver. Additionally, drivers should be mindful of any other vehicles or pedestrians that may be in the area, as well as any road signs or markings that could indicate upcoming turns or changes in traffic flow. By being aware of their surroundings and following traffic rules, drivers can help ensure a safe driving environment for themselves and others.",
+  "metrics": {
+    "exact_match": false,
+    "precision": 0.40707964601769914,
+    "recall": 0.4339622641509434,
+    "f1": 0.4200913242009132,
+    "prediction_len": 113,
+    "ground_truth_len": 106,
+    "token_overlap": 46
+  },
+  "sequence_id": 15,
+  "created_at": "2025-12-07T21:50:15Z",
+  "artifacts": {
+    "copied_bev_file": "bev_158d6771ad7749e994acc5feced75851.npy",
+    "copied_image_files": [
+      "00_CAM_FRONT_n008-2018-09-18-14-54-39-0400__CAM_FRONT__1537297351912404.jpg",
+      "01_CAM_FRONT_RIGHT_n008-2018-09-18-14-54-39-0400__CAM_FRONT_RIGHT__1537297351920482.jpg",
+      "02_CAM_FRONT_LEFT_n008-2018-09-18-14-54-39-0400__CAM_FRONT_LEFT__1537297351904799.jpg",
+      "03_CAM_BACK_n008-2018-09-18-14-54-39-0400__CAM_BACK__1537297351937558.jpg",
+      "04_CAM_BACK_RIGHT_n008-2018-09-18-14-54-39-0400__CAM_BACK_RIGHT__1537297351928113.jpg",
+      "05_CAM_BACK_LEFT_n008-2018-09-18-14-54-39-0400__CAM_BACK_LEFT__1537297351947405.jpg"
+    ]
+  }
+}

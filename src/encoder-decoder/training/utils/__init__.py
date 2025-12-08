@@ -16,6 +16,7 @@ from .metrics import (
     calculate_caption_metrics,
     calculate_grounding_metrics,
     calculate_metrics_by_type,
+    calculate_sample_level_metrics,
 )
 from .debug_logger import (
     debug,
@@ -53,6 +54,7 @@ __all__ = [
     "calculate_caption_metrics",
     "calculate_grounding_metrics",
     "calculate_metrics_by_type",
+    "calculate_sample_level_metrics",
     # Debug logging
     "debug",
     "set_debug_mode",

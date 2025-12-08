@@ -1,0 +1,29 @@
+{
+  "sample_token": "296039a3162749ffb20296490eefa449",
+  "dataset_type": "caption",
+  "question": "This is the car's back left view. Please describe the current scene.",
+  "ground_truth": "The scene shows a park with a sidewalk and a tree-lined path. The path is lined with trees and bushes, creating a pleasant and shaded walkway. The park is located near a street, and there is a bench situated on the sidewalk. The park is likely a popular spot for people to relax and enjoy the natural surroundings.",
+  "prediction": "The scene shows a large, empty parking lot with a fence surrounding it. The fence is made of metal and is topped with barbed wire. There are no cars or people visible in the parking lot. The weather appears to be sunny and clear, and the time of the day is likely daytime.",
+  "metrics": {
+    "exact_match": false,
+    "precision": 0.41509433962264153,
+    "recall": 0.3793103448275862,
+    "f1": 0.3963963963963964,
+    "prediction_len": 53,
+    "ground_truth_len": 58,
+    "token_overlap": 22
+  },
+  "sequence_id": 36,
+  "created_at": "2025-12-07T21:50:17Z",
+  "artifacts": {
+    "copied_bev_file": "bev_296039a3162749ffb20296490eefa449.npy",
+    "copied_image_files": [
+      "00_CAM_FRONT_n015-2018-08-02-17-28-51+0800__CAM_FRONT__1533202381412460.jpg",
+      "01_CAM_FRONT_RIGHT_n015-2018-08-02-17-28-51+0800__CAM_FRONT_RIGHT__1533202381420339.jpg",
+      "02_CAM_FRONT_LEFT_n015-2018-08-02-17-28-51+0800__CAM_FRONT_LEFT__1533202381404844.jpg",
+      "03_CAM_BACK_n015-2018-08-02-17-28-51+0800__CAM_BACK__1533202381437525.jpg",
+      "04_CAM_BACK_RIGHT_n015-2018-08-02-17-28-51+0800__CAM_BACK_RIGHT__1533202381427893.jpg",
+      "05_CAM_BACK_LEFT_n015-2018-08-02-17-28-51+0800__CAM_BACK_LEFT__1533202381447423.jpg"
+    ]
+  }
+}

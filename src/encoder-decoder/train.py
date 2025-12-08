@@ -78,11 +78,22 @@ def get_training_config() -> Dict:
         # Directories containing BEV feature .npy files (one per sample_token)
         "feature_dirs": ["/home/j_bindu/fyp-26-grp-38/bev_feats"],
         
-        # JSON/JSONL files with QA pairs for training and validation (nuCaption and nuGrounding)
-        "jsons": [
-            "/home/j_bindu/fyp-26-grp-38/Dataset_subset/external/nuCaption.json",
-            "/home/j_bindu/fyp-26-grp-38/Dataset_subset/external/nuGrounding.json"
-        ],
+        # =========================================================================
+        # DATASET MODE SELECTION
+        # =========================================================================
+        # Choose which dataset(s) to use for training, validation, and inference:
+        #   "caption"   - Only nuCaption dataset (scene descriptions)
+        #   "grounding" - Only nuGrounding dataset (object detection/localization)
+        #   "both"      - Both datasets combined (default, recommended for full training)
+        # 
+        # SAFETY: When using "caption" mode, grounding paths can be set to None
+        #         to prevent any accidental data leakage.
+        "dataset_mode": "both",  # "caption", "grounding", or "both"
+        
+        # JSON/JSONL file paths for each dataset type
+        # Set to None to disable a dataset (safe when not using that mode)
+        "caption_json": "/home/j_bindu/fyp-26-grp-38/Dataset_subset/external/nuCaption.json",
+        "grounding_json": "/home/j_bindu/fyp-26-grp-38/Dataset_subset/external/nuGrounding.json",
         
         # Output directory for checkpoints, logs, and plots
         # If resume=False: Use base directory (e.g., "./checkpoints")
@@ -143,11 +154,14 @@ def get_training_config() -> Dict:
         # Generate predictions on validation samples every N epochs
         "inference_sampling_every": 1,
         
-        # Total number of samples to generate (must be divisible by 4 for equal distribution)
-        # 50% caption, 25% det_area, 25% det_object
+        # Total number of samples to generate
+        # For "caption" mode: can be any positive integer
+        # For "grounding" mode: must be divisible by 2
+        # For "both" mode: must be divisible by 4
         "inference_samples_n": 12,
         
-        # Test JSON files for inference sampling
+        # Test JSON files for inference sampling (used based on dataset_mode)
+        # Set to None to disable (safe when not using that mode)
         "inference_caption_json": "/home/j_bindu/fyp-26-grp-38/Datasets/LiDAR-LLM-Nu-Caption/val.json",
         "inference_grounding_json": "/home/j_bindu/fyp-26-grp-38/Datasets/LiDAR-LLM-Nu-Grounding/LiDAR-LLM-Nu-Grounding-val.json",
         
@@ -359,6 +373,51 @@ def get_training_config() -> Dict:
         # Options: "openai", "laion400m_e32", "laion2b_s32b_b79k"
         "openclip_pretrained": "openai",
     }
+    
+    # =========================================================================
+    # BUILD DYNAMIC CONFIGS BASED ON DATASET MODE
+    # =========================================================================
+    # Automatically build the jsons list based on dataset_mode setting
+    # Validates that required paths are configured for the selected mode
+    mode = config["dataset_mode"]
+    
+    if mode == "caption":
+        # Caption mode: only caption_json is required
+        if not config.get("caption_json"):
+            raise ValueError(
+                "dataset_mode='caption' requires 'caption_json' to be set. "
+                "Please configure a valid path to the caption JSON file."
+            )
+        config["jsons"] = [config["caption_json"]]
+        
+    elif mode == "grounding":
+        # Grounding mode: only grounding_json is required
+        if not config.get("grounding_json"):
+            raise ValueError(
+                "dataset_mode='grounding' requires 'grounding_json' to be set. "
+                "Please configure a valid path to the grounding JSON file."
+            )
+        config["jsons"] = [config["grounding_json"]]
+        
+    elif mode == "both":
+        # Both mode: both paths are required
+        if not config.get("caption_json"):
+            raise ValueError(
+                "dataset_mode='both' requires 'caption_json' to be set. "
+                "Please configure a valid path to the caption JSON file."
+            )
+        if not config.get("grounding_json"):
+            raise ValueError(
+                "dataset_mode='both' requires 'grounding_json' to be set. "
+                "Please configure a valid path to the grounding JSON file."
+            )
+        config["jsons"] = [config["caption_json"], config["grounding_json"]]
+        
+    else:
+        raise ValueError(
+            f"Invalid dataset_mode: '{mode}'. "
+            f"Must be one of: 'caption', 'grounding', 'both'"
+        )
     
     return config
 

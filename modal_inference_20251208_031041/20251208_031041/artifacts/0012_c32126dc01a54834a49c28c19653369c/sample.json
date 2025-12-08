@@ -1,0 +1,29 @@
+{
+  "sample_token": "c32126dc01a54834a49c28c19653369c",
+  "dataset_type": "caption",
+  "question": "This is the car's front left view. In terms of driving, which elements in the current scene would demand the most attention or immediate action?",
+  "ground_truth": "In the scene, there are two cars driving on a city street, with one car being a taxi. The most important elements that would demand attention or immediate action are the traffic lights and the pedestrian crossing. The traffic lights are located at various points along the street, and drivers must pay close attention to them to ensure they follow the traffic rules and avoid accidents. The pedestrian crossing, on the other hand, is a designated area for pedestrians to cross the street safely. Drivers must be cautious and prepared to stop when the pedestrian crossing signal is activated to protect pedestrians and avoid collisions.",
+  "prediction": "In the scene, there are several elements that would demand attention from a driver. The first is the presence of a car on the road, which would require the driver to be cautious and maintain a safe distance from the vehicle. The second element is the tree, which could potentially obstruct the driver's view of the road or other vehicles, so the driver should be aware of its presence and adjust their driving accordingly. The third element is the traffic light, which indicates that the driver should be prepared to stop or slow down if the light turns red. The driver should also be mindful of pedestrians and cyclists in the area, as there are a few",
+  "metrics": {
+    "exact_match": false,
+    "precision": 0.358974358974359,
+    "recall": 0.4,
+    "f1": 0.37837837837837845,
+    "prediction_len": 117,
+    "ground_truth_len": 105,
+    "token_overlap": 42
+  },
+  "sequence_id": 12,
+  "created_at": "2025-12-07T21:50:15Z",
+  "artifacts": {
+    "copied_bev_file": "bev_c32126dc01a54834a49c28c19653369c.npy",
+    "copied_image_files": [
+      "00_CAM_FRONT_n008-2018-08-31-11-19-57-0400__CAM_FRONT__1535729087362404.jpg",
+      "01_CAM_FRONT_RIGHT_n008-2018-08-31-11-19-57-0400__CAM_FRONT_RIGHT__1535729087370482.jpg",
+      "02_CAM_FRONT_LEFT_n008-2018-08-31-11-19-57-0400__CAM_FRONT_LEFT__1535729087354799.jpg",
+      "03_CAM_BACK_n008-2018-08-31-11-19-57-0400__CAM_BACK__1535729087387558.jpg",
+      "04_CAM_BACK_RIGHT_n008-2018-08-31-11-19-57-0400__CAM_BACK_RIGHT__1535729087378113.jpg",
+      "05_CAM_BACK_LEFT_n008-2018-08-31-11-19-57-0400__CAM_BACK_LEFT__1535729087397405.jpg"
+    ]
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "sample_token": "666e070e6a4e4c53ac42fe92c615f83a",
+  "dataset_type": "caption",
+  "question": "This is the car's back right view. Could you find and tell me what is most relevant to driving?",
+  "ground_truth": "The most relevant information to driving in this scene is the presence of the orange traffic cones, which are likely placed there to indicate a temporary change in traffic patterns or road conditions. The cones may be used to block off a specific area, redirect traffic, or warn drivers of potential hazards. It is important for drivers to pay attention to these cones and follow any instructions or warnings they may provide.",
+  "prediction": "The most relevant information to driving in this scene is the presence of a car parked in the parking lot. The car is located near the center of the scene, and it is surrounded by a few other cars. The parking lot is also filled with people, indicating that it is a busy area. The weather appears to be sunny, and the time of the day is likely daytime.",
+  "metrics": {
+    "exact_match": false,
+    "precision": 0.36231884057971014,
+    "recall": 0.3472222222222222,
+    "f1": 0.35460992907801425,
+    "prediction_len": 69,
+    "ground_truth_len": 72,
+    "token_overlap": 25
+  },
+  "sequence_id": 1,
+  "created_at": "2025-12-07T21:50:13Z",
+  "artifacts": {
+    "copied_bev_file": "bev_666e070e6a4e4c53ac42fe92c615f83a.npy",
+    "copied_image_files": [
+      "00_CAM_FRONT_n015-2018-09-25-11-10-38+0800__CAM_FRONT__1537845386262460.jpg",
+      "01_CAM_FRONT_RIGHT_n015-2018-09-25-11-10-38+0800__CAM_FRONT_RIGHT__1537845386270339.jpg",
+      "02_CAM_FRONT_LEFT_n015-2018-09-25-11-10-38+0800__CAM_FRONT_LEFT__1537845386254844.jpg",
+      "03_CAM_BACK_n015-2018-09-25-11-10-38+0800__CAM_BACK__1537845386287525.jpg",
+      "04_CAM_BACK_RIGHT_n015-2018-09-25-11-10-38+0800__CAM_BACK_RIGHT__1537845386277905.jpg",
+      "05_CAM_BACK_LEFT_n015-2018-09-25-11-10-38+0800__CAM_BACK_LEFT__1537845386297423.jpg"
+    ]
+  }
+}

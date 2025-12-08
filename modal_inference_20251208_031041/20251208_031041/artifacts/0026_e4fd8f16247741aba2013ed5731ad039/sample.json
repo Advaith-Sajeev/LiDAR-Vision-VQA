@@ -1,0 +1,29 @@
+{
+  "sample_token": "e4fd8f16247741aba2013ed5731ad039",
+  "dataset_type": "caption",
+  "question": "This is the car's back right view. Provide an overview of the surrounding landscape or environment.",
+  "ground_truth": "The scene shows a street scene with a car parked on the side of the road. There are buildings in the background, and the area appears to be a residential or commercial neighborhood. The presence of the car and the buildings suggests that this is a busy urban area with people going about their daily activities. The weather appears to be sunny, and the time of the day is likely early morning or late afternoon, as the sun is shining brightly.",
+  "prediction": "The scene shows a city street with a tall building in the background. The street is lined with trees, providing a pleasant and green atmosphere. There are also a few cars parked along the street, and a person is walking down the sidewalk. The overall environment appears to be urban, with a mix of natural elements and man-made structures.",
+  "metrics": {
+    "exact_match": false,
+    "precision": 0.4745762711864407,
+    "recall": 0.345679012345679,
+    "f1": 0.3999999999999999,
+    "prediction_len": 59,
+    "ground_truth_len": 81,
+    "token_overlap": 28
+  },
+  "sequence_id": 26,
+  "created_at": "2025-12-07T21:50:16Z",
+  "artifacts": {
+    "copied_bev_file": "bev_e4fd8f16247741aba2013ed5731ad039.npy",
+    "copied_image_files": [
+      "00_CAM_FRONT_n015-2018-08-03-15-21-40+0800__CAM_FRONT__1533280928162460.jpg",
+      "01_CAM_FRONT_RIGHT_n015-2018-08-03-15-21-40+0800__CAM_FRONT_RIGHT__1533280928170339.jpg",
+      "02_CAM_FRONT_LEFT_n015-2018-08-03-15-21-40+0800__CAM_FRONT_LEFT__1533280928154844.jpg",
+      "03_CAM_BACK_n015-2018-08-03-15-21-40+0800__CAM_BACK__1533280928187525.jpg",
+      "04_CAM_BACK_RIGHT_n015-2018-08-03-15-21-40+0800__CAM_BACK_RIGHT__1533280928177893.jpg",
+      "05_CAM_BACK_LEFT_n015-2018-08-03-15-21-40+0800__CAM_BACK_LEFT__1533280928197423.jpg"
+    ]
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "sample_token": "29d8897b908e42488675021edafee34b",
+  "dataset_type": "caption",
+  "question": "This is the car's back left view. What are the important objects in the current scene? Those objects will be considered for the future reasoning and driving decision.",
+  "ground_truth": "The important objects in the current scene are the people walking on the sidewalk and the cars driving on the road. These objects will be considered for the future reasoning and driving decision, as they are the primary factors that drivers need to be aware of while navigating the area.",
+  "prediction": "The important objects in the scene are the two cars, one of which is a truck, and the person walking nearby. The presence of these objects and the person walking could impact the driver's decision-making, as they may need to be aware of their surroundings and adjust their driving accordingly.",
+  "metrics": {
+    "exact_match": false,
+    "precision": 0.5,
+    "recall": 0.5,
+    "f1": 0.5,
+    "prediction_len": 50,
+    "ground_truth_len": 50,
+    "token_overlap": 25
+  },
+  "sequence_id": 11,
+  "created_at": "2025-12-07T21:50:15Z",
+  "artifacts": {
+    "copied_bev_file": "bev_29d8897b908e42488675021edafee34b.npy",
+    "copied_image_files": [
+      "00_CAM_FRONT_n008-2018-08-31-11-19-57-0400__CAM_FRONT__1535729291862404.jpg",
+      "01_CAM_FRONT_RIGHT_n008-2018-08-31-11-19-57-0400__CAM_FRONT_RIGHT__1535729291870482.jpg",
+      "02_CAM_FRONT_LEFT_n008-2018-08-31-11-19-57-0400__CAM_FRONT_LEFT__1535729291854799.jpg",
+      "03_CAM_BACK_n008-2018-08-31-11-19-57-0400__CAM_BACK__1535729291887558.jpg",
+      "04_CAM_BACK_RIGHT_n008-2018-08-31-11-19-57-0400__CAM_BACK_RIGHT__1535729291878113.jpg",
+      "05_CAM_BACK_LEFT_n008-2018-08-31-11-19-57-0400__CAM_BACK_LEFT__1535729291897405.jpg"
+    ]
+  }
+}

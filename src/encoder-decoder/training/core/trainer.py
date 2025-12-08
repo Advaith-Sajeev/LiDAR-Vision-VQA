@@ -3,6 +3,7 @@
 import sys
 import math
 import random
+import json
 import numpy as np
 import torch
 import torch.nn as nn
@@ -99,6 +100,8 @@ class Trainer:
             # No separate debug.log file needed
             debug.info("system", f"Logging to: {self.out_dir / 'train.log'}")
         
+        self._config_dumped = False
+        
         mixed_prec = config.get('mixed_precision', 'fp16' if config.get('fp16', False) else 'no')
         print(f"[device] {self.device.type}  mixed_precision={mixed_prec}  GPUs={self.world_size}")
         
@@ -156,11 +159,16 @@ class Trainer:
         # Training state
         self.start_epoch = 1
         self.global_step = 0
+        self.start_step_in_epoch = 0  # For mid-epoch resume
         self.epoch_losses = []
         self.val_losses = []
         self.val_epochs = []
         self.best_val_loss = float("inf")
         self.best_step = None
+        
+        # Step-level loss tracking for detailed plots
+        self.step_losses = []  # List of loss values at each step
+        self.step_loss_steps = []  # Corresponding global step numbers
         
         # Cache special token embeddings to avoid tokenizing them every step
         self._special_token_cache = {}
@@ -286,6 +294,7 @@ class Trainer:
             self.c_in = int(probe.shape[0])
             if is_main_process():
                 print(f"[BEV] Probed channel dimension: C={self.c_in} (validation disabled)")
+        self.config["c_in"] = self.c_in
         
         # Samplers
         sampler_train = (
@@ -648,7 +657,7 @@ class Trainer:
                 # bf16 mode doesn't use GradScaler, so no restoration needed
                 print(f"[resume] bf16 mode: GradScaler not used, skipping scaler state restoration")
             
-            # Restore training state (epoch-level resume only)
+            # Restore training state (supports both epoch-level and step-level resume)
             saved_epoch = prev_state["epoch"]
             self.global_step = prev_state["global_step"]
             self.epoch_losses = prev_state.get("epoch_losses", [])
@@ -656,6 +665,19 @@ class Trainer:
             self.val_epochs = prev_state.get("val_epochs", [])
             self.best_val_loss = prev_state.get("best_loss", float("inf"))
             self.best_step = prev_state.get("best_step", None)
+            
+            # Check if this is a mid-epoch checkpoint (step-based save)
+            step_in_epoch = prev_state.get("step_in_epoch", None)
+            if step_in_epoch is not None and step_in_epoch > 0:
+                # Mid-epoch resume: continue from this epoch at the saved step
+                self.start_epoch = saved_epoch
+                self.start_step_in_epoch = step_in_epoch
+                if is_main_process():
+                    print(f"[resume] Mid-epoch resume: epoch {saved_epoch}, step {step_in_epoch}/{self.steps_per_epoch}")
+            else:
+                # End-of-epoch checkpoint: resume from next epoch
+                self.start_epoch = saved_epoch + 1
+                self.start_step_in_epoch = 0
             
             # Restore metrics history for live plotting
             if prev_state.get("caption_metrics_history") is not None:
@@ -667,8 +689,11 @@ class Trainer:
             if prev_state.get("metrics_epochs") is not None:
                 self.metrics_epochs = prev_state["metrics_epochs"]
             
-            # Resume from the next epoch (checkpoint is saved at end of each epoch)
-            self.start_epoch = saved_epoch + 1
+            # Restore step-level loss history
+            if prev_state.get("step_losses") is not None:
+                self.step_losses = prev_state["step_losses"]
+            if prev_state.get("step_loss_steps") is not None:
+                self.step_loss_steps = prev_state["step_loss_steps"]
             
             # Restore RNG states for reproducibility
             random.setstate(prev_state["rng"]["py_random"])
@@ -678,7 +703,10 @@ class Trainer:
                 torch.cuda.set_rng_state_all(prev_state["rng"]["torch_cuda"])
             
             if is_main_process():
-                print(f"[resume] completed epoch {saved_epoch}, resuming from epoch {self.start_epoch}, global_step {self.global_step}")
+                if self.start_step_in_epoch > 0:
+                    print(f"[resume] Resuming epoch {self.start_epoch} from step {self.start_step_in_epoch}, global_step {self.global_step}")
+                else:
+                    print(f"[resume] Completed epoch {saved_epoch}, resuming from epoch {self.start_epoch}, global_step {self.global_step}")
         else:
             if is_main_process():
                 print(f"[resume] no checkpoint found in {self.out_dir}, starting fresh")
@@ -744,8 +772,21 @@ class Trainer:
             
             epoch_loss_sum = 0.0
             epoch_count = 0
+            step_in_epoch = 0  # Track steps within this epoch for mid-epoch checkpointing
+            
+            # Determine if we need to skip batches for mid-epoch resume
+            skip_batches = 0
+            if epoch == self.start_epoch and self.start_step_in_epoch > 0:
+                # Calculate how many batches to skip based on the step we're resuming from
+                skip_batches = self.start_step_in_epoch * self.config["grad_accum"]
+                if is_main_process():
+                    print(f"[resume] Skipping first {skip_batches} batches to reach step {self.start_step_in_epoch}")
             
             for it, batch in enumerate(self.dl_train, start=1):
+                # Skip batches for mid-epoch resume
+                if it <= skip_batches:
+                    continue
+                
                 loss = self._train_step(batch)
                 epoch_loss_sum += loss
                 epoch_count += 1
@@ -753,8 +794,21 @@ class Trainer:
                 if it % self.config["grad_accum"] == 0:
                     self._optimizer_step()
                     self.global_step += 1
+                    step_in_epoch += 1
                     pbar.update(1)
                     pbar.set_postfix(loss=loss, lr=f"{self.sched.get_last_lr()[0]:.2e}")
+                    
+                    # Track step-level loss for detailed plotting
+                    if is_main_process():
+                        self.step_losses.append(loss)
+                        self.step_loss_steps.append(self.global_step)
+                    
+                    # Step-based checkpoint saving and plotting
+                    save_every = self.config.get("save_every_steps", 0)
+                    if save_every > 0 and self.global_step % save_every == 0 and is_main_process():
+                        self._save_step_checkpoint(epoch, step_in_epoch)
+                        # Plot step-level training curve
+                        self._plot_step_loss_curve()
                     
                     if self.global_step >= self.total_steps:
                         break
@@ -1171,7 +1225,8 @@ class Trainer:
                 self._save_best_checkpoint()
     
     def _save_checkpoint(self, epoch: int):
-        """Save epoch checkpoint"""
+        """Save epoch checkpoint (end of epoch)"""
+        self._ensure_config_dumped()
         save_state(
             self.out_dir,
             "latest",
@@ -1200,10 +1255,127 @@ class Trainer:
             grounding_det_area_metrics_history=self.grounding_det_area_metrics_history,
             grounding_det_object_metrics_history=self.grounding_det_object_metrics_history,
             metrics_epochs=self.metrics_epochs,
+            # Step-level loss tracking (for detailed plots)
+            step_losses=self.step_losses,
+            step_loss_steps=self.step_loss_steps,
+            # End-of-epoch checkpoint (not mid-epoch)
+            step_in_epoch=None,
         )
+    
+    def _save_step_checkpoint(self, epoch: int, step_in_epoch: int):
+        """
+        Save mid-epoch checkpoint every N steps for resumability.
+        
+        This allows resuming training from the last saved step if training
+        stops unexpectedly (e.g., preemption, crash, timeout).
+        """
+        print(f"[checkpoint] Saving step checkpoint at step {self.global_step} (epoch {epoch}, step {step_in_epoch})")
+        
+        # Save with step-specific tag
+        self._ensure_config_dumped()
+        save_state(
+            self.out_dir,
+            "latest",  # We still use "latest" tag but include step_in_epoch for mid-epoch detection
+            step=self.global_step,
+            epoch=epoch,
+            global_step=self.global_step,
+            epoch_losses=self.epoch_losses,
+            best_loss=self.best_val_loss,
+            best_step=self.best_step,
+            optim=self.optim,
+            sched=self.sched,
+            scaler=self.scaler,
+            vat_lidar=self.vat_lidar,
+            vat_vision=self.vat_vision if self.config["use_vision"] else None,
+            base=self.base,
+            clip_vit=self.runtime.clip_vit if self.config["use_vision"] else None,
+            vision_adapter=self.vision_adapter if self.config["use_vision"] else None,
+            projector=self.runtime.projector if self.config["use_vision"] else None,
+            sam=self.runtime.sam if self.config["use_vision"] else None,
+            sched_meta=self.sched_meta,
+            config=self.config,
+            val_losses=self.val_losses,
+            val_epochs=self.val_epochs,
+            caption_metrics_history=self.caption_metrics_history,
+            grounding_det_area_metrics_history=self.grounding_det_area_metrics_history,
+            grounding_det_object_metrics_history=self.grounding_det_object_metrics_history,
+            metrics_epochs=self.metrics_epochs,
+            step_in_epoch=step_in_epoch,  # Key field for mid-epoch resume detection
+            step_losses=self.step_losses,  # Step-level loss history
+            step_loss_steps=self.step_loss_steps,  # Steps where loss was recorded
+        )
+    
+    def _plot_step_loss_curve(self):
+        """
+        Plot step-level training loss curve.
+        
+        This provides a detailed view of training progress at each step,
+        complementing the epoch-level plots.
+        """
+        import matplotlib
+        matplotlib.use('Agg')  # Non-interactive backend for server environments
+        import matplotlib.pyplot as plt
+        
+        if len(self.step_losses) < 2:
+            return  # Need at least 2 points to plot
+        
+        try:
+            fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+            
+            # Plot 1: Full training loss curve (all steps)
+            ax1 = axes[0]
+            ax1.plot(self.step_loss_steps, self.step_losses, 'b-', alpha=0.3, linewidth=0.5, label='Raw Loss')
+            
+            # Add smoothed line (moving average)
+            window_size = min(50, len(self.step_losses) // 4) if len(self.step_losses) > 10 else 1
+            if window_size > 1:
+                smoothed = []
+                for i in range(len(self.step_losses)):
+                    start = max(0, i - window_size + 1)
+                    smoothed.append(sum(self.step_losses[start:i+1]) / (i - start + 1))
+                ax1.plot(self.step_loss_steps, smoothed, 'b-', linewidth=1.5, label=f'Smoothed (window={window_size})')
+            
+            ax1.set_xlabel('Step')
+            ax1.set_ylabel('Loss')
+            ax1.set_title(f'Training Loss (Step {self.global_step})')
+            ax1.legend()
+            ax1.grid(True, alpha=0.3)
+            
+            # Plot 2: Recent loss curve (last 1000 steps or all if less)
+            ax2 = axes[1]
+            recent_n = min(1000, len(self.step_losses))
+            recent_steps = self.step_loss_steps[-recent_n:]
+            recent_losses = self.step_losses[-recent_n:]
+            
+            ax2.plot(recent_steps, recent_losses, 'g-', alpha=0.5, linewidth=0.8, label='Raw Loss')
+            
+            # Smoothed for recent
+            window_size_recent = min(20, recent_n // 4) if recent_n > 10 else 1
+            if window_size_recent > 1:
+                smoothed_recent = []
+                for i in range(len(recent_losses)):
+                    start = max(0, i - window_size_recent + 1)
+                    smoothed_recent.append(sum(recent_losses[start:i+1]) / (i - start + 1))
+                ax2.plot(recent_steps, smoothed_recent, 'g-', linewidth=2, label=f'Smoothed (window={window_size_recent})')
+            
+            ax2.set_xlabel('Step')
+            ax2.set_ylabel('Loss')
+            ax2.set_title(f'Recent Training Loss (Last {recent_n} steps)')
+            ax2.legend()
+            ax2.grid(True, alpha=0.3)
+            
+            plt.tight_layout()
+            plt.savefig(self.out_dir / "step_loss_curve.png", dpi=150)
+            plt.close(fig)
+            
+            print(f"[plot] Saved step-level loss curve to {self.out_dir / 'step_loss_curve.png'}")
+            
+        except Exception as e:
+            print(f"[plot] Warning: Failed to generate step loss plot: {e}")
     
     def _save_best_checkpoint(self):
         """Save best model checkpoint"""
+        self._ensure_config_dumped()
         def unwrap(model):
             return model.module if isinstance(model, nn.parallel.DistributedDataParallel) else model
         
@@ -1230,3 +1402,21 @@ class Trainer:
                 torch.save(sam_compression_head_state, self.out_dir / "sam_compression_head_best.pt")
             
             print(f"[best-val] saved all vision components (including SAM compression head)")
+
+    def _ensure_config_dumped(self):
+        """Persist resolved training config once per run."""
+        if self._config_dumped:
+            return
+        if not is_main_process():
+            return
+        config_path = self.out_dir / "config.json"
+        if config_path.exists():
+            self._config_dumped = True
+            return
+        try:
+            with open(config_path, "w", encoding="utf-8") as f:
+                json.dump(self.config, f, indent=2)
+            print(f"[config] Saved training config to {config_path}")
+            self._config_dumped = True
+        except Exception as exc:
+            print(f"[config] Warning: failed to write {config_path}: {exc}")

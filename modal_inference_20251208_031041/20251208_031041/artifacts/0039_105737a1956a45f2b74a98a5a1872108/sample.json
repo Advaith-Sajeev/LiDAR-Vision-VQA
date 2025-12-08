@@ -1,0 +1,29 @@
+{
+  "sample_token": "105737a1956a45f2b74a98a5a1872108",
+  "dataset_type": "caption",
+  "question": "This is the car's back right view. Can you provide a description for the road scene such that it sets it apart from others?",
+  "ground_truth": "The road scene is set apart from others due to the presence of a red sports car driving down the street. The car is a Porsche, which is a luxury and high-performance vehicle known for its sleek design and powerful engine. The red color of the car adds to its distinctive appearance, making it stand out from other vehicles on the road. The car is also driving in a city setting, which is a common environment for such vehicles. However, the combination of the red color and the Porsche brand make this scene unique compared to other road scenes.",
+  "prediction": "The road scene is set in a city, with a large building in the background. The road is lined with trees, which adds a touch of greenery to the urban environment. The presence of a traffic light indicates that the road is a busy intersection, and the parked cars and trucks suggest that it is a commercial or residential area. The scene is not particularly unique, as many cities have streets with buildings, trees, and traffic lights. However, the combination of these elements creates a familiar urban landscape that is typical of a city environment.",
+  "metrics": {
+    "exact_match": false,
+    "precision": 0.4105263157894737,
+    "recall": 0.3939393939393939,
+    "f1": 0.4020618556701031,
+    "prediction_len": 95,
+    "ground_truth_len": 99,
+    "token_overlap": 39
+  },
+  "sequence_id": 39,
+  "created_at": "2025-12-07T21:50:17Z",
+  "artifacts": {
+    "copied_bev_file": "bev_105737a1956a45f2b74a98a5a1872108.npy",
+    "copied_image_files": [
+      "00_CAM_FRONT_n008-2018-09-18-15-26-58-0400__CAM_FRONT__1537299539912404.jpg",
+      "01_CAM_FRONT_RIGHT_n008-2018-09-18-15-26-58-0400__CAM_FRONT_RIGHT__1537299539920482.jpg",
+      "02_CAM_FRONT_LEFT_n008-2018-09-18-15-26-58-0400__CAM_FRONT_LEFT__1537299539904799.jpg",
+      "03_CAM_BACK_n008-2018-09-18-15-26-58-0400__CAM_BACK__1537299539937558.jpg",
+      "04_CAM_BACK_RIGHT_n008-2018-09-18-15-26-58-0400__CAM_BACK_RIGHT__1537299539928113.jpg",
+      "05_CAM_BACK_LEFT_n008-2018-09-18-15-26-58-0400__CAM_BACK_LEFT__1537299539947405.jpg"
+    ]
+  }
+}

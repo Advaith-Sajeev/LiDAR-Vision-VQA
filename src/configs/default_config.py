@@ -215,7 +215,7 @@ DEFAULT_CONFIG: Dict = {
     "cudnn_benchmark": True,                    # Enable cuDNN autotuning (faster for fixed-size inputs)
     
     # Inference optimizations
-    "inference_batch_size": 8,                  # Batch size for encoding during inference sampling (higher = faster but more VRAM)
+    "inference_batch_size": 2,                  # Smaller default keeps vision encoding fits on L4 class GPUs
 }
 
 # ============================================================================

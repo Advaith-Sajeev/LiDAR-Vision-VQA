@@ -8,6 +8,7 @@ import numpy as np
 from typing import Dict, Optional, List, Union
 from pathlib import Path
 
+from configs.default_config import TOKENS_PER_VIEW, PROJECTOR_DIM
 
 class InferenceEngine:
     """
@@ -37,6 +38,7 @@ class InferenceEngine:
         self.config = models["config"]
         self.device = models["device"]
         self.d_model = models["d_model"]
+        self.model_dtype = self.base_model.get_input_embeddings().weight.dtype
         
         self.use_vision = self.config.get("use_vision", False) and self.vat_vision is not None
         # DEPRECATED: prefix_scale is no longer applied externally.
@@ -53,26 +55,48 @@ class InferenceEngine:
         
         print("[engine] Inference engine initialized")
         print(f"[engine] Vision pipeline: {'enabled' if self.use_vision else 'disabled'}")
+        print(f"[engine] System prompt: {'configured' if self.system_prompt else 'none'}")
     
-    def format_prompt(self, question: str, include_vision: bool = True) -> str:
+    def format_prompt(
+        self, 
+        question: str, 
+        include_vision: bool = True, 
+        include_lidar: bool = True,
+        include_system: bool = True
+    ) -> str:
         """
         Format input prompt with special tokens.
         
         Args:
             question: User question
             include_vision: Whether to include vision tokens
+            include_lidar: Whether to include LiDAR tokens
+            include_system: Whether to include system prompt
             
         Returns:
             Formatted prompt string
         """
-        # Prepend system prompt if configured
-        if self.system_prompt:
-            question = f"{self.system_prompt}\n\n{question}"
+        # Build prompt parts
+        parts = []
         
+        # Add system prompt if configured and enabled
+        if self.system_prompt and include_system:
+            parts.append(self.system_prompt)
+            parts.append("\n\n")
+        
+        # Add vision tokens if enabled
         if self.use_vision and include_vision:
-            return f"<vision_start><vision_end><lidar_start><lidar_end>{question}\nAnswer:"
-        else:
-            return f"<lidar_start><lidar_end>{question}\nAnswer:"
+            parts.append("<vision_start><vision_end>")
+        
+        # Add LiDAR tokens if enabled
+        if include_lidar:
+            parts.append("<lidar_start><lidar_end>")
+        
+        # Add question and answer prompt
+        parts.append(question)
+        parts.append("\nAnswer:")
+        
+        return "".join(parts)
     
     def process_lidar(self, bev: torch.Tensor) -> torch.Tensor:
         """
@@ -87,7 +111,7 @@ class InferenceEngine:
         if bev.ndim == 3:
             bev = bev.unsqueeze(0)  # Add batch dimension
         
-        bev = bev.to(self.device)
+        bev = bev.to(device=self.device, dtype=self.model_dtype)
         
         with torch.no_grad():
             lidar_prompts = self.vat_lidar(bev)  # [B, n_queries, d_model]
@@ -123,11 +147,14 @@ class InferenceEngine:
             # Check if we got valid tokens
             if not mv.get("tokens") or len(mv["tokens"]) != 6:
                 print(f"[warn] Failed to extract 6 view tokens, using dummy...")
-                dummy_shape = (400, 1280)
-                mv["tokens"] = [torch.zeros(dummy_shape, device=self.device) for _ in range(6)]
+                dummy_shape = (TOKENS_PER_VIEW, PROJECTOR_DIM)
+                mv["tokens"] = [
+                    torch.zeros(dummy_shape, device=self.device, dtype=self.model_dtype)
+                    for _ in range(6)
+                ]
             
             # Move tokens to device (they're already in d_in=2048 space from DeepEncoder)
-            vt = [t.to(self.device) for t in mv["tokens"]]  # List of [HW, 2048]
+            vt = [t.to(device=self.device, dtype=self.model_dtype) for t in mv["tokens"]]
             
             # Process through VisionAdapter: list of [HW, 2048] -> [num_views*HW, 2048]
             kv_tokens = self.vision_adapter(vt)  # [1536, 2048]
@@ -143,7 +170,7 @@ class InferenceEngine:
     def build_inputs_embeds(
         self,
         prompt: str,
-        lidar_prompts: torch.Tensor,
+        lidar_prompts: Optional[torch.Tensor],
         vision_prompts: Optional[torch.Tensor] = None
     ) -> tuple:
         """
@@ -151,7 +178,7 @@ class InferenceEngine:
         
         Args:
             prompt: Formatted prompt string
-            lidar_prompts: LiDAR prompts [B, n_queries, d_model]
+            lidar_prompts: LiDAR prompts [B, n_queries, d_model] or None
             vision_prompts: Vision prompts [B, n_queries, d_model] or None
             
         Returns:
@@ -197,28 +224,29 @@ class InferenceEngine:
                 pos = ve + 1
         
         # Handle LiDAR tokens
-        lidar_start_pos = (ids_flat == self.lidar_start_id).nonzero(as_tuple=True)[0]
-        lidar_end_pos = (ids_flat == self.lidar_end_id).nonzero(as_tuple=True)[0]
-        
-        if len(lidar_start_pos) > 0 and len(lidar_end_pos) > 0:
-            ls = lidar_start_pos[0].item()
-            le = lidar_end_pos[0].item()
+        if lidar_prompts is not None:
+            lidar_start_pos = (ids_flat == self.lidar_start_id).nonzero(as_tuple=True)[0]
+            lidar_end_pos = (ids_flat == self.lidar_end_id).nonzero(as_tuple=True)[0]
             
-            # Text before lidar
-            if ls > pos:
-                embeds_list.append(text_embeds[:, pos:ls, :])
-            
-            # LiDAR start token
-            embeds_list.append(text_embeds[:, ls:ls+1, :])
-            
-            # LiDAR prompts (VAT models now include learned output_scale internally)
-            # prefix_scale kept for backward compatibility with old checkpoints (default 1.0)
-            embeds_list.append(lidar_prompts * self.prefix_scale)
-            
-            # LiDAR end token
-            embeds_list.append(text_embeds[:, le:le+1, :])
-            
-            pos = le + 1
+            if len(lidar_start_pos) > 0 and len(lidar_end_pos) > 0:
+                ls = lidar_start_pos[0].item()
+                le = lidar_end_pos[0].item()
+                
+                # Text before lidar
+                if ls > pos:
+                    embeds_list.append(text_embeds[:, pos:ls, :])
+                
+                # LiDAR start token
+                embeds_list.append(text_embeds[:, ls:ls+1, :])
+                
+                # LiDAR prompts (VAT models now include learned output_scale internally)
+                # prefix_scale kept for backward compatibility with old checkpoints (default 1.0)
+                embeds_list.append(lidar_prompts * self.prefix_scale)
+                
+                # LiDAR end token
+                embeds_list.append(text_embeds[:, le:le+1, :])
+                
+                pos = le + 1
         
         # Remaining text
         if pos < text_embeds.shape[1]:
@@ -236,7 +264,7 @@ class InferenceEngine:
     def generate(
         self,
         question: str,
-        bev: Union[torch.Tensor, np.ndarray, str, Path],
+        bev: Optional[Union[torch.Tensor, np.ndarray, str, Path]] = None,
         sample_token: Optional[str] = None,
         max_new_tokens: int = 64,
         temperature: float = 0.7,
@@ -244,13 +272,16 @@ class InferenceEngine:
         top_k: int = 50,
         do_sample: bool = True,
         num_beams: int = 1,
+        use_vision: Optional[bool] = None,
+        use_lidar: Optional[bool] = None,
+        use_system: Optional[bool] = None,
     ) -> str:
         """
         Generate answer for a question given LiDAR (and optionally vision) data.
         
         Args:
             question: User question
-            bev: BEV features as tensor, array, or path to .npy file
+            bev: BEV features as tensor, array, or path to .npy file (optional when LiDAR disabled)
             sample_token: nuScenes sample token (required for vision)
             max_new_tokens: Maximum tokens to generate
             temperature: Sampling temperature
@@ -258,31 +289,57 @@ class InferenceEngine:
             top_k: Top-k sampling threshold
             do_sample: Whether to sample (vs greedy decode)
             num_beams: Number of beams for beam search
+            use_vision: Override vision usage (None = use engine default)
+            use_lidar: Override LiDAR usage (None = use engine default)
+            use_system: Override system prompt usage (None = use engine default)
             
         Returns:
             Generated answer string
         """
-        # Load BEV if path provided
-        if isinstance(bev, (str, Path)):
-            bev = np.load(bev)
-        if isinstance(bev, np.ndarray):
-            bev = torch.from_numpy(bev).float()
+        # Apply toggle overrides with defaults
+        include_vision = use_vision if use_vision is not None else True
+        include_lidar = use_lidar if use_lidar is not None else True
+        include_system = use_system if use_system is not None else True
         
-        # Process LiDAR
-        lidar_prompts = self.process_lidar(bev)
+        bev_tensor: Optional[torch.Tensor] = None
+        if include_lidar:
+            if bev is None:
+                raise ValueError("LiDAR input required when use_lidar=True")
+            if isinstance(bev, (str, Path)):
+                bev = np.load(bev, allow_pickle=False)
+            if isinstance(bev, np.ndarray):
+                bev_tensor = torch.from_numpy(bev)
+            elif isinstance(bev, torch.Tensor):
+                bev_tensor = bev
+            else:
+                raise TypeError("Unsupported BEV input type")
+            bev_tensor = bev_tensor.to(dtype=self.model_dtype)
+        
+        # Process LiDAR (if enabled)
+        lidar_prompts = None
+        if include_lidar:
+            lidar_prompts = self.process_lidar(bev_tensor)
+            lidar_prompts = self._cast_modal_prompts(lidar_prompts)
         
         # Process vision (if enabled and sample_token provided)
         vision_prompts = None
-        include_vision = False
-        if self.use_vision and sample_token is not None:
+        if self.use_vision and include_vision and sample_token is not None:
             try:
                 vision_prompts = self.process_vision(sample_token)
-                include_vision = True
+                vision_prompts = self._cast_modal_prompts(vision_prompts)
             except Exception as e:
                 print(f"[engine] Warning: Failed to process vision: {e}")
+                include_vision = False  # Disable in prompt if processing failed
+        else:
+            include_vision = False
         
         # Format prompt
-        prompt = self.format_prompt(question, include_vision=include_vision)
+        prompt = self.format_prompt(
+            question, 
+            include_vision=include_vision,
+            include_lidar=include_lidar,
+            include_system=include_system
+        )
         
         # Build inputs
         inputs_embeds, attention_mask = self.build_inputs_embeds(
@@ -313,7 +370,7 @@ class InferenceEngine:
     def generate_batch(
         self,
         questions: List[str],
-        bevs: List[Union[torch.Tensor, np.ndarray, str, Path]],
+        bevs: List[Optional[Union[torch.Tensor, np.ndarray, str, Path]]],
         sample_tokens: Optional[List[str]] = None,
         **generation_kwargs
     ) -> List[str]:
@@ -338,3 +395,11 @@ class InferenceEngine:
             answers.append(answer)
         
         return answers
+
+    def _cast_modal_prompts(self, prompts: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
+        """Ensure modal prompts share the LLM embedding dtype."""
+        if prompts is None:
+            return None
+        if prompts.dtype != self.model_dtype:
+            return prompts.to(dtype=self.model_dtype)
+        return prompts

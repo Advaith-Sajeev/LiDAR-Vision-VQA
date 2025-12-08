@@ -37,9 +37,17 @@ def save_state(
     grounding_det_area_metrics_history: Optional[Dict] = None,
     grounding_det_object_metrics_history: Optional[Dict] = None,
     metrics_epochs: Optional[List[int]] = None,
+    # Step-in-epoch for mid-epoch resume (None = end of epoch)
+    step_in_epoch: Optional[int] = None,
+    # Step-level loss tracking for detailed plots
+    step_losses: Optional[List[float]] = None,
+    step_loss_steps: Optional[List[int]] = None,
 ):
     """
-    Save training state and model checkpoints at epoch level.
+    Save training state and model checkpoints.
+    
+    Supports both epoch-level saves (end of epoch) and step-level saves
+    (mid-epoch checkpoints for crash recovery).
     
     Args:
         out_dir: Output directory for checkpoints
@@ -64,6 +72,9 @@ def save_state(
         config: Training configuration
         val_losses: Validation losses (optional)
         val_epochs: Epochs where validation was run (optional)
+        step_in_epoch: Step within current epoch for mid-epoch resume (None = end of epoch)
+        step_losses: List of step-level losses for detailed plotting (optional)
+        step_loss_steps: List of steps corresponding to step_losses (optional)
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     
@@ -109,6 +120,7 @@ def save_state(
     state = {
         "epoch": epoch,
         "global_step": global_step,
+        "step_in_epoch": step_in_epoch,  # None = end of epoch, >0 = mid-epoch checkpoint
         "epoch_losses": epoch_losses,
         "best_loss": best_loss,
         "best_step": best_step,
@@ -126,10 +138,17 @@ def save_state(
         "grounding_det_area_metrics_history": grounding_det_area_metrics_history,
         "grounding_det_object_metrics_history": grounding_det_object_metrics_history,
         "metrics_epochs": metrics_epochs,
+        # Step-level loss tracking for detailed plots
+        "step_losses": step_losses,
+        "step_loss_steps": step_loss_steps,
     }
     torch.save(state, out_dir / "training_state_latest.pt")
     
-    print(f"[checkpoint] Saved epoch {epoch} checkpoint (global_step={global_step})")
+    # Log appropriate message based on checkpoint type
+    if step_in_epoch is not None and step_in_epoch > 0:
+        print(f"[checkpoint] Saved step checkpoint: epoch {epoch}, step {step_in_epoch} (global_step={global_step})")
+    else:
+        print(f"[checkpoint] Saved epoch {epoch} checkpoint (global_step={global_step})")
 
 
 def try_load_state(out_dir: Path):

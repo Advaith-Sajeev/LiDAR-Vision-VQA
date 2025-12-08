@@ -1,0 +1,29 @@
+{
+  "sample_token": "eb42f7d870224c26b5a8818bb717b33e",
+  "dataset_type": "caption",
+  "question": "This is the car's front left view. Identify any potential obstacles or hazards in the road scene and provide a brief description of them.",
+  "ground_truth": "The scene shows a road scene with a black car and a white truck. There are no visible obstacles or hazards in the scene. The weather appears to be sunny, and the time of the day is not discernible from the scene.",
+  "prediction": "In the scene, there are a few potential obstacles or hazards that drivers should be aware of. First, there is a large truck driving down the street, which may be difficult to maneuver around or pass due to its size and weight. Second, there is a car parked on the side of the road, which could obstruct the view of oncoming traffic for drivers. Third, there is a traffic light in the scene, which drivers should pay attention to while navigating the road. Lastly, the presence of a fire hydrant on the side of the road indicates that there is a water source nearby, which could be a potential hazard if drivers are",
+  "metrics": {
+    "exact_match": false,
+    "precision": 0.19469026548672566,
+    "recall": 0.5238095238095238,
+    "f1": 0.2838709677419355,
+    "prediction_len": 113,
+    "ground_truth_len": 42,
+    "token_overlap": 22
+  },
+  "sequence_id": 18,
+  "created_at": "2025-12-07T21:50:15Z",
+  "artifacts": {
+    "copied_bev_file": "bev_eb42f7d870224c26b5a8818bb717b33e.npy",
+    "copied_image_files": [
+      "00_CAM_FRONT_n008-2018-08-28-13-40-50-0400__CAM_FRONT__1535478914862765.jpg",
+      "01_CAM_FRONT_RIGHT_n008-2018-08-28-13-40-50-0400__CAM_FRONT_RIGHT__1535478914870482.jpg",
+      "02_CAM_FRONT_LEFT_n008-2018-08-28-13-40-50-0400__CAM_FRONT_LEFT__1535478914854799.jpg",
+      "03_CAM_BACK_n008-2018-08-28-13-40-50-0400__CAM_BACK__1535478914887558.jpg",
+      "04_CAM_BACK_RIGHT_n008-2018-08-28-13-40-50-0400__CAM_BACK_RIGHT__1535478914878113.jpg",
+      "05_CAM_BACK_LEFT_n008-2018-08-28-13-40-50-0400__CAM_BACK_LEFT__1535478914897405.jpg"
+    ]
+  }
+}

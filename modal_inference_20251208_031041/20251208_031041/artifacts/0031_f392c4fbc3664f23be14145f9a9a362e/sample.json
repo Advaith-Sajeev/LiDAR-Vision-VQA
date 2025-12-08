@@ -1,0 +1,29 @@
+{
+  "sample_token": "f392c4fbc3664f23be14145f9a9a362e",
+  "dataset_type": "caption",
+  "question": "This is the car's front view. Can you provide a description for the road scene such that it sets it apart from others?",
+  "ground_truth": "The road scene is set apart from others due to the presence of a large number of traffic lights. These traffic lights are scattered across the street, with some positioned closer to the foreground and others further in the background. The traffic lights are a significant feature of the scene, as they control the flow of traffic and help maintain safety on the road. The presence of so many traffic lights creates a unique visual element that distinguishes this scene from others.",
+  "prediction": "The road scene is set in a city, with a street lined with trees and a sidewalk. The street is empty, with no cars or pedestrians visible. The scene is not particularly unique or remarkable, as many city streets have trees and sidewalks. The weather, color, and time of day are not described in the scene, so they do not contribute to the uniqueness of the scene.",
+  "metrics": {
+    "exact_match": false,
+    "precision": 0.43283582089552236,
+    "recall": 0.35365853658536583,
+    "f1": 0.38926174496644295,
+    "prediction_len": 67,
+    "ground_truth_len": 82,
+    "token_overlap": 29
+  },
+  "sequence_id": 31,
+  "created_at": "2025-12-07T21:50:16Z",
+  "artifacts": {
+    "copied_bev_file": "bev_f392c4fbc3664f23be14145f9a9a362e.npy",
+    "copied_image_files": [
+      "00_CAM_FRONT_n008-2018-09-18-15-26-58-0400__CAM_FRONT__1537299534412404.jpg",
+      "01_CAM_FRONT_RIGHT_n008-2018-09-18-15-26-58-0400__CAM_FRONT_RIGHT__1537299534420482.jpg",
+      "02_CAM_FRONT_LEFT_n008-2018-09-18-15-26-58-0400__CAM_FRONT_LEFT__1537299534404799.jpg",
+      "03_CAM_BACK_n008-2018-09-18-15-26-58-0400__CAM_BACK__1537299534437562.jpg",
+      "04_CAM_BACK_RIGHT_n008-2018-09-18-15-26-58-0400__CAM_BACK_RIGHT__1537299534428113.jpg",
+      "05_CAM_BACK_LEFT_n008-2018-09-18-15-26-58-0400__CAM_BACK_LEFT__1537299534447405.jpg"
+    ]
+  }
+}

@@ -16,12 +16,14 @@ import sys
 
 from inference import ModelLoader, InferenceEngine
 from inference.utils import (
-    load_bev_feature,
     load_qa_pairs,
     save_predictions,
     calculate_metrics,
-    format_output
+    format_output,
+    save_inference_artifacts,
+    select_random_samples,
 )
+from training.utils import calculate_sample_level_metrics
 
 
 def parse_args():
@@ -46,6 +48,11 @@ Examples:
   
   # Greedy decoding
   python infer.py --checkpoint checkpoints_vat --bev sample.npy --question "..." --no-sample --num-beams 3
+  
+  # Ablation studies (disable components)
+  python infer.py --checkpoint checkpoints_vat --bev sample.npy --question "..." --no-vision  # LiDAR only
+  python infer.py --checkpoint checkpoints_vat --bev sample.npy --sample-token abc123 --question "..." --no-lidar  # Vision only
+  python infer.py --checkpoint checkpoints_vat --bev sample.npy --question "..." --no-system  # No system prompt
 """
     )
     
@@ -105,6 +112,26 @@ Examples:
         type=str,
         default="answer",
         help="Field name for ground truth answers in JSON (default: 'answer')"
+    )
+    parser.add_argument(
+        "--split",
+        type=str,
+        choices=("train", "val"),
+        default="train",
+        help="Dataset split to sample from when --sample-random is set (default: train)"
+    )
+    parser.add_argument(
+        "--sample-random",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Randomly pick N samples from the selected split and run sequential inference"
+    )
+    parser.add_argument(
+        "--ground-truth",
+        type=str,
+        default="",
+        help="Ground truth answer for interactive mode (saved with artifacts)"
     )
     
     # Device
@@ -166,6 +193,23 @@ Examples:
         help="Number of beams for beam search (default: 1)"
     )
     
+    # Inference toggles (for ablation studies)
+    parser.add_argument(
+        "--no-vision",
+        action="store_true",
+        help="Disable vision tokens in inference (ablation study)"
+    )
+    parser.add_argument(
+        "--no-lidar",
+        action="store_true",
+        help="Disable LiDAR tokens in inference (ablation study)"
+    )
+    parser.add_argument(
+        "--no-system",
+        action="store_true",
+        help="Disable system prompt in inference (ablation study)"
+    )
+    
     # Display options
     parser.add_argument(
         "--verbose", "-v",
@@ -177,21 +221,27 @@ Examples:
         action="store_true",
         help="Suppress all output except answers"
     )
+    parser.add_argument(
+        "--artifact-dir",
+        type=str,
+        default=None,
+        help="Directory to store per-sample artifacts (files + metadata)"
+    )
     
     return parser.parse_args()
 
 
 def interactive_mode(args, engine: InferenceEngine):
     """Run inference in interactive mode (single question)."""
-    if not args.bev:
-        print("Error: --bev is required for interactive mode", file=sys.stderr)
+    if not args.bev and not args.no_lidar:
+        print("Error: --bev is required unless --no-lidar is set", file=sys.stderr)
         sys.exit(1)
     
     if not args.quiet:
         print("=" * 80)
         print("INTERACTIVE INFERENCE")
         print("=" * 80)
-        print(f"BEV file: {args.bev}")
+        print(f"BEV file: {args.bev if not args.no_lidar else 'None (LiDAR disabled)'}")
         print(f"Sample token: {args.sample_token or 'None'}")
         print(f"Question: {args.question}")
         print(f"Max tokens: {args.max_tokens}")
@@ -202,7 +252,7 @@ def interactive_mode(args, engine: InferenceEngine):
     # Generate answer
     answer = engine.generate(
         question=args.question,
-        bev=args.bev,
+        bev=None if args.no_lidar else args.bev,
         sample_token=args.sample_token,
         max_new_tokens=args.max_tokens,
         temperature=args.temperature,
@@ -210,6 +260,9 @@ def interactive_mode(args, engine: InferenceEngine):
         top_k=args.top_k,
         do_sample=not args.no_sample,
         num_beams=args.num_beams,
+        use_vision=not args.no_vision,
+        use_lidar=not args.no_lidar,
+        use_system=not args.no_system,
     )
     
     if args.quiet:
@@ -221,11 +274,29 @@ def interactive_mode(args, engine: InferenceEngine):
             sample_token=args.sample_token,
         ))
 
+    sample_payload = {
+        "sample_token": args.sample_token,
+        "question": args.question,
+        "prediction": answer,
+        "ground_truth": args.ground_truth or "",
+        "dataset_type": engine.config.get("dataset_mode", "caption"),
+    }
+    sample_payload["metrics"] = calculate_sample_level_metrics(sample_payload, engine.config)
+
+    save_inference_artifacts(
+        artifact_dir=args.artifact_dir,
+        sample_payload=sample_payload,
+        bev_path=None if args.no_lidar else args.bev,
+        engine=engine,
+        sequence_id=1,
+        vision_requested=not args.no_vision,
+    )
+
 
 def batch_mode(args, engine: InferenceEngine):
     """Run inference in batch mode (process JSON file)."""
-    if not args.feature_dirs:
-        print("Error: --feature-dirs is required for batch mode", file=sys.stderr)
+    if not args.feature_dirs and not args.no_lidar:
+        print("Error: --feature-dirs is required unless --no-lidar is set", file=sys.stderr)
         sys.exit(1)
     
     if not args.quiet:
@@ -245,14 +316,14 @@ def batch_mode(args, engine: InferenceEngine):
     
     # Build token -> path mapping
     token2path = {}
-    for feat_dir in args.feature_dirs:
-        feat_dir = Path(feat_dir)
-        for npy_file in feat_dir.glob("*.npy"):
-            token = npy_file.stem
-            token2path[token] = str(npy_file)
-    
-    if args.verbose:
-        print(f"[batch] Found {len(token2path)} BEV features")
+    if args.feature_dirs:
+        for feat_dir in args.feature_dirs:
+            feat_dir = Path(feat_dir)
+            for npy_file in feat_dir.glob("*.npy"):
+                token = npy_file.stem
+                token2path[token] = str(npy_file)
+        if args.verbose:
+            print(f"[batch] Found {len(token2path)} BEV features")
     
     # Filter samples
     valid_samples = []
@@ -260,7 +331,7 @@ def batch_mode(args, engine: InferenceEngine):
         token = qa.get("sample_token")
         if not token:
             continue
-        if token not in token2path:
+        if not args.no_lidar and token not in token2path:
             continue
         
         question = qa.get("question", "").strip()
@@ -271,19 +342,45 @@ def batch_mode(args, engine: InferenceEngine):
             "sample_token": token,
             "question": question,
             "ground_truth": qa.get(args.target_field, "").strip(),
-            "bev_path": token2path[token],
+            "bev_path": None if args.no_lidar else token2path[token],
+            "dataset_type": qa.get("dataset_type", "caption"),
         })
     
     if args.max_samples and len(valid_samples) > args.max_samples:
         valid_samples = valid_samples[:args.max_samples]
-    
+
+    sampling_info = None
+    selected_samples = valid_samples
+    if args.sample_random > 0:
+        val_split = float(engine.config.get("val_split", 0.05))
+        seed = int(engine.config.get("seed", 42))
+        selected_samples, sampling_info = select_random_samples(
+            valid_samples,
+            count=args.sample_random,
+            split=args.split,
+            seed=seed,
+            val_split=val_split,
+        )
+        if not selected_samples:
+            print(
+                f"[batch] No samples available for split='{args.split}' with current filters.",
+                file=sys.stderr,
+            )
+            return
+
     if not args.quiet:
-        print(f"\n[batch] Processing {len(valid_samples)} valid samples\n")
+        print(f"\n[batch] Processing {len(selected_samples)} samples\n")
+        if sampling_info:
+            print(
+                f"[batch] Random sample mode: split={args.split} | requested={sampling_info['requested']} | "
+                f"available={sampling_info['available']} | selected={sampling_info['selected']}"
+            )
     
     # Run inference
     predictions = []
-    iterator = tqdm(valid_samples, desc="Inference") if not args.quiet else valid_samples
+    iterator = tqdm(selected_samples, desc="Inference") if not args.quiet else selected_samples
     
+    processed_count = 0
     for sample in iterator:
         try:
             answer = engine.generate(
@@ -296,14 +393,33 @@ def batch_mode(args, engine: InferenceEngine):
                 top_k=args.top_k,
                 do_sample=not args.no_sample,
                 num_beams=args.num_beams,
+                use_vision=not args.no_vision,
+                use_lidar=not args.no_lidar,
+                use_system=not args.no_system,
             )
             
-            predictions.append({
+            prediction_entry = {
                 "sample_token": sample["sample_token"],
                 "question": sample["question"],
                 "prediction": answer,
                 "ground_truth": sample["ground_truth"],
-            })
+                "dataset_type": sample.get("dataset_type", "caption"),
+            }
+            predictions.append(prediction_entry)
+
+            processed_count += 1
+            sample_payload = dict(prediction_entry)
+            sample_payload["metrics"] = calculate_sample_level_metrics(sample_payload, engine.config)
+            sample_payload["sequence_id"] = processed_count
+
+            save_inference_artifacts(
+                artifact_dir=args.artifact_dir,
+                sample_payload=sample_payload,
+                bev_path=sample["bev_path"],
+                engine=engine,
+                sequence_id=processed_count,
+                vision_requested=not args.no_vision,
+            )
             
             if args.verbose:
                 print(format_output(
@@ -349,6 +465,10 @@ def main():
     args = parse_args()
     
     try:
+        if args.sample_random > 0 and not args.json:
+            print("Error: --sample-random requires --json dataset input", file=sys.stderr)
+            sys.exit(1)
+        
         # Load models
         if not args.quiet:
             print("\n" + "=" * 80)

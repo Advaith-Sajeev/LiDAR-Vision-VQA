@@ -65,11 +65,29 @@ def get_modal_training_config() -> Dict:
         # Directories containing BEV feature .npy files (one per sample_token)
         "feature_dirs": ["/data/bev_feats"],
         
-        # JSON/JSONL files with QA pairs for training and validation (nuCaption and nuGrounding)
-        "jsons": [
-            "/data/Datasets/nuScenes/external/nuCaption.json",
-            "/data/Datasets/nuScenes/external/nuGrounding.json"
-        ],
+        # =========================================================================
+        # DATASET MODE SELECTION
+        # =========================================================================
+        # Choose which dataset(s) to use for training, validation, and inference:
+        #   "caption"   - Only nuCaption dataset (scene descriptions)
+        #   "grounding" - Only nuGrounding dataset (object detection/localization)
+        #   "both"      - Both datasets combined (default, recommended for full training)
+        # 
+        # This setting affects:
+        #   1. Training/validation data (jsons list)
+        #   2. Inference sampling (which test JSONs to load)
+        #   3. Evaluation metrics (caption vs grounding dashboards)
+        # 
+        # SAFETY: When using "caption" mode, grounding paths can be set to None
+        #         to prevent any accidental data leakage.
+        "dataset_mode": "caption",  # "caption", "grounding", or "both"
+        
+        # JSON/JSONL file paths for each dataset type
+        # These are used based on the dataset_mode setting above
+        # Set to None to disable a dataset (safe when not using that mode)
+        "caption_json": "/data/Datasets/nuScenes/external/nuCaption.json",
+        "grounding_json": None,  # Set to None when using caption-only mode for safety
+        # "grounding_json": "/data/Datasets/nuScenes/external/nuGrounding.json",
         
         # Output directory for checkpoints, logs, and plots
         # NOTE: This is overwritten at runtime by the Smart Resume logic
@@ -78,7 +96,7 @@ def get_modal_training_config() -> Dict:
         
         # Maximum number of samples to use (None = use all data)
         # Set to small number (e.g., 10) for quick testing
-        "max_samples": 20_000,  # None for full dataset
+        "max_samples": 1_00_000,  # None for full dataset
         
         # =========================================================================
         # VALIDATION TOGGLE (for phased deployment)
@@ -97,16 +115,15 @@ def get_modal_training_config() -> Dict:
         
         # ==================== Training Configuration ====================
         # Number of training epochs
-        "epochs": 100,
+        "epochs": 50,
         
         # Batch size per GPU
-        # NOTE: Reduced from 4 to 2 due to OOM on A100-40GB with full multimodal setup
         # Using grad_accum=2 to maintain effective batch size of 4
-        "batch_size": 20,
+        "batch_size": 16,
         
         # Gradient accumulation steps (effective_batch = batch_size * grad_accum * num_gpus)
         # Increased to compensate for smaller batch_size (2 * 2 = 4 effective)
-        "grad_accum": 1,
+        "grad_accum": 2,
         
         # Number of DataLoader workers for parallel data loading
         # Higher = better GPU utilization (overlaps data loading with training)
@@ -136,7 +153,8 @@ def get_modal_training_config() -> Dict:
         "resume": True,
         
         # Save checkpoint every N steps (0 = disable step-based saving)
-        "save_every_steps": 0,
+        # This is critical for long training runs - allows resuming from last saved step
+        "save_every_steps": 500,
         
         # Keep only last N checkpoints (older ones are deleted)
         "keep_last_n": 3,
@@ -150,7 +168,7 @@ def get_modal_training_config() -> Dict:
         
         # ==================== Validation Configuration ====================
         # Percentage of data to use for validation (0.1 = 10%, 0.05 = 5%)
-        "val_split": 0.1,
+        "val_split": 0.2,
         
         # Run validation every N epochs
         "validate_every": 1,
@@ -163,32 +181,42 @@ def get_modal_training_config() -> Dict:
         # Generate predictions on validation samples every N epochs (0 = disable)
         "inference_sampling_every": 5,
         
-        # Total number of samples to generate (must be divisible by 4 for equal distribution)
-        # 50% caption, 25% det_area, 25% det_object
+        # Total number of samples to generate
+        # For "caption" mode: can be any positive integer
+        # For "grounding" mode: must be divisible by 2
+        # For "both" mode: must be divisible by 4
         "inference_samples_n": 40,
         
-        # Test JSON files for inference sampling
-        "inference_caption_json": "/data/Datasets/Test/LiDAR-LLM-Nu-Caption-val.json",
-        "inference_grounding_json": "/data/Datasets/Test/LiDAR-LLM-Nu-Grounding-val.json",
+        # Test JSON files for inference sampling (used based on dataset_mode)
+        # Set to None to disable (safe when not using that mode)
+        # Leave inference_* paths unset so inference sampling defaults to the same split as training
+        # Override these if you want dedicated val/test JSON for inference sampling
+        "inference_caption_json": None,
+        "inference_grounding_json": None,
         
         # Generation parameters for inference sampling
-        "inference_max_tokens": 256,
+        "inference_max_tokens": 128,
         "inference_temperature": 0.1,
         "inference_top_p": 0.9,
         "inference_top_k": 50,
         "inference_do_sample": True,
         "inference_num_beams": 1,
+        "inference_batch_size": 2,
         
         
         # ==================== Evaluation Metrics Toggles ====================
         # Enable/disable specific metrics for each dashboard
+        # NOTE: Only metrics for the active dataset_mode are evaluated.
+        #       Grounding metrics below are ignored when dataset_mode="caption".
+        
         # Caption Dashboard Metrics (text quality only)
         "eval_caption_bleu4": True,
         "eval_caption_cider": True,
-        "eval_caption_spice": False,
-        "eval_caption_bertscore": False,
+        "eval_caption_spice": False,      # Expensive - requires spacy download
+        "eval_caption_bertscore": False,  # Expensive - requires BERT model
         
         # Grounding Det Area Dashboard Metrics (text quality + bbox accuracy)
+        # NOTE: These are IGNORED when dataset_mode="caption" (no grounding data loaded)
         "eval_det_area_bleu4": True,
         "eval_det_area_cider": True,
         "eval_det_area_spice": False,
@@ -197,6 +225,7 @@ def get_modal_training_config() -> Dict:
         "eval_det_area_bev_iou": True,       # 2D Bird's Eye View IoU
         
         # Grounding Det Object Dashboard Metrics (text quality only)
+        # NOTE: These are IGNORED when dataset_mode="caption" (no grounding data loaded)
         "eval_det_object_bleu4": True,
         "eval_det_object_cider": True,
         "eval_det_object_spice": False,
@@ -226,7 +255,7 @@ def get_modal_training_config() -> Dict:
         "target_field": "answer",  # or answer_lidar
         
         # Maximum answer tokens (longer answers will be truncated)
-        "max_ans_toks": 256,
+        "max_ans_toks": 128,
         
         # DEPRECATED: prefix_scale is no longer used externally.
         # VAT models (VATLiDAR, VATVision) now include learnable output_scale parameters
@@ -239,22 +268,25 @@ def get_modal_training_config() -> Dict:
         # Number of learnable query tokens for LiDAR VAT
         # MUST be divisible by 6 (for 6 spatial sectors)
         # Recommended: 12 (testing), 576 (medium), 768 (large)
-        "vat_queries": 768,
+        "vat_queries": 576,
         
         # Number of transformer layers in LiDAR VAT
-        "vat_layers": 4,
+        "vat_layers": 2,
         
         # Number of attention heads in LiDAR VAT
+        # NOTE: head_dim = d_model / n_heads must be <= 256 for FlashAttention
+        # For Qwen2.5-3B (d_model=2048): use n_heads >= 8 (head_dim=256)
+        # For Qwen2.5-1.5B (d_model=1536): use n_heads >= 6 (head_dim=256)
         "vat_heads": 8,
         
         # MLP expansion ratio (d_mlp = d_model * vat_mlp_ratio)
         "vat_mlp_ratio": 4.0,
         
         # Dropout rate in transformer blocks
-        "vat_dropout": 0.10,
+        "vat_dropout": 0.25,
         
         # Dropout rate after final projection
-        "vat_post_dropout": 0.10,
+        "vat_post_dropout": 0.25,
         
         
         # ==================== Vision VAT Configuration ====================
@@ -264,22 +296,25 @@ def get_modal_training_config() -> Dict:
         # Number of learnable query tokens for Vision VAT
         # Only needs to be divisible by 6 if vision_per_view_query=True
         # Recommended: 12 (testing), 1536 (medium), 2304 (large)
-        "vision_queries": 768,
+        "vision_queries": 576,
         
         # Number of transformer layers in Vision VAT
-        "vision_layers": 4,
+        "vision_layers": 2,
         
         # Number of attention heads in Vision VAT
+        # NOTE: head_dim = d_model / n_heads must be <= 256 for FlashAttention
+        # For Qwen2.5-3B (d_model=2048): use n_heads >= 8 (head_dim=256)
+        # For Qwen2.5-1.5B (d_model=1536): use n_heads >= 6 (head_dim=256)
         "vision_heads": 8,
         
         # MLP expansion ratio for Vision VAT
         "vision_mlp_ratio": 4.0,
         
         # Dropout rate in Vision VAT transformer blocks
-        "vision_dropout": 0.10,
+        "vision_dropout": 0.25,
         
         # Dropout rate after Vision VAT final projection
-        "vision_post_dropout": 0.10,
+        "vision_post_dropout": 0.25,
         
         # Use separate query embeddings for each camera view
         "vision_per_view_query": False,  # keep False 
@@ -307,13 +342,13 @@ def get_modal_training_config() -> Dict:
         
         # LoRA rank (higher = more parameters, more expressive)
         # Typical values: 8-16 for QLoRA (can use higher rank due to memory savings)
-        "lora_r": 32,
+        "lora_r": 4,
         
         # LoRA alpha (scaling factor, typically 2*r)
-        "lora_alpha": 64,
+        "lora_alpha": 8,
         
         # LoRA dropout rate
-        "lora_dropout": 0.05,
+        "lora_dropout": 0.10,
         
         # LLM LoRA target modules (which layers to apply LoRA to)
         # Common targets for Qwen/LLaMA-style models:
@@ -350,7 +385,7 @@ def get_modal_training_config() -> Dict:
         "lr_vision": 5e-4,
         
         # Weight decay for regularization
-        "weight_decay": 0.01,
+        "weight_decay": 0.05,  # Increased from 0.01 to combat overfitting
         
         # Number of warmup steps for learning rate scheduler
         "warmup_steps": 1000,
@@ -404,6 +439,51 @@ def get_modal_training_config() -> Dict:
         # Timeout in seconds (24 hours)
         "timeout": 86400,
     }
+    
+    # =========================================================================
+    # BUILD DYNAMIC CONFIGS BASED ON DATASET MODE
+    # =========================================================================
+    # Automatically build the jsons list based on dataset_mode setting
+    # Validates that required paths are configured for the selected mode
+    mode = config["dataset_mode"]
+    
+    if mode == "caption":
+        # Caption mode: only caption_json is required
+        if not config.get("caption_json"):
+            raise ValueError(
+                "dataset_mode='caption' requires 'caption_json' to be set. "
+                "Please configure a valid path to the caption JSON file."
+            )
+        config["jsons"] = [config["caption_json"]]
+        
+    elif mode == "grounding":
+        # Grounding mode: only grounding_json is required
+        if not config.get("grounding_json"):
+            raise ValueError(
+                "dataset_mode='grounding' requires 'grounding_json' to be set. "
+                "Please configure a valid path to the grounding JSON file."
+            )
+        config["jsons"] = [config["grounding_json"]]
+        
+    elif mode == "both":
+        # Both mode: both paths are required
+        if not config.get("caption_json"):
+            raise ValueError(
+                "dataset_mode='both' requires 'caption_json' to be set. "
+                "Please configure a valid path to the caption JSON file."
+            )
+        if not config.get("grounding_json"):
+            raise ValueError(
+                "dataset_mode='both' requires 'grounding_json' to be set. "
+                "Please configure a valid path to the grounding JSON file."
+            )
+        config["jsons"] = [config["caption_json"], config["grounding_json"]]
+        
+    else:
+        raise ValueError(
+            f"Invalid dataset_mode: '{mode}'. "
+            f"Must be one of: 'caption', 'grounding', 'both'"
+        )
 
     return config
 

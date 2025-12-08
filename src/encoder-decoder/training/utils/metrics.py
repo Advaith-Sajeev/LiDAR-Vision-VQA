@@ -1,8 +1,17 @@
 """Evaluation metrics for caption and grounding tasks"""
 
 import re
+from collections import Counter
 import numpy as np
 from typing import List, Dict, Tuple, Optional
+
+
+__all__ = [
+    "calculate_caption_metrics",
+    "calculate_grounding_metrics",
+    "calculate_metrics_by_type",
+    "calculate_sample_level_metrics",
+]
 
 
 def extract_bbox_from_text(text: str) -> Optional[List[float]]:
@@ -362,19 +371,27 @@ def calculate_metrics_by_type(results: List[Dict], config: Optional[Dict] = None
     """
     Calculate metrics grouped by dataset type.
     
+    Dynamically calculates metrics based on:
+    1. Which dataset types are present in results
+    2. The dataset_mode config setting
+    3. Individual metric toggle settings
+    
     Args:
         results: List of result dictionaries with keys:
                  - prediction
                  - ground_truth
                  - dataset_type ("caption", "grounding_det_area", or "grounding_det_object")
-        config: Optional config dict with metric toggles
+        config: Optional config dict with metric toggles and dataset_mode
     
     Returns:
-        Dictionary with metrics for each type
+        Dictionary with metrics for each type (only includes dashboards with samples)
     """
     # Default config: enable all metrics
     if config is None:
         config = {}
+    
+    # Get dataset mode for dynamic metric calculation
+    dataset_mode = config.get("dataset_mode", "both")
     
     caption_results = [r for r in results if r.get("dataset_type") == "caption"]
     det_area_results = [r for r in results if r.get("dataset_type") == "grounding_det_area"]
@@ -382,7 +399,7 @@ def calculate_metrics_by_type(results: List[Dict], config: Optional[Dict] = None
     
     metrics = {}
     
-    # Caption metrics (text quality only)
+    # Caption metrics (text quality only) - only calculate if we have caption samples
     if caption_results:
         cap_preds = [r["prediction"] for r in caption_results]
         cap_refs = [r["ground_truth"] for r in caption_results]
@@ -400,10 +417,12 @@ def calculate_metrics_by_type(results: List[Dict], config: Optional[Dict] = None
             metrics["caption_dashboard"]["bertscore_f1"] = text_metrics["bertscore_f1"]
         
         metrics["caption_dashboard"]["num_samples"] = len(caption_results)
-    else:
-        metrics["caption_dashboard"] = {"num_samples": 0}
+    elif dataset_mode in ("caption", "both"):
+        # Only show empty dashboard if mode expects caption samples
+        metrics["caption_dashboard"] = {"num_samples": 0, "note": "No caption samples available"}
     
     # Grounding det_area metrics (text quality + bbox accuracy)
+    # Only calculate if we have det_area samples AND mode includes grounding
     if det_area_results:
         area_preds = [r["prediction"] for r in det_area_results]
         area_refs = [r["ground_truth"] for r in det_area_results]
@@ -432,14 +451,17 @@ def calculate_metrics_by_type(results: List[Dict], config: Optional[Dict] = None
         metrics["grounding_det_area_dashboard"]["bbox_valid_samples"] = bbox_metrics["valid_samples"]
         metrics["grounding_det_area_dashboard"]["num_samples"] = len(det_area_results)
         metrics["grounding_det_area_dashboard"]["note"] = "Text quality + bbox accuracy"
-    else:
+    elif dataset_mode in ("grounding", "both"):
+        # Only show empty dashboard if mode expects grounding samples
         metrics["grounding_det_area_dashboard"] = {
             "bbox_valid_samples": 0,
             "num_samples": 0, 
-            "note": "No det_area samples"
+            "note": "No det_area samples available"
         }
+    # If dataset_mode is "caption", don't include grounding dashboards at all
     
     # Grounding det_object metrics (text quality only)
+    # Only calculate if we have det_object samples AND mode includes grounding
     if det_object_results:
         obj_preds = [r["prediction"] for r in det_object_results]
         obj_refs = [r["ground_truth"] for r in det_object_results]
@@ -459,10 +481,87 @@ def calculate_metrics_by_type(results: List[Dict], config: Optional[Dict] = None
         
         metrics["grounding_det_object_dashboard"]["num_samples"] = len(det_object_results)
         metrics["grounding_det_object_dashboard"]["note"] = "Text quality only (coords in question)"
-    else:
+    elif dataset_mode in ("grounding", "both"):
+        # Only show empty dashboard if mode expects grounding samples
         metrics["grounding_det_object_dashboard"] = {
             "num_samples": 0, 
-            "note": "No det_object samples"
+            "note": "No det_object samples available"
         }
+    # If dataset_mode is "caption", don't include grounding dashboards at all
     
+    return metrics
+
+
+def _tokenize_for_metrics(text: str) -> List[str]:
+    return [tok for tok in text.strip().lower().split() if tok]
+
+
+def _basic_text_overlap_metrics(prediction: str, ground_truth: str) -> Dict[str, float]:
+    pred_tokens = _tokenize_for_metrics(prediction)
+    gt_tokens = _tokenize_for_metrics(ground_truth)
+
+    if not pred_tokens and not gt_tokens:
+        return {
+            "exact_match": True,
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "prediction_len": 0,
+            "ground_truth_len": 0,
+            "token_overlap": 0,
+        }
+
+    if not gt_tokens:
+        return {
+            "exact_match": False,
+            "precision": 1.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "prediction_len": len(pred_tokens),
+            "ground_truth_len": 0,
+            "token_overlap": 0,
+        }
+
+    pred_counter = Counter(pred_tokens)
+    gt_counter = Counter(gt_tokens)
+    overlap = pred_counter & gt_counter
+    overlap_count = sum(overlap.values())
+
+    precision = overlap_count / len(pred_tokens) if pred_tokens else 0.0
+    recall = overlap_count / len(gt_tokens) if gt_tokens else 0.0
+    if precision + recall == 0:
+        f1 = 0.0
+    else:
+        f1 = 2 * precision * recall / (precision + recall)
+
+    return {
+        "exact_match": bool(ground_truth.strip()) and prediction.strip().lower() == ground_truth.strip().lower(),
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+        "prediction_len": len(pred_tokens),
+        "ground_truth_len": len(gt_tokens),
+        "token_overlap": overlap_count,
+    }
+
+
+def calculate_sample_level_metrics(result: Dict, config: Optional[Dict] = None) -> Dict[str, float]:
+    """Compute lightweight per-sample metrics for logging and artifact export."""
+
+    prediction = result.get("prediction", "") or ""
+    ground_truth = result.get("ground_truth", "") or ""
+    dataset_type = result.get("dataset_type", "caption")
+
+    metrics = _basic_text_overlap_metrics(prediction, ground_truth)
+
+    if dataset_type == "grounding_det_area" and ground_truth:
+        grounding = calculate_grounding_metrics([prediction], [ground_truth])
+        metrics.update(
+            {
+                "top1_accuracy": grounding.get("top1_accuracy", 0.0),
+                "bev_iou": grounding.get("bev_iou", 0.0),
+                "bbox_valid": bool(grounding.get("valid_samples", 0)),
+            }
+        )
+
     return metrics

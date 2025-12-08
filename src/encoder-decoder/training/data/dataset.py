@@ -180,11 +180,15 @@ class MixedNuDataset(Dataset):
                 r["dataset_source"] = jp_name  # Add source tracking
                 rows.append(r)
 
+        # Apply max_samples limit if specified
+        total_before_limit = len(rows)
         if max_samples is not None and len(rows) > max_samples:
             if DEBUG_AVAILABLE:
                 debug.debug("dataset", f"Sampling {max_samples} from {len(rows)} rows")
             rng.shuffle(rows)
             rows = rows[:max_samples]
+            if is_main_process():
+                print(f"[dataset] ⚠️  max_samples={max_samples} applied: using {len(rows)} of {total_before_limit} available samples")
 
         self.rows = rows
         self.nusc = nusc

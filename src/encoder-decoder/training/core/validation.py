@@ -23,7 +23,7 @@ from configs.default_config import (
     PROJECTOR_DIM,
 )
 from ..data.utils import validate_image_paths
-from ..utils import calculate_metrics_by_type
+from ..utils import calculate_metrics_by_type, calculate_sample_level_metrics
 from ..utils.sequence_builder import build_training_sequence, build_inference_sequence, ModalityPosition
 
 
@@ -399,22 +399,58 @@ def run_inference_sampling(
     else:
         vat_vision_model = vision_adapter_model = None
     
-    # Load validation JSONs
-    try:
-        with open(config["inference_caption_json"], "r", encoding="utf-8") as f:
-            caption_data = json.load(f)
-        print(f"[inference_sampling] Loaded {len(caption_data)} caption samples")
-    except Exception as e:
-        print(f"[inference_sampling] Warning: Could not load caption JSON: {e}")
-        caption_data = []
+    # =========================================================================
+    # DATASET MODE: Load JSONs based on config setting
+    # =========================================================================
+    dataset_mode = config.get("dataset_mode", "both")
+    print(f"[inference_sampling] Dataset mode: {dataset_mode}")
     
-    try:
-        with open(config["inference_grounding_json"], "r", encoding="utf-8") as f:
-            grounding_data = json.load(f)
-        print(f"[inference_sampling] Loaded {len(grounding_data)} grounding samples")
-    except Exception as e:
-        print(f"[inference_sampling] Warning: Could not load grounding JSON: {e}")
-        grounding_data = []
+    caption_data = []
+    grounding_data = []
+    
+    # Load caption data if mode includes caption
+    if dataset_mode in ("caption", "both"):
+        caption_json_path = config.get("inference_caption_json")
+        fallback_caption = False
+        if not caption_json_path:
+            caption_json_path = config.get("caption_json")
+            if caption_json_path:
+                fallback_caption = True
+        if caption_json_path:
+            try:
+                with open(caption_json_path, "r", encoding="utf-8") as f:
+                    caption_data = json.load(f)
+                split_tag = "training" if fallback_caption else "inference"
+                print(
+                    f"[inference_sampling] Loaded {len(caption_data)} caption samples from {split_tag} split → {caption_json_path}"
+                )
+            except Exception as e:
+                print(f"[inference_sampling] Warning: Could not load caption JSON: {e}")
+                caption_data = []
+        else:
+            print(f"[inference_sampling] Warning: No caption JSON configured (inference or training)")
+    
+    # Load grounding data ONLY if mode includes grounding
+    if dataset_mode in ("grounding", "both"):
+        grounding_json_path = config.get("inference_grounding_json")
+        fallback_grounding = False
+        if not grounding_json_path:
+            grounding_json_path = config.get("grounding_json")
+            if grounding_json_path:
+                fallback_grounding = True
+        if grounding_json_path:
+            try:
+                with open(grounding_json_path, "r", encoding="utf-8") as f:
+                    grounding_data = json.load(f)
+                split_tag = "training" if fallback_grounding else "inference"
+                print(
+                    f"[inference_sampling] Loaded {len(grounding_data)} grounding samples from {split_tag} split → {grounding_json_path}"
+                )
+            except Exception as e:
+                print(f"[inference_sampling] Warning: Could not load grounding JSON: {e}")
+                grounding_data = []
+        else:
+            print(f"[inference_sampling] Warning: No grounding JSON configured (inference or training)")
     
     # ===== INFERENCE DATA VALIDATION =====
     # Validate camera image paths for inference data (when using vision)
@@ -437,24 +473,10 @@ def run_inference_sampling(
                 print(f"[inference_sampling] ⚠️  {image_validation['tokens_with_missing']} samples have missing camera views")
                 print(f"[inference_sampling] ⚠️  Missing views will be filled with zeros, which may affect evaluation quality.")
     
-    # Validate config: inference_samples_n must be divisible by 4
-    # to ensure equal distribution: n/2 caption, n/4 det_area, n/4 det_object
+    # =========================================================================
+    # SAMPLING STRATEGY BASED ON DATASET MODE
+    # =========================================================================
     total_n = config["inference_samples_n"]
-    assert total_n % 4 == 0, (
-        f"inference_samples_n must be divisible by 4 for equal distribution. "
-        f"Got {total_n}. Recommended values: 4, 8, 12, 16, 20, 24, 28, 32, etc."
-    )
-    
-    # Calculate equal distribution
-    n_caption = total_n // 2      # Half for caption
-    n_grounding = total_n // 2    # Half for grounding
-    n_det_area = n_grounding // 2  # Quarter for det_area
-    n_det_object = n_grounding // 2  # Quarter for det_object
-    
-    print(f"[inference_sampling] Sampling strategy (total={total_n}):")
-    print(f"  Caption: {n_caption} samples ({n_caption/total_n*100:.0f}%)")
-    print(f"  Grounding det_area: {n_det_area} samples ({n_det_area/total_n*100:.0f}%)")
-    print(f"  Grounding det_object: {n_det_object} samples ({n_det_object/total_n*100:.0f}%)")
     
     # Filter for samples that have BEV features
     caption_available = [s for s in caption_data if s.get("sample_token") in token2path]
@@ -477,30 +499,93 @@ def run_inference_sampling(
     # Log filtering statistics
     total_grounding_with_bev = len([s for s in grounding_data if s.get("sample_token") in token2path])
     
+    # Calculate sample distribution based on dataset_mode
+    if dataset_mode == "caption":
+        # Caption only: all samples from caption dataset
+        n_caption = total_n
+        n_det_area = 0
+        n_det_object = 0
+        
+        print(f"[inference_sampling] Sampling strategy (caption only, total={total_n}):")
+        print(f"  Caption: {n_caption} samples (100%)")
+        
+        # Validate sufficient samples
+        assert len(caption_available) >= n_caption, (
+            f"Insufficient caption samples: need {n_caption}, have {len(caption_available)}. "
+            f"Reduce inference_samples_n or add more caption data."
+        )
+        
+        caption_samples = random.sample(caption_available, n_caption)
+        det_area_samples = []
+        det_object_samples = []
+        
+    elif dataset_mode == "grounding":
+        # Grounding only: split evenly between det_area and det_object
+        assert total_n % 2 == 0, (
+            f"inference_samples_n must be divisible by 2 for grounding mode. "
+            f"Got {total_n}. Recommended values: 2, 4, 6, 8, 10, etc."
+        )
+        n_caption = 0
+        n_det_area = total_n // 2
+        n_det_object = total_n // 2
+        
+        print(f"[inference_sampling] Sampling strategy (grounding only, total={total_n}):")
+        print(f"  Grounding det_area: {n_det_area} samples (50%)")
+        print(f"  Grounding det_object: {n_det_object} samples (50%)")
+        
+        # Validate sufficient samples
+        assert len(grounding_det_area) >= n_det_area, (
+            f"Insufficient det_area samples: need {n_det_area}, have {len(grounding_det_area)}. "
+            f"Reduce inference_samples_n or add more det_area data."
+        )
+        assert len(grounding_det_object) >= n_det_object, (
+            f"Insufficient det_object samples: need {n_det_object}, have {len(grounding_det_object)}. "
+            f"Reduce inference_samples_n or add more det_object data."
+        )
+        
+        caption_samples = []
+        det_area_samples = random.sample(grounding_det_area, n_det_area)
+        det_object_samples = random.sample(grounding_det_object, n_det_object)
+        
+    else:  # "both" mode
+        # Original behavior: 50% caption, 25% det_area, 25% det_object
+        assert total_n % 4 == 0, (
+            f"inference_samples_n must be divisible by 4 for 'both' mode. "
+            f"Got {total_n}. Recommended values: 4, 8, 12, 16, 20, 24, 28, 32, etc."
+        )
+        n_caption = total_n // 2
+        n_det_area = total_n // 4
+        n_det_object = total_n // 4
+        
+        print(f"[inference_sampling] Sampling strategy (both, total={total_n}):")
+        print(f"  Caption: {n_caption} samples (50%)")
+        print(f"  Grounding det_area: {n_det_area} samples (25%)")
+        print(f"  Grounding det_object: {n_det_object} samples (25%)")
+        
+        # Validate sufficient samples
+        assert len(caption_available) >= n_caption, (
+            f"Insufficient caption samples: need {n_caption}, have {len(caption_available)}. "
+            f"Reduce inference_samples_n or add more caption data."
+        )
+        assert len(grounding_det_area) >= n_det_area, (
+            f"Insufficient det_area samples: need {n_det_area}, have {len(grounding_det_area)}. "
+            f"Reduce inference_samples_n or add more det_area data."
+        )
+        assert len(grounding_det_object) >= n_det_object, (
+            f"Insufficient det_object samples: need {n_det_object}, have {len(grounding_det_object)}. "
+            f"Reduce inference_samples_n or add more det_object data."
+        )
+        
+        caption_samples = random.sample(caption_available, n_caption)
+        det_area_samples = random.sample(grounding_det_area, n_det_area)
+        det_object_samples = random.sample(grounding_det_object, n_det_object)
+    
+    # Log available samples
     print(f"\n[inference_sampling] Available samples:")
     print(f"  Caption: {len(caption_available)} available")
     print(f"  Grounding total: {total_grounding_with_bev} available")
     print(f"    det_area: {len(grounding_det_area)} available → text quality + bbox accuracy")
     print(f"    det_object: {len(grounding_det_object)} available → text quality only")
-    
-    # Validate sufficient samples are available
-    assert len(caption_available) >= n_caption, (
-        f"Insufficient caption samples: need {n_caption}, have {len(caption_available)}. "
-        f"Reduce inference_samples_n or add more caption data."
-    )
-    assert len(grounding_det_area) >= n_det_area, (
-        f"Insufficient det_area samples: need {n_det_area}, have {len(grounding_det_area)}. "
-        f"Reduce inference_samples_n or add more det_area data."
-    )
-    assert len(grounding_det_object) >= n_det_object, (
-        f"Insufficient det_object samples: need {n_det_object}, have {len(grounding_det_object)}. "
-        f"Reduce inference_samples_n or add more det_object data."
-    )
-    
-    # Sample exactly the required number from each type
-    caption_samples = random.sample(caption_available, n_caption)
-    det_area_samples = random.sample(grounding_det_area, n_det_area)
-    det_object_samples = random.sample(grounding_det_object, n_det_object)
     
     print(f"\n[inference_sampling] ✓ Sampled exactly:")
     print(f"  Caption: {len(caption_samples)} samples")
@@ -526,7 +611,7 @@ def run_inference_sampling(
     # Pre-encode all BEV and vision features in batches for efficiency
     # This avoids redundant per-sample encoding during generation
     
-    inference_batch_size = config.get("inference_batch_size", 8)  # Encode in batches
+    inference_batch_size = max(1, int(config.get("inference_batch_size", 8)))  # Encode in batches
     print(f"\n[inference_sampling] Pre-encoding {len(all_samples)} samples (batch_size={inference_batch_size})...")
     
     # Filter valid samples and prepare for batched encoding
@@ -562,12 +647,10 @@ def run_inference_sampling(
         # Batched vision encoding
         batch_prefix_vision = None
         if config["use_vision"] and nusc is not None:
+            batch_view_tokens = batch_multiview_tokens_from_sample_tokens(
+                batch_tokens, nusc, runtime=runtime, view_order=DEFAULT_VIEW_ORDER, strict=False
+            )
             try:
-                batch_view_tokens = batch_multiview_tokens_from_sample_tokens(
-                    batch_tokens, nusc, runtime=runtime, view_order=DEFAULT_VIEW_ORDER, strict=False
-                )
-                
-                # Move to device
                 batch_view_tokens_device = [
                     [t.to(device) for t in view_tokens]
                     for view_tokens in batch_view_tokens
@@ -577,7 +660,21 @@ def run_inference_sampling(
                 with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
                     batch_kv = vision_adapter_model.forward_batch(batch_view_tokens_device)  # [B, 1536, 2048]
                     batch_prefix_vision = vat_vision_model(batch_kv)  # [B, n_queries, d_model]
-                    
+            except RuntimeError as e:
+                if "out of memory" in str(e).lower():
+                    print("[inference_sampling] Batched vision encoding OOM, retrying sequentially (batch_size=1)...")
+                    torch.cuda.empty_cache()
+                    sequential_outputs = []
+                    for single_views in batch_view_tokens:
+                        single_views_device = [t.to(device) for t in single_views]
+                        with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
+                            single_kv = vision_adapter_model.forward_batch([single_views_device])
+                            single_prefix = vat_vision_model(single_kv)
+                        sequential_outputs.append(single_prefix)
+                    batch_prefix_vision = torch.cat(sequential_outputs, dim=0)
+                else:
+                    print(f"[inference_sampling] Batched vision encoding failed: {e}")
+                    batch_prefix_vision = None
             except Exception as e:
                 print(f"[inference_sampling] Batched vision encoding failed: {e}")
                 batch_prefix_vision = None
@@ -767,13 +864,15 @@ def run_inference_sampling(
                 traceback.print_exc()
                 prediction = ""
             
-            results.append({
+            sample_result = {
                 "sample_token": sample_token,
                 "dataset_type": dataset_type,
                 "question": question,
                 "ground_truth": ground_truth,
                 "prediction": prediction,
-            })
+            }
+            sample_result["metrics"] = calculate_sample_level_metrics(sample_result, config)
+            results.append(sample_result)
         
         except Exception as e:
             print(f"[inference_sampling] Error processing {sample.get('sample_token', 'unknown')}: {e}")
@@ -790,20 +889,31 @@ def run_inference_sampling(
     else:
         metrics = calculate_metrics_by_type(results, config)
     
-    # Save results
-    output = {
+    # Save detailed sample manifest and aggregate metrics separately
+    samples_manifest = {
         "epoch": epoch,
         "best_step": best_step,
         "timestamp": datetime.now().isoformat(),
-        "metrics": metrics,
         "samples": results,
     }
-    
-    output_file = out_dir / f"inference_sampling_epoch{epoch}.json"
-    with open(output_file, "w") as f:
-        json.dump(output, f, indent=2)
-    
-    print(f"\n[inference_sampling] Results saved to {output_file}")
+    samples_file = out_dir / f"inference_sampling_epoch{epoch}.json"
+    with open(samples_file, "w") as f:
+        json.dump(samples_manifest, f, indent=2)
+
+    summary_payload = {
+        "epoch": epoch,
+        "best_step": best_step,
+        "timestamp": datetime.now().isoformat(),
+        "num_samples": len(results),
+        "metrics": metrics,
+        "samples_file": samples_file.name,
+    }
+    metrics_file = out_dir / f"metrics_summary_epoch{epoch}.json"
+    with open(metrics_file, "w") as f:
+        json.dump(summary_payload, f, indent=2)
+
+    print(f"\n[inference_sampling] Sample manifest saved to {samples_file}")
+    print(f"[inference_sampling] Metrics summary saved to {metrics_file}")
     print(f"\n{'='*60}")
     print("INFERENCE SAMPLING METRICS")
     print('='*60)
