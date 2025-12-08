@@ -11,6 +11,7 @@
 
 ## 📋 Table of Contents
 - [Overview](#-overview)
+- [The Broader Vision](#-the-broader-vision)
 - [Key Features](#-key-features)
 - [Architecture](#-architecture)
 - [Installation](#-installation)
@@ -44,6 +45,47 @@ Traditional VQA systems often rely solely on camera images, missing crucial 3D s
 - **Superior 3D spatial reasoning** through BEV representations
 - **Robust scene understanding** across different lighting and weather conditions
 - **Accurate object localization** combining vision and depth information
+
+---
+
+## 🌟 The Broader Vision
+
+This project represents a **foundational step** in our broader research vision for developing next-generation autonomous driving systems with natural language interaction capabilities.
+
+### Long-term Research Goals
+
+**LiDAR-Vision-VQA** is the first milestone in a multi-phase research agenda:
+
+#### Phase 1: Multimodal Scene Understanding (Current)
+- ✅ Establishing robust fusion of LiDAR BEV and multi-camera vision
+- ✅ Training View-Aware Transformers (VAT) for efficient multimodal compression
+- ✅ Validating caption generation and scene description capabilities
+- 🔄 Extending to object grounding and spatial reasoning tasks
+
+#### Phase 2: Temporal Reasoning & Trajectory Prediction (Planned)
+- 📋 Incorporating temporal sequences for motion understanding
+- 📋 Predicting future trajectories of surrounding vehicles and pedestrians
+- 📋 Reasoning about dynamic scene changes and their implications for driving decisions
+
+#### Phase 3: Interactive Planning & Decision Making (Future Vision)
+- 📋 Natural language-driven route planning and navigation
+- 📋 Explaining autonomous driving decisions in human-understandable terms
+- 📋 Interactive Q&A for real-time driving assistance and debugging
+
+#### Phase 4: End-to-End Autonomous Driving System
+- 📋 Integration with planning and control modules
+- 📋 Real-time deployment on autonomous vehicle platforms
+- 📋 Human-AI collaborative driving with natural language interfaces
+
+### Why This Matters
+
+The ability to **understand** and **communicate** about driving scenes in natural language is crucial for:
+- **Trust & Transparency**: Passengers and operators can query the system about its perception and reasoning
+- **Debugging & Development**: Engineers can quickly diagnose perception failures through conversational interfaces
+- **Accessibility**: Making autonomous driving systems more interpretable to non-technical users
+- **Safety**: Enabling better human-AI collaboration in complex or ambiguous driving scenarios
+
+This project lays the groundwork by solving the fundamental challenge of multimodal scene understanding, which is essential for all downstream tasks in the broader vision.
 
 ---
 
@@ -113,12 +155,16 @@ The core multimodal fusion and language generation module:
 ```
 
 #### **Language Model Integration**
-- Base LLM: Qwen2.5-1.5B (or compatible Hugging Face model)
+- Base LLM: Qwen2.5 (0.5B/1.5B/3B variants supported, 3B used in production)
 - LoRA adaptation for efficient fine-tuning
 - Flash Attention 2 for faster training
 - Quantization support (4-bit, 8-bit)
 
 ### Architecture Diagram
+
+For detailed architecture diagrams, see the `arch/` folder in this repository.
+
+**High-Level Overview:**
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                          INPUT MODALITIES                                │
@@ -319,7 +365,8 @@ config = {
     "max_samples": None,  # None for full dataset
     
     # Model
-    "llm_name": "Qwen/Qwen2.5-1.5B-Instruct",
+    "model_id": "Qwen/Qwen2.5-0.5B",  # Default for local training
+    # Other options: "Qwen/Qwen2.5-1.5B", "Qwen/Qwen2.5-3B" (3B recommended for Modal)
     "use_lora": True,
     "lora_r": 64,
     "lora_alpha": 128,
