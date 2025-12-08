@@ -1,0 +1,29 @@
+{
+  "sample_token": "b7fcf5138c6145479418928470f4979e",
+  "dataset_type": "caption",
+  "question": "This is the car's front view. How would you uniquely describe the road scene?",
+  "ground_truth": "The road scene is unique because it is a tree-lined street with a mix of cars and pedestrians. The presence of the trees and the road sign contribute to the overall atmosphere of the scene, making it a pleasant and inviting environment for both drivers and pedestrians.",
+  "prediction": "The road scene is unique because it is a long, straight road with a tree-lined median in the middle. The road is empty, with no cars or pedestrians visible. The road is also situated in a park, which adds to the serene and natural atmosphere of the scene. The weather appears to be sunny, and the time of the day is likely early morning or late afternoon, as the sun is shining brightly and the park is quiet.",
+  "metrics": {
+    "exact_match": false,
+    "precision": 0.34615384615384615,
+    "recall": 0.574468085106383,
+    "f1": 0.43200000000000005,
+    "prediction_len": 78,
+    "ground_truth_len": 47,
+    "token_overlap": 27
+  },
+  "sequence_id": 10,
+  "created_at": "2025-12-08T13:00:10Z",
+  "artifacts": {
+    "copied_bev_file": "bev_b7fcf5138c6145479418928470f4979e.npy",
+    "copied_image_files": [
+      "00_CAM_FRONT_n015-2018-10-02-10-56-37+0800__CAM_FRONT__1538449295412460.jpg",
+      "01_CAM_FRONT_RIGHT_n015-2018-10-02-10-56-37+0800__CAM_FRONT_RIGHT__1538449295420348.jpg",
+      "02_CAM_FRONT_LEFT_n015-2018-10-02-10-56-37+0800__CAM_FRONT_LEFT__1538449295404844.jpg",
+      "03_CAM_BACK_n015-2018-10-02-10-56-37+0800__CAM_BACK__1538449295437525.jpg",
+      "04_CAM_BACK_RIGHT_n015-2018-10-02-10-56-37+0800__CAM_BACK_RIGHT__1538449295427893.jpg",
+      "05_CAM_BACK_LEFT_n015-2018-10-02-10-56-37+0800__CAM_BACK_LEFT__1538449295447423.jpg"
+    ]
+  }
+}

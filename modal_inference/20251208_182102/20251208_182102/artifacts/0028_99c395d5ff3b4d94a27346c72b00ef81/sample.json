@@ -1,0 +1,29 @@
+{
+  "sample_token": "99c395d5ff3b4d94a27346c72b00ef81",
+  "dataset_type": "caption",
+  "question": "This is the car's back view. Summarize the traffic content of the scene.",
+  "ground_truth": "The scene shows a busy street with a lot of traffic, including cars and trucks. The street is filled with vehicles, and there are traffic lights to control the flow of traffic.",
+  "prediction": "The scene shows a busy city street with a mix of cars and trucks driving in both directions. The street is filled with traffic, and the vehicles are moving along the road.",
+  "metrics": {
+    "exact_match": false,
+    "precision": 0.625,
+    "recall": 0.625,
+    "f1": 0.625,
+    "prediction_len": 32,
+    "ground_truth_len": 32,
+    "token_overlap": 20
+  },
+  "sequence_id": 28,
+  "created_at": "2025-12-08T13:00:11Z",
+  "artifacts": {
+    "copied_bev_file": "bev_99c395d5ff3b4d94a27346c72b00ef81.npy",
+    "copied_image_files": [
+      "00_CAM_FRONT_n008-2018-08-31-11-56-46-0400__CAM_FRONT__1535731227662404.jpg",
+      "01_CAM_FRONT_RIGHT_n008-2018-08-31-11-56-46-0400__CAM_FRONT_RIGHT__1535731227670482.jpg",
+      "02_CAM_FRONT_LEFT_n008-2018-08-31-11-56-46-0400__CAM_FRONT_LEFT__1535731227654799.jpg",
+      "03_CAM_BACK_n008-2018-08-31-11-56-46-0400__CAM_BACK__1535731227687558.jpg",
+      "04_CAM_BACK_RIGHT_n008-2018-08-31-11-56-46-0400__CAM_BACK_RIGHT__1535731227678113.jpg",
+      "05_CAM_BACK_LEFT_n008-2018-08-31-11-56-46-0400__CAM_BACK_LEFT__1535731227697405.jpg"
+    ]
+  }
+}

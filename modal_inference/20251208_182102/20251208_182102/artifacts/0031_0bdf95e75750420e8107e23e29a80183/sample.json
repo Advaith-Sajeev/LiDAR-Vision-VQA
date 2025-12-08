@@ -1,0 +1,29 @@
+{
+  "sample_token": "0bdf95e75750420e8107e23e29a80183",
+  "dataset_type": "caption",
+  "question": "This is the car's back left view. Considering the driving perspective, which elements in the scene appear to be the most crucial?",
+  "ground_truth": "From the driving perspective, the most crucial elements in the scene are the red stop sign and the white car parked in front of the building. The stop sign is essential for drivers to come to a complete stop at the intersection, ensuring safety for pedestrians and other vehicles. The white car is also important because it is parked in a parking space, which may be occupied by other drivers or pedestrians. The presence of the car indicates that the driver is either parked or preparing to park, which could affect the flow of traffic and the movement of other vehicles in the area.",
+  "prediction": "From the driving perspective, the most crucial elements in the scene are the parked cars and the traffic lights. The parked cars are located on the side of the road, and their presence indicates that the driver should be cautious and aware of their surroundings. The traffic lights, on the other hand, serve as essential traffic control devices that regulate the flow of traffic and help prevent accidents. The driver should pay close attention to the traffic lights to ensure they follow the correct signals and avoid potential hazards.",
+  "metrics": {
+    "exact_match": false,
+    "precision": 0.48314606741573035,
+    "recall": 0.41346153846153844,
+    "f1": 0.4455958549222798,
+    "prediction_len": 89,
+    "ground_truth_len": 104,
+    "token_overlap": 43
+  },
+  "sequence_id": 31,
+  "created_at": "2025-12-08T13:00:11Z",
+  "artifacts": {
+    "copied_bev_file": "bev_0bdf95e75750420e8107e23e29a80183.npy",
+    "copied_image_files": [
+      "00_CAM_FRONT_n008-2018-08-27-11-48-51-0400__CAM_FRONT__1535385295862404.jpg",
+      "01_CAM_FRONT_RIGHT_n008-2018-08-27-11-48-51-0400__CAM_FRONT_RIGHT__1535385295870482.jpg",
+      "02_CAM_FRONT_LEFT_n008-2018-08-27-11-48-51-0400__CAM_FRONT_LEFT__1535385295854799.jpg",
+      "03_CAM_BACK_n008-2018-08-27-11-48-51-0400__CAM_BACK__1535385295887558.jpg",
+      "04_CAM_BACK_RIGHT_n008-2018-08-27-11-48-51-0400__CAM_BACK_RIGHT__1535385295878113.jpg",
+      "05_CAM_BACK_LEFT_n008-2018-08-27-11-48-51-0400__CAM_BACK_LEFT__1535385295897405.jpg"
+    ]
+  }
+}

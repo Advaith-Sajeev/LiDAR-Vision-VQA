@@ -1,0 +1,29 @@
+{
+  "sample_token": "19ddd6e9a72b49c7ba500e09b291d1c5",
+  "dataset_type": "caption",
+  "question": "This is the car's front view. Provide an overview of the surrounding landscape or environment.",
+  "ground_truth": "The scene shows a construction site with a man standing on the street, surrounded by a construction zone. The area is likely to be busy with construction vehicles and equipment, as well as workers and other personnel. The construction site is likely to be in an urban or suburban area, as it is situated near a parking lot and a street. The presence of a construction zone suggests that the area is undergoing development or renovation, which could be due to various reasons such as expanding infrastructure, improving safety, or enhancing the aesthetics of the area.",
+  "prediction": "The scene shows a street with a row of trees on both sides, providing a sense of shade and greenery. The street is empty, with no cars or pedestrians visible. The street is lined with buildings, indicating that it is likely in an urban or suburban area. The presence of trees and buildings suggests that the area is likely a residential or commercial neighborhood.",
+  "metrics": {
+    "exact_match": false,
+    "precision": 0.578125,
+    "recall": 0.3854166666666667,
+    "f1": 0.4625,
+    "prediction_len": 64,
+    "ground_truth_len": 96,
+    "token_overlap": 37
+  },
+  "sequence_id": 9,
+  "created_at": "2025-12-08T13:00:10Z",
+  "artifacts": {
+    "copied_bev_file": "bev_19ddd6e9a72b49c7ba500e09b291d1c5.npy",
+    "copied_image_files": [
+      "00_CAM_FRONT_n015-2018-08-01-17-13-57+0800__CAM_FRONT__1533115161162460.jpg",
+      "01_CAM_FRONT_RIGHT_n015-2018-08-01-17-13-57+0800__CAM_FRONT_RIGHT__1533115161170339.jpg",
+      "02_CAM_FRONT_LEFT_n015-2018-08-01-17-13-57+0800__CAM_FRONT_LEFT__1533115161154844.jpg",
+      "03_CAM_BACK_n015-2018-08-01-17-13-57+0800__CAM_BACK__1533115161187525.jpg",
+      "04_CAM_BACK_RIGHT_n015-2018-08-01-17-13-57+0800__CAM_BACK_RIGHT__1533115161177912.jpg",
+      "05_CAM_BACK_LEFT_n015-2018-08-01-17-13-57+0800__CAM_BACK_LEFT__1533115161197423.jpg"
+    ]
+  }
+}

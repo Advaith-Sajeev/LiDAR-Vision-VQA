@@ -1,0 +1,16 @@
+{
+  "epoch": "modal",
+  "best_step": 27000,
+  "timestamp": "2025-12-08T18:30:09.212656",
+  "num_samples": 40,
+  "metrics": {
+    "caption_dashboard": {
+      "bleu4": 0.19586407005333034,
+      "cider": 0.5589245495993701,
+      "rouge_l": 0.3725265544187294,
+      "meteor": 0.0,
+      "num_samples": 40
+    }
+  },
+  "samples_file": "inference_sampling_epochmodal.json"
+}

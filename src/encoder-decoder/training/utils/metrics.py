@@ -198,7 +198,25 @@ def calculate_caption_metrics(predictions: List[str], references: List[str], con
         config.get("eval_det_object_bertscore", False)
     )
     
-    results = {"bleu4": 0.0, "cider": 0.0, "spice": 0.0, "bertscore_f1": 0.0}
+    needs_rouge = (
+        config.get("eval_caption_rougel", False) or
+        config.get("eval_det_area_rougel", False) or
+        config.get("eval_det_object_rougel", False)
+    )
+    needs_meteor = (
+        config.get("eval_caption_meteor", False) or
+        config.get("eval_det_area_meteor", False) or
+        config.get("eval_det_object_meteor", False)
+    )
+
+    results = {
+        "bleu4": 0.0,
+        "cider": 0.0,
+        "spice": 0.0,
+        "bertscore_f1": 0.0,
+        "rouge_l": 0.0,
+        "meteor": 0.0,
+    }
     
     # Only import and compute metrics that are needed
     if needs_bleu or needs_cider or needs_spice:
@@ -219,6 +237,25 @@ def calculate_caption_metrics(predictions: List[str], references: List[str], con
             bert_score = None
     else:
         bert_score = None
+
+    if needs_rouge:
+        try:
+            from rouge_score import rouge_scorer
+            rouge_scorer = rouge_scorer.RougeScorer(["rougeL"], use_stemmer=True)
+        except ImportError:
+            print("[metrics] Warning: rouge-score not installed. Install with: pip install rouge-score")
+            rouge_scorer = None
+    else:
+        rouge_scorer = None
+
+    if needs_meteor:
+        try:
+            from nltk.translate.meteor_score import meteor_score
+        except ImportError:
+            print("[metrics] Warning: nltk meteor_score not available. Install nltk>=3.8.1")
+            meteor_score = None
+    else:
+        meteor_score = None
     
     # Filter out empty predictions/references to avoid metric calculation crashes
     # pycocoevalcap and BERTScore can fail or produce undefined results with empty strings
@@ -278,6 +315,23 @@ def calculate_caption_metrics(predictions: List[str], references: List[str], con
             results["bertscore_f1"] = F1.mean().item()
         except Exception as e:
             print(f"[metrics] BERTScore calculation failed: {e}")
+
+    if needs_rouge and rouge_scorer is not None:
+        try:
+            rouge_scores = []
+            for _, pred, ref in valid_pairs:
+                score = rouge_scorer.score(ref, pred)
+                rouge_scores.append(score["rougeL"].fmeasure)
+            results["rouge_l"] = float(np.mean(rouge_scores)) if rouge_scores else 0.0
+        except Exception as e:
+            print(f"[metrics] ROUGE-L calculation failed: {e}")
+
+    if needs_meteor and meteor_score is not None:
+        try:
+            meteor_scores = [meteor_score([ref], pred) for _, pred, ref in valid_pairs]
+            results["meteor"] = float(np.mean(meteor_scores)) if meteor_scores else 0.0
+        except Exception as e:
+            print(f"[metrics] METEOR calculation failed: {e}")
     
     return results
 
@@ -411,6 +465,10 @@ def calculate_metrics_by_type(results: List[Dict], config: Optional[Dict] = None
             metrics["caption_dashboard"]["bleu4"] = text_metrics["bleu4"]
         if config.get("eval_caption_cider", True):
             metrics["caption_dashboard"]["cider"] = text_metrics["cider"]
+        if config.get("eval_caption_rougel", False):
+            metrics["caption_dashboard"]["rouge_l"] = text_metrics["rouge_l"]
+        if config.get("eval_caption_meteor", False):
+            metrics["caption_dashboard"]["meteor"] = text_metrics["meteor"]
         if config.get("eval_caption_spice", True):
             metrics["caption_dashboard"]["spice"] = text_metrics["spice"]
         if config.get("eval_caption_bertscore", True):
@@ -439,6 +497,10 @@ def calculate_metrics_by_type(results: List[Dict], config: Optional[Dict] = None
             metrics["grounding_det_area_dashboard"]["bleu4"] = text_metrics["bleu4"]
         if config.get("eval_det_area_cider", True):
             metrics["grounding_det_area_dashboard"]["cider"] = text_metrics["cider"]
+        if config.get("eval_det_area_rougel", False):
+            metrics["grounding_det_area_dashboard"]["rouge_l"] = text_metrics["rouge_l"]
+        if config.get("eval_det_area_meteor", False):
+            metrics["grounding_det_area_dashboard"]["meteor"] = text_metrics["meteor"]
         if config.get("eval_det_area_spice", True):
             metrics["grounding_det_area_dashboard"]["spice"] = text_metrics["spice"]
         if config.get("eval_det_area_bertscore", True):
@@ -474,6 +536,10 @@ def calculate_metrics_by_type(results: List[Dict], config: Optional[Dict] = None
             metrics["grounding_det_object_dashboard"]["bleu4"] = text_metrics["bleu4"]
         if config.get("eval_det_object_cider", True):
             metrics["grounding_det_object_dashboard"]["cider"] = text_metrics["cider"]
+        if config.get("eval_det_object_rougel", False):
+            metrics["grounding_det_object_dashboard"]["rouge_l"] = text_metrics["rouge_l"]
+        if config.get("eval_det_object_meteor", False):
+            metrics["grounding_det_object_dashboard"]["meteor"] = text_metrics["meteor"]
         if config.get("eval_det_object_spice", True):
             metrics["grounding_det_object_dashboard"]["spice"] = text_metrics["spice"]
         if config.get("eval_det_object_bertscore", True):

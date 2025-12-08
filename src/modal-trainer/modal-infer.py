@@ -41,6 +41,7 @@ def _to_jsonable(obj):
 
 app = modal.App("lidar-vision-training")
 volume = modal.Volume.from_name("lidar-llm", create_if_missing=False)
+FLASH_ATTN_CACHE = Path("/data/build_cache/flash-attn")
 
 # ----------------------------------------------------------------------------
 # IMAGE DEFINITION: match training/test environment
@@ -99,7 +100,6 @@ image = (
         "sacrebleu>=2.3.0",
         "rouge-score>=0.1.2",
     )
-    .pip_install("flash-attn", extra_options="--no-build-isolation")
     .run_commands(
         "python -c 'import nltk; nltk.download(\"punkt\"); nltk.download(\"wordnet\"); nltk.download(\"omw-1.4\")'"
     )
@@ -135,10 +135,51 @@ def _load_best_step(run_dir: Path) -> int:
         return 0
 
 
+def _ensure_flash_attn_cached() -> None:
+    """Install flash-attn from a cached wheel on the Modal volume, building once if absent."""
+    import subprocess
+    import sys
+
+    cache_dir = FLASH_ATTN_CACHE
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    def _install_from_wheel(wheel_path: Path) -> None:
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", str(wheel_path), "--no-build-isolation"],
+            check=True,
+        )
+
+    wheels = sorted(cache_dir.glob("flash_attn*.whl"))
+    if wheels:
+        wheel = wheels[-1]
+        print(f"[modal_infer] Installing cached flash-attn wheel → {wheel.name}")
+        _install_from_wheel(wheel)
+        return
+
+    print("[modal_infer] flash-attn wheel cache empty; compiling once for reuse")
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "wheel",
+            "flash-attn",
+            "--no-build-isolation",
+            "-w",
+            str(cache_dir),
+        ],
+        check=True,
+    )
+    wheels = sorted(cache_dir.glob("flash_attn*.whl"))
+    if not wheels:
+        raise RuntimeError("flash-attn wheel build failed; no wheel found in cache")
+    _install_from_wheel(wheels[-1])
+
+
 @app.function(
     gpu="L4",
-    cpu=12.0,
-    memory=32768,
+    cpu=32.0,
+    memory=131072,
     image=image,
     volumes={"/data": volume},
     timeout=7200,
@@ -169,6 +210,8 @@ def run_modal_inference(
     os.environ["TORCH_HOME"] = f"{model_cache_dir}/torch"
     os.environ["XDG_CACHE_HOME"] = model_cache_dir
     os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
+    _ensure_flash_attn_cached()
 
     src_path = "/root/src"
     encoder_decoder_path = "/root/src/encoder-decoder"
@@ -226,6 +269,16 @@ def run_modal_inference(
             if key in config:
                 runtime_config[key] = config[key]
 
+        advanced_metric_flags = {
+            "eval_caption_rougel": True,
+            "eval_caption_meteor": True,
+            "eval_det_area_rougel": True,
+            "eval_det_area_meteor": True,
+            "eval_det_object_rougel": True,
+            "eval_det_object_meteor": True,
+        }
+        runtime_config.update(advanced_metric_flags)
+
         feature_dirs = config.get("feature_dirs", [])
         token2path = collect_feature_tokens(feature_dirs)
         if not token2path:
@@ -238,6 +291,12 @@ def run_modal_inference(
         artifact_root = output_dir / "artifacts"
         artifact_root.mkdir(parents=True, exist_ok=True)
         print(f"[modal_infer] Output directory: {output_dir}")
+
+        try:
+            rel_output_dir = output_dir.relative_to(Path("/data"))
+            rel_output_dir_str = rel_output_dir.as_posix()
+        except ValueError:
+            rel_output_dir_str = ""
 
         best_step = _load_best_step(run_dir)
         amp_mode = config.get("mixed_precision", "no").lower()
@@ -290,6 +349,8 @@ def run_modal_inference(
             "results_file": str(results_path),
             "metrics_file": str(summary_path),
             "artifacts_dir": str(artifact_root),
+            "output_dir": str(output_dir),
+            "volume_rel_output_dir": rel_output_dir_str,
         }
     finally:
         volume.commit()
@@ -307,6 +368,8 @@ def main(sample_count: int = 0, dataset_mode: str = "", epoch_label: str = "moda
     print("MODAL INFERENCE SUMMARY")
     print("=" * 80)
     print(result)
+
+    _ = (result or {}).get("volume_rel_output_dir")  # kept for future automation hooks
 
 
 if __name__ == "__main__":

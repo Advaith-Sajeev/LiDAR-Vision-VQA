@@ -1,0 +1,29 @@
+{
+  "sample_token": "9982c058eb4a41be80470395d6ad68bc",
+  "dataset_type": "caption",
+  "question": "This is the car's front view. What is the content of the current scene? Please focus on topics related to driving.",
+  "ground_truth": "The scene shows a busy city street with a person walking across the street, while a car is waiting for them to finish crossing. There are multiple cars and a truck on the street, indicating that it is a bustling urban area. The presence of a traffic light suggests that the street is regulated by traffic rules, and the pedestrian is likely following the traffic signal to safely cross the street.",
+  "prediction": "The current scene shows a busy city street with a mix of cars and trucks driving in both directions. There are traffic lights at the intersection, which help regulate the flow of traffic. The street is lined with tall buildings, indicating that the scene takes place in an urban area. The presence of multiple vehicles and traffic lights suggests that the street is a major thoroughfare in the city, possibly a main route for commuting or commercial purposes.",
+  "metrics": {
+    "exact_match": false,
+    "precision": 0.48717948717948717,
+    "recall": 0.5352112676056338,
+    "f1": 0.5100671140939597,
+    "prediction_len": 78,
+    "ground_truth_len": 71,
+    "token_overlap": 38
+  },
+  "sequence_id": 34,
+  "created_at": "2025-12-08T13:00:12Z",
+  "artifacts": {
+    "copied_bev_file": "bev_9982c058eb4a41be80470395d6ad68bc.npy",
+    "copied_image_files": [
+      "00_CAM_FRONT_n015-2018-09-25-11-10-38+0800__CAM_FRONT__1537845251262460.jpg",
+      "01_CAM_FRONT_RIGHT_n015-2018-09-25-11-10-38+0800__CAM_FRONT_RIGHT__1537845251270339.jpg",
+      "02_CAM_FRONT_LEFT_n015-2018-09-25-11-10-38+0800__CAM_FRONT_LEFT__1537845251254844.jpg",
+      "03_CAM_BACK_n015-2018-09-25-11-10-38+0800__CAM_BACK__1537845251287525.jpg",
+      "04_CAM_BACK_RIGHT_n015-2018-09-25-11-10-38+0800__CAM_BACK_RIGHT__1537845251277893.jpg",
+      "05_CAM_BACK_LEFT_n015-2018-09-25-11-10-38+0800__CAM_BACK_LEFT__1537845251297423.jpg"
+    ]
+  }
+}

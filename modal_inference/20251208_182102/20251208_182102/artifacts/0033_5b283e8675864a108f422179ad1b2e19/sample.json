@@ -1,0 +1,29 @@
+{
+  "sample_token": "5b283e8675864a108f422179ad1b2e19",
+  "dataset_type": "caption",
+  "question": "This is the car's front view. From the current scene, identify any potential challenges a driver might face.",
+  "ground_truth": "A potential challenge a driver might face in this scene is the presence of multiple vehicles, including a truck and a car, driving down the wet road. Wet roads can be slippery and more challenging to navigate, increasing the risk of accidents. Drivers need to be cautious and maintain a safe distance from other vehicles to avoid collisions. Additionally, the driver should be aware of the weather conditions, as rain can make the road surface even more slippery and reduce visibility. It is essential to drive at a slower speed, use headlights, and avoid distractions to ensure safe driving in such conditions.",
+  "prediction": "A potential challenge a driver might face in this scene is the presence of a large truck, which is driving down the street. The truck is a significant vehicle, and its size and weight can make it more difficult to maneuver in tight spaces or when changing lanes. Additionally, the driver of the truck must be cautious of other vehicles, pedestrians, and cyclists sharing the road, as the truck's size and visibility can be limited. The driver must also be aware of the weather conditions, as rain can make the road slippery and visibility reduced.",
+  "metrics": {
+    "exact_match": false,
+    "precision": 0.5684210526315789,
+    "recall": 0.5294117647058824,
+    "f1": 0.5482233502538072,
+    "prediction_len": 95,
+    "ground_truth_len": 102,
+    "token_overlap": 54
+  },
+  "sequence_id": 33,
+  "created_at": "2025-12-08T13:00:11Z",
+  "artifacts": {
+    "copied_bev_file": "bev_5b283e8675864a108f422179ad1b2e19.npy",
+    "copied_image_files": [
+      "00_CAM_FRONT_n008-2018-09-18-14-54-39-0400__CAM_FRONT__1537297538912404.jpg",
+      "01_CAM_FRONT_RIGHT_n008-2018-09-18-14-54-39-0400__CAM_FRONT_RIGHT__1537297538920482.jpg",
+      "02_CAM_FRONT_LEFT_n008-2018-09-18-14-54-39-0400__CAM_FRONT_LEFT__1537297538904799.jpg",
+      "03_CAM_BACK_n008-2018-09-18-14-54-39-0400__CAM_BACK__1537297538937558.jpg",
+      "04_CAM_BACK_RIGHT_n008-2018-09-18-14-54-39-0400__CAM_BACK_RIGHT__1537297538928113.jpg",
+      "05_CAM_BACK_LEFT_n008-2018-09-18-14-54-39-0400__CAM_BACK_LEFT__1537297538947405.jpg"
+    ]
+  }
+}

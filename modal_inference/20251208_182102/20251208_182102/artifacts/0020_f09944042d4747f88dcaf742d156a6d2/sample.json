@@ -1,0 +1,29 @@
+{
+  "sample_token": "f09944042d4747f88dcaf742d156a6d2",
+  "dataset_type": "caption",
+  "question": "This is the car's front left view. Provide an overview of the surrounding landscape or environment.",
+  "ground_truth": "The scene shows a large building with a window, located in a city setting. The building is situated next to a parking lot, and there are cars parked in the lot. The environment suggests an urban area with commercial or office buildings, and the presence of the parking lot indicates that the area is likely a busy one.",
+  "prediction": "The scene shows a street scene with a car driving down the road, surrounded by a city environment. There are buildings and trees in the background, indicating that the car is in an urban area. The weather appears to be sunny, and the time of the day is likely daytime.",
+  "metrics": {
+    "exact_match": false,
+    "precision": 0.56,
+    "recall": 0.4827586206896552,
+    "f1": 0.5185185185185185,
+    "prediction_len": 50,
+    "ground_truth_len": 58,
+    "token_overlap": 28
+  },
+  "sequence_id": 20,
+  "created_at": "2025-12-08T13:00:11Z",
+  "artifacts": {
+    "copied_bev_file": "bev_f09944042d4747f88dcaf742d156a6d2.npy",
+    "copied_image_files": [
+      "00_CAM_FRONT_n015-2018-08-03-15-00-36+0800__CAM_FRONT__1533280285412460.jpg",
+      "01_CAM_FRONT_RIGHT_n015-2018-08-03-15-00-36+0800__CAM_FRONT_RIGHT__1533280285420339.jpg",
+      "02_CAM_FRONT_LEFT_n015-2018-08-03-15-00-36+0800__CAM_FRONT_LEFT__1533280285404844.jpg",
+      "03_CAM_BACK_n015-2018-08-03-15-00-36+0800__CAM_BACK__1533280285437525.jpg",
+      "04_CAM_BACK_RIGHT_n015-2018-08-03-15-00-36+0800__CAM_BACK_RIGHT__1533280285427893.jpg",
+      "05_CAM_BACK_LEFT_n015-2018-08-03-15-00-36+0800__CAM_BACK_LEFT__1533280285447423.jpg"
+    ]
+  }
+}

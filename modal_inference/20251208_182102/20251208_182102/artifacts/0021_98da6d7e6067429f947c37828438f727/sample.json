@@ -1,0 +1,29 @@
+{
+  "sample_token": "98da6d7e6067429f947c37828438f727",
+  "dataset_type": "caption",
+  "question": "This is the car's front left view. In terms of driving, which elements in the current scene would demand the most attention or immediate action?",
+  "ground_truth": "In the scene, there are several elements that would demand attention from a driver. First, the presence of a fire hydrant on the side of the road indicates that it is a regulated area, and drivers must be cautious when passing by. Second, the wet road conditions suggest that the area has recently experienced rain or is currently experiencing rain, which can make driving more challenging due to reduced traction and increased risk of hydroplaning. Drivers should exercise caution and adjust their driving speed accordingly to ensure safe navigation through the area.",
+  "prediction": "In the scene, there are several elements that would demand attention from a driver. The first is the presence of a car on the road, which would require the driver to be cautious and maintain a safe distance from the vehicle. The second element is the presence of a stop sign, which indicates that the driver must come to a complete stop at the intersection. The driver should also be aware of any pedestrians or cyclists in the area, as there are two people visible in the scene. The driver should be prepared to yield to pedestrians and cyclists, and should also be mindful of any traffic lights or other traffic signs in the area. The presence of",
+  "metrics": {
+    "exact_match": false,
+    "precision": 0.3813559322033898,
+    "recall": 0.4891304347826087,
+    "f1": 0.4285714285714285,
+    "prediction_len": 118,
+    "ground_truth_len": 92,
+    "token_overlap": 45
+  },
+  "sequence_id": 21,
+  "created_at": "2025-12-08T13:00:11Z",
+  "artifacts": {
+    "copied_bev_file": "bev_98da6d7e6067429f947c37828438f727.npy",
+    "copied_image_files": [
+      "00_CAM_FRONT_n008-2018-09-18-13-10-39-0400__CAM_FRONT__1537290909412404.jpg",
+      "01_CAM_FRONT_RIGHT_n008-2018-09-18-13-10-39-0400__CAM_FRONT_RIGHT__1537290909420482.jpg",
+      "02_CAM_FRONT_LEFT_n008-2018-09-18-13-10-39-0400__CAM_FRONT_LEFT__1537290909404799.jpg",
+      "03_CAM_BACK_n008-2018-09-18-13-10-39-0400__CAM_BACK__1537290909437558.jpg",
+      "04_CAM_BACK_RIGHT_n008-2018-09-18-13-10-39-0400__CAM_BACK_RIGHT__1537290909428113.jpg",
+      "05_CAM_BACK_LEFT_n008-2018-09-18-13-10-39-0400__CAM_BACK_LEFT__1537290909447405.jpg"
+    ]
+  }
+}

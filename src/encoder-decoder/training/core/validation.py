@@ -923,6 +923,10 @@ def run_inference_sampling(
         print(f"\nCaption Dashboard ({cap['num_samples']} samples):")
         if "bleu4" in cap:
             print(f"  BLEU-4:       {cap['bleu4']:.4f}")
+        if "rouge_l" in cap:
+            print(f"  ROUGE-L:      {cap['rouge_l']:.4f}")
+        if "meteor" in cap:
+            print(f"  METEOR:       {cap['meteor']:.4f}")
         if "cider" in cap:
             print(f"  CIDEr:        {cap['cider']:.4f}")
         if "spice" in cap:
@@ -935,11 +939,15 @@ def run_inference_sampling(
         print(f"\nGrounding det_area Dashboard ({gnd['num_samples']} samples):")
         
         # Print text quality metrics if any are enabled
-        text_metrics = [k for k in ["bleu4", "cider", "spice", "bertscore_f1"] if k in gnd]
+        text_metrics = [k for k in ["bleu4", "rouge_l", "meteor", "cider", "spice", "bertscore_f1"] if k in gnd]
         if text_metrics:
             print(f"  Text Quality:")
             if "bleu4" in gnd:
                 print(f"    BLEU-4:       {gnd['bleu4']:.4f}")
+            if "rouge_l" in gnd:
+                print(f"    ROUGE-L:      {gnd['rouge_l']:.4f}")
+            if "meteor" in gnd:
+                print(f"    METEOR:       {gnd['meteor']:.4f}")
             if "cider" in gnd:
                 print(f"    CIDEr:        {gnd['cider']:.4f}")
             if "spice" in gnd:
@@ -962,11 +970,15 @@ def run_inference_sampling(
         print(f"\nGrounding det_object Dashboard ({obj['num_samples']} samples):")
         
         # Print text quality metrics if any are enabled
-        text_metrics = [k for k in ["bleu4", "cider", "spice", "bertscore_f1"] if k in obj]
+        text_metrics = [k for k in ["bleu4", "rouge_l", "meteor", "cider", "spice", "bertscore_f1"] if k in obj]
         if text_metrics:
             print(f"  Text Quality:")
             if "bleu4" in obj:
                 print(f"    BLEU-4:       {obj['bleu4']:.4f}")
+            if "rouge_l" in obj:
+                print(f"    ROUGE-L:      {obj['rouge_l']:.4f}")
+            if "meteor" in obj:
+                print(f"    METEOR:       {obj['meteor']:.4f}")
             if "cider" in obj:
                 print(f"    CIDEr:        {obj['cider']:.4f}")
             if "spice" in obj:

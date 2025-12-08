@@ -1,0 +1,29 @@
+{
+  "sample_token": "b81e52b232ba4c59aeaeced962b202f0",
+  "dataset_type": "caption",
+  "question": "This is the car's front view. Provide a general summary of the road conditions and any environmental factors that might impact the driving scenario.",
+  "ground_truth": "The road appears to be wet, which could potentially impact the driving scenario. Wet roads can be slippery and lead to reduced traction, making it more difficult for drivers to maintain control of their vehicles. Additionally, the presence of trees and grass along the roadside suggests that the area might be more prone to flooding during heavy rainfall. This could also impact the driving conditions, as water on the road could cause hydroplaning or make the road slippery.",
+  "prediction": "The road conditions in the scene are clear and dry, with a sunny day. There are no visible environmental factors that would significantly impact the driving scenario.",
+  "metrics": {
+    "exact_match": false,
+    "precision": 0.3333333333333333,
+    "recall": 0.11538461538461539,
+    "f1": 0.17142857142857146,
+    "prediction_len": 27,
+    "ground_truth_len": 78,
+    "token_overlap": 9
+  },
+  "sequence_id": 27,
+  "created_at": "2025-12-08T13:00:11Z",
+  "artifacts": {
+    "copied_bev_file": "bev_b81e52b232ba4c59aeaeced962b202f0.npy",
+    "copied_image_files": [
+      "00_CAM_FRONT_n015-2018-07-18-11-18-34+0800__CAM_FRONT__1531884291162461.jpg",
+      "01_CAM_FRONT_RIGHT_n015-2018-07-18-11-18-34+0800__CAM_FRONT_RIGHT__1531884291170339.jpg",
+      "02_CAM_FRONT_LEFT_n015-2018-07-18-11-18-34+0800__CAM_FRONT_LEFT__1531884291154844.jpg",
+      "03_CAM_BACK_n015-2018-07-18-11-18-34+0800__CAM_BACK__1531884291187525.jpg",
+      "04_CAM_BACK_RIGHT_n015-2018-07-18-11-18-34+0800__CAM_BACK_RIGHT__1531884291177893.jpg",
+      "05_CAM_BACK_LEFT_n015-2018-07-18-11-18-34+0800__CAM_BACK_LEFT__1531884291197441.jpg"
+    ]
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "sample_token": "7515f9902702410d8fc8b6d4380d2af4",
+  "dataset_type": "caption",
+  "question": "This is the car's front right view. I want to know the traffic conditions, refer to the current scene, and provide a clear response.",
+  "ground_truth": "The scene shows a street with a traffic light, and there are several cars and trucks stopped at the intersection. The traffic light is red, and the cars and trucks are waiting for it to change to green. The scene suggests that the traffic is moving slowly and following the traffic rules.",
+  "prediction": "The traffic conditions in the scene are relatively calm, with a few cars driving down the street. The street appears to be empty, with no traffic congestion or accidents visible. The weather in the scene is sunny, and the time of day is likely early morning or late afternoon, as the street is not crowded with people or vehicles.",
+  "metrics": {
+    "exact_match": false,
+    "precision": 0.3389830508474576,
+    "recall": 0.38461538461538464,
+    "f1": 0.3603603603603604,
+    "prediction_len": 59,
+    "ground_truth_len": 52,
+    "token_overlap": 20
+  },
+  "sequence_id": 4,
+  "created_at": "2025-12-08T13:00:09Z",
+  "artifacts": {
+    "copied_bev_file": "bev_7515f9902702410d8fc8b6d4380d2af4.npy",
+    "copied_image_files": [
+      "00_CAM_FRONT_n008-2018-07-27-12-07-38-0400__CAM_FRONT__1532708334912404.jpg",
+      "01_CAM_FRONT_RIGHT_n008-2018-07-27-12-07-38-0400__CAM_FRONT_RIGHT__1532708334920482.jpg",
+      "02_CAM_FRONT_LEFT_n008-2018-07-27-12-07-38-0400__CAM_FRONT_LEFT__1532708334904799.jpg",
+      "03_CAM_BACK_n008-2018-07-27-12-07-38-0400__CAM_BACK__1532708334937558.jpg",
+      "04_CAM_BACK_RIGHT_n008-2018-07-27-12-07-38-0400__CAM_BACK_RIGHT__1532708334928113.jpg",
+      "05_CAM_BACK_LEFT_n008-2018-07-27-12-07-38-0400__CAM_BACK_LEFT__1532708334947405.jpg"
+    ]
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "sample_token": "400814e4e6564ccfbae1cb1d23df93f0",
+  "dataset_type": "caption",
+  "question": "This is the car's front left view. In terms of driving, which elements in the current scene would demand the most attention or immediate action?",
+  "ground_truth": "In the scene, there are several elements that would demand attention or immediate action while driving. These include the presence of a large blue and white umbrella, which could be a sign of rain or a temporary obstruction on the road. The umbrella is located near the building, so it is essential to be cautious and adjust driving speed accordingly. Additionally, there are two cars in the scene, which means that drivers should be aware of their surroundings and maintain a safe distance from other vehicles. The presence of a stop sign also indicates that drivers should be prepared to stop at the intersection, ensuring that they yield to other road users and pedestrians.",
+  "prediction": "In the scene, there are several elements that would demand attention from a driver. The first is the presence of a car on the road, which would require the driver to be cautious and maintain a safe distance from the vehicle. The second element is the presence of a stop sign, which indicates that the driver must come to a complete stop at the intersection. The driver should also be aware of any pedestrians or cyclists in the area, as there are two people visible in the scene. The driver should be prepared to yield to pedestrians and cyclists, and should also be mindful of any traffic lights or other traffic signs in the area. The presence of",
+  "metrics": {
+    "exact_match": false,
+    "precision": 0.5677966101694916,
+    "recall": 0.5877192982456141,
+    "f1": 0.5775862068965517,
+    "prediction_len": 118,
+    "ground_truth_len": 114,
+    "token_overlap": 67
+  },
+  "sequence_id": 6,
+  "created_at": "2025-12-08T13:00:10Z",
+  "artifacts": {
+    "copied_bev_file": "bev_400814e4e6564ccfbae1cb1d23df93f0.npy",
+    "copied_image_files": [
+      "00_CAM_FRONT_n015-2018-08-03-15-00-36+0800__CAM_FRONT__1533279676162460.jpg",
+      "01_CAM_FRONT_RIGHT_n015-2018-08-03-15-00-36+0800__CAM_FRONT_RIGHT__1533279676170339.jpg",
+      "02_CAM_FRONT_LEFT_n015-2018-08-03-15-00-36+0800__CAM_FRONT_LEFT__1533279676154844.jpg",
+      "03_CAM_BACK_n015-2018-08-03-15-00-36+0800__CAM_BACK__1533279676187525.jpg",
+      "04_CAM_BACK_RIGHT_n015-2018-08-03-15-00-36+0800__CAM_BACK_RIGHT__1533279676177893.jpg",
+      "05_CAM_BACK_LEFT_n015-2018-08-03-15-00-36+0800__CAM_BACK_LEFT__1533279676197423.jpg"
+    ]
+  }
+}

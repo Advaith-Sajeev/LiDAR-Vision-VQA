@@ -1,0 +1,29 @@
+{
+  "sample_token": "aea45ea8b76a4a338717e6526afe6f79",
+  "dataset_type": "caption",
+  "question": "This is the car's front left view. Considering the driving perspective, which elements in the scene appear to be the most crucial?",
+  "ground_truth": "From the driving perspective, the most crucial elements in the scene are the traffic lights and the vehicles. The traffic lights indicate when to stop or proceed, ensuring the smooth flow of traffic and preventing accidents. The vehicles, including the bus and the car, are essential for transportation and movement within the city. The presence of these elements is vital for the safe and efficient functioning of the urban environment.",
+  "prediction": "From the driving perspective, the most crucial elements in the scene are the traffic lights and the street signs. Traffic lights indicate when to stop or proceed, ensuring the safe flow of traffic and preventing accidents. Street signs provide essential information about street names, directions, and regulations, helping drivers navigate the area and avoid getting lost. In the scene, there are multiple traffic lights and street signs, which are essential for maintaining order and safety on the road.",
+  "metrics": {
+    "exact_match": false,
+    "precision": 0.5512820512820513,
+    "recall": 0.6142857142857143,
+    "f1": 0.581081081081081,
+    "prediction_len": 78,
+    "ground_truth_len": 70,
+    "token_overlap": 43
+  },
+  "sequence_id": 39,
+  "created_at": "2025-12-08T13:00:12Z",
+  "artifacts": {
+    "copied_bev_file": "bev_aea45ea8b76a4a338717e6526afe6f79.npy",
+    "copied_image_files": [
+      "00_CAM_FRONT_n008-2018-08-28-16-16-48-0400__CAM_FRONT__1535488191662404.jpg",
+      "01_CAM_FRONT_RIGHT_n008-2018-08-28-16-16-48-0400__CAM_FRONT_RIGHT__1535488191670482.jpg",
+      "02_CAM_FRONT_LEFT_n008-2018-08-28-16-16-48-0400__CAM_FRONT_LEFT__1535488191654799.jpg",
+      "03_CAM_BACK_n008-2018-08-28-16-16-48-0400__CAM_BACK__1535488191687558.jpg",
+      "04_CAM_BACK_RIGHT_n008-2018-08-28-16-16-48-0400__CAM_BACK_RIGHT__1535488191678113.jpg",
+      "05_CAM_BACK_LEFT_n008-2018-08-28-16-16-48-0400__CAM_BACK_LEFT__1535488191697405.jpg"
+    ]
+  }
+}

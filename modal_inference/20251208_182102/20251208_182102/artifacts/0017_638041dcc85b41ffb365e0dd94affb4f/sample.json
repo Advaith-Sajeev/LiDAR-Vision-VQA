@@ -1,0 +1,29 @@
+{
+  "sample_token": "638041dcc85b41ffb365e0dd94affb4f",
+  "dataset_type": "caption",
+  "question": "This is the car's back left view. Can you provide a description for the road scene such that it sets it apart from others?",
+  "ground_truth": "The road scene is set in a city, with a tree-lined street and a park nearby. The street is empty, with no cars or pedestrians visible. The park is a large, open space with a grassy field and a few benches scattered throughout. The scene is peaceful and serene, with the park providing a pleasant contrast to the busy city environment.",
+  "prediction": "The road scene is set in a city, with a busy street filled with cars and a mix of vehicles, including a truck and a car. The street is lined with trees, which adds a touch of greenery to the urban environment. The presence of a traffic light indicates that the street is regulated for safety and traffic flow. The scene is not particularly unique, as many cities have busy streets with traffic lights and trees lining the sides. However, the combination of the busy street, the traffic light, and the presence of trees creates a sense of a bustling city environment.",
+  "metrics": {
+    "exact_match": false,
+    "precision": 0.3627450980392157,
+    "recall": 0.6065573770491803,
+    "f1": 0.4539877300613497,
+    "prediction_len": 102,
+    "ground_truth_len": 61,
+    "token_overlap": 37
+  },
+  "sequence_id": 17,
+  "created_at": "2025-12-08T13:00:10Z",
+  "artifacts": {
+    "copied_bev_file": "bev_638041dcc85b41ffb365e0dd94affb4f.npy",
+    "copied_image_files": [
+      "00_CAM_FRONT_n008-2018-08-28-16-16-48-0400__CAM_FRONT__1535487530662404.jpg",
+      "01_CAM_FRONT_RIGHT_n008-2018-08-28-16-16-48-0400__CAM_FRONT_RIGHT__1535487530670482.jpg",
+      "02_CAM_FRONT_LEFT_n008-2018-08-28-16-16-48-0400__CAM_FRONT_LEFT__1535487530654799.jpg",
+      "03_CAM_BACK_n008-2018-08-28-16-16-48-0400__CAM_BACK__1535487530687558.jpg",
+      "04_CAM_BACK_RIGHT_n008-2018-08-28-16-16-48-0400__CAM_BACK_RIGHT__1535487530678113.jpg",
+      "05_CAM_BACK_LEFT_n008-2018-08-28-16-16-48-0400__CAM_BACK_LEFT__1535487530697405.jpg"
+    ]
+  }
+}

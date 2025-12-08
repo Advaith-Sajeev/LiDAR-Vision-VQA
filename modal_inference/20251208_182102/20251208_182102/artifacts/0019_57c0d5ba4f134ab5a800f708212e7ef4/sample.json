@@ -1,0 +1,29 @@
+{
+  "sample_token": "57c0d5ba4f134ab5a800f708212e7ef4",
+  "dataset_type": "caption",
+  "question": "This is the car's front right view. Provide a general summary of the road conditions and any environmental factors that might impact the driving scenario.",
+  "ground_truth": "The road conditions appear to be clear and dry, with no visible obstructions or debris on the road. There are no environmental factors that would significantly impact the driving scenario, such as heavy rain, fog, or snow. The scene shows a street with a sidewalk, a traffic light, and a set of stairs. The weather appears to be sunny, and the time of the day is likely daytime.",
+  "prediction": "The road conditions in the scene are clear and dry, with no visible obstructions or debris on the road. The environment appears to be urban, with a street sign and a traffic light visible in the scene. The presence of a traffic light suggests that the area is likely a busy intersection, which could impact the driving scenario by requiring drivers to be more cautious and attentive to the traffic signals.",
+  "metrics": {
+    "exact_match": false,
+    "precision": 0.5915492957746479,
+    "recall": 0.6176470588235294,
+    "f1": 0.60431654676259,
+    "prediction_len": 71,
+    "ground_truth_len": 68,
+    "token_overlap": 42
+  },
+  "sequence_id": 19,
+  "created_at": "2025-12-08T13:00:11Z",
+  "artifacts": {
+    "copied_bev_file": "bev_57c0d5ba4f134ab5a800f708212e7ef4.npy",
+    "copied_image_files": [
+      "00_CAM_FRONT_n015-2018-08-01-16-41-59+0800__CAM_FRONT__1533113245362460.jpg",
+      "01_CAM_FRONT_RIGHT_n015-2018-08-01-16-41-59+0800__CAM_FRONT_RIGHT__1533113245370339.jpg",
+      "02_CAM_FRONT_LEFT_n015-2018-08-01-16-41-59+0800__CAM_FRONT_LEFT__1533113245354844.jpg",
+      "03_CAM_BACK_n015-2018-08-01-16-41-59+0800__CAM_BACK__1533113245387525.jpg",
+      "04_CAM_BACK_RIGHT_n015-2018-08-01-16-41-59+0800__CAM_BACK_RIGHT__1533113245377893.jpg",
+      "05_CAM_BACK_LEFT_n015-2018-08-01-16-41-59+0800__CAM_BACK_LEFT__1533113245397430.jpg"
+    ]
+  }
+}

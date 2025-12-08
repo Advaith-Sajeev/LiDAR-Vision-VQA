@@ -1,0 +1,29 @@
+{
+  "sample_token": "93f4f8ac1145418cadcf14dfd2a9cf78",
+  "dataset_type": "caption",
+  "question": "This is the car's front view. In terms of driving, which elements in the current scene would demand the most attention or immediate action?",
+  "ground_truth": "In the scene, there is a person riding a motorcycle and a car nearby. The most important elements that would demand attention or immediate action are the motorcyclist's hand signaling and the car's position. The motorcyclist is giving a \"hang loose\" hand signal, which indicates that they are about to turn left. The car should be aware of this signal and prepare to yield to the motorcyclist, as they are making a left turn. The driver of the car should also be cautious and attentive to the motorcyclist's movements to avoid any potential accidents.",
+  "prediction": "In the scene, there are several elements that would demand attention from the driver. The first is the presence of a traffic light, which indicates that the driver must stop or proceed according to the light's signal. The driver should be attentive to the light's color and timing to ensure they follow the rules of the road and avoid accidents. The second element is the presence of a car in the distance, which suggests that the driver should be cautious and maintain a safe distance from other vehicles to avoid collisions. The driver should also be aware of their speed and adjust it accordingly to maintain a safe driving speed. Additionally, the driver should be mindful of",
+  "metrics": {
+    "exact_match": false,
+    "precision": 0.452991452991453,
+    "recall": 0.5638297872340425,
+    "f1": 0.5023696682464455,
+    "prediction_len": 117,
+    "ground_truth_len": 94,
+    "token_overlap": 53
+  },
+  "sequence_id": 32,
+  "created_at": "2025-12-08T13:00:11Z",
+  "artifacts": {
+    "copied_bev_file": "bev_93f4f8ac1145418cadcf14dfd2a9cf78.npy",
+    "copied_image_files": [
+      "00_CAM_FRONT_n015-2018-11-21-19-38-26+0800__CAM_FRONT__1542801001912460.jpg",
+      "01_CAM_FRONT_RIGHT_n015-2018-11-21-19-38-26+0800__CAM_FRONT_RIGHT__1542801001920344.jpg",
+      "02_CAM_FRONT_LEFT_n015-2018-11-21-19-38-26+0800__CAM_FRONT_LEFT__1542801001904844.jpg",
+      "03_CAM_BACK_n015-2018-11-21-19-38-26+0800__CAM_BACK__1542801001937525.jpg",
+      "04_CAM_BACK_RIGHT_n015-2018-11-21-19-38-26+0800__CAM_BACK_RIGHT__1542801001927893.jpg",
+      "05_CAM_BACK_LEFT_n015-2018-11-21-19-38-26+0800__CAM_BACK_LEFT__1542801001947423.jpg"
+    ]
+  }
+}

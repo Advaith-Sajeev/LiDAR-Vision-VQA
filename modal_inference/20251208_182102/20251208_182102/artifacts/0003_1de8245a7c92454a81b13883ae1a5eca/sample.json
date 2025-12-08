@@ -1,0 +1,29 @@
+{
+  "sample_token": "1de8245a7c92454a81b13883ae1a5eca",
+  "dataset_type": "caption",
+  "question": "This is the car's front left view. Describe the traffic conditions.",
+  "ground_truth": "The traffic conditions in the scene are relatively calm, with only a few cars and a motorcycle on the road. The motorcyclist is riding down the street, and there are no signs of heavy traffic or congestion.",
+  "prediction": "The traffic conditions in the scene are relatively calm, with a few cars driving down the street. There are no indications of heavy traffic or congestion, and the weather appears to be clear and sunny.",
+  "metrics": {
+    "exact_match": false,
+    "precision": 0.7142857142857143,
+    "recall": 0.6756756756756757,
+    "f1": 0.6944444444444444,
+    "prediction_len": 35,
+    "ground_truth_len": 37,
+    "token_overlap": 25
+  },
+  "sequence_id": 3,
+  "created_at": "2025-12-08T13:00:09Z",
+  "artifacts": {
+    "copied_bev_file": "bev_1de8245a7c92454a81b13883ae1a5eca.npy",
+    "copied_image_files": [
+      "00_CAM_FRONT_n015-2018-07-18-11-50-34+0800__CAM_FRONT__1531886246512465.jpg",
+      "01_CAM_FRONT_RIGHT_n015-2018-07-18-11-50-34+0800__CAM_FRONT_RIGHT__1531886246520339.jpg",
+      "02_CAM_FRONT_LEFT_n015-2018-07-18-11-50-34+0800__CAM_FRONT_LEFT__1531886246504844.jpg",
+      "03_CAM_BACK_n015-2018-07-18-11-50-34+0800__CAM_BACK__1531886246537525.jpg",
+      "04_CAM_BACK_RIGHT_n015-2018-07-18-11-50-34+0800__CAM_BACK_RIGHT__1531886246527893.jpg",
+      "05_CAM_BACK_LEFT_n015-2018-07-18-11-50-34+0800__CAM_BACK_LEFT__1531886246547423.jpg"
+    ]
+  }
+}

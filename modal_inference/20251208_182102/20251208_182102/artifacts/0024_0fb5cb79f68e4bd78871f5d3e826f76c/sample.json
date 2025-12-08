@@ -1,0 +1,29 @@
+{
+  "sample_token": "0fb5cb79f68e4bd78871f5d3e826f76c",
+  "dataset_type": "caption",
+  "question": "This is the car's front right view. What is the content of the current scene? Please focus on topics related to driving.",
+  "ground_truth": "The current scene shows a street with a parked car on the side of the road. There are also several people walking along the sidewalk, some of them carrying handbags. The street is lined with trees, providing a pleasant atmosphere. The scene does not depict any traffic or driving-related elements.",
+  "prediction": "The current scene shows a busy street with cars driving in both directions. There are multiple cars on the road, some of which are closer to the camera, while others are further away. The street appears to be a typical urban environment with traffic lights and other road infrastructure.",
+  "metrics": {
+    "exact_match": false,
+    "precision": 0.3877551020408163,
+    "recall": 0.38,
+    "f1": 0.3838383838383838,
+    "prediction_len": 49,
+    "ground_truth_len": 50,
+    "token_overlap": 19
+  },
+  "sequence_id": 24,
+  "created_at": "2025-12-08T13:00:11Z",
+  "artifacts": {
+    "copied_bev_file": "bev_0fb5cb79f68e4bd78871f5d3e826f76c.npy",
+    "copied_image_files": [
+      "00_CAM_FRONT_n008-2018-08-21-11-53-44-0400__CAM_FRONT__1534867336412404.jpg",
+      "01_CAM_FRONT_RIGHT_n008-2018-08-21-11-53-44-0400__CAM_FRONT_RIGHT__1534867336420482.jpg",
+      "02_CAM_FRONT_LEFT_n008-2018-08-21-11-53-44-0400__CAM_FRONT_LEFT__1534867336404799.jpg",
+      "03_CAM_BACK_n008-2018-08-21-11-53-44-0400__CAM_BACK__1534867336437558.jpg",
+      "04_CAM_BACK_RIGHT_n008-2018-08-21-11-53-44-0400__CAM_BACK_RIGHT__1534867336428115.jpg",
+      "05_CAM_BACK_LEFT_n008-2018-08-21-11-53-44-0400__CAM_BACK_LEFT__1534867336447405.jpg"
+    ]
+  }
+}
