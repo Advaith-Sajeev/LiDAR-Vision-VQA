@@ -95,11 +95,14 @@ image = (
         "optimum>=1.15.0",
         "pytest>=7.4.0",
         "pytest-cov>=4.1.0",
+        "nltk>=3.8.1",
         "sacrebleu>=2.3.0",
         "rouge-score>=0.1.2",
     )
     .pip_install("flash-attn", extra_options="--no-build-isolation")
-    .run_commands("python -c 'import nltk; nltk.download(\"punkt\"); nltk.download(\"wordnet\")'")
+    .run_commands(
+        "python -c 'import nltk; nltk.download(\"punkt\"); nltk.download(\"wordnet\"); nltk.download(\"omw-1.4\")'"
+    )
     .add_local_dir(
         local_path="./src",
         remote_path="/root/src",
