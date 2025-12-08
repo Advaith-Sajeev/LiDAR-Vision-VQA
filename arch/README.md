@@ -45,3 +45,14 @@ When adding new diagrams:
 - Include labels for tensor dimensions
 - Provide legends for component types
 - Save in both PNG (for README) and source format (e.g., .drawio, .pptx)
+
+### File Naming Conventions
+- Use descriptive snake_case names: `system_architecture.png`, `vat_vision_detail.png`
+- Include version numbers if iterating: `lidar_pipeline_v2.png`
+- Keep source files with same base name: `system_architecture.drawio`
+
+### Image Guidelines
+- **Format**: PNG with transparent background where applicable
+- **Dimensions**: Max 2000px width for detailed diagrams, 1200px for overview diagrams
+- **Resolution**: 150 DPI minimum for clarity
+- **File Size**: Optimize to keep under 500KB per image

@@ -155,7 +155,7 @@ The core multimodal fusion and language generation module:
 ```
 
 #### **Language Model Integration**
-- Base LLM: Qwen2.5 (0.5B/1.5B/3B variants supported, 3B used in production)
+- Base LLM: Qwen2.5 (0.5B/1.5B/3B variants supported, 3B recommended for Modal)
 - LoRA adaptation for efficient fine-tuning
 - Flash Attention 2 for faster training
 - Quantization support (4-bit, 8-bit)
