@@ -1,9 +1,9 @@
 # 🚗 LiDAR-Vision-VQA: Multimodal Visual Question Answering for Autonomous Driving
 
-[![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/release/python-3110/)
+[![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/release/python-311/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-ee4c2c.svg)](https://pytorch.org/)
 [![CUDA 12.6](https://img.shields.io/badge/CUDA-12.6-76B900.svg)](https://developer.nvidia.com/cuda-toolkit)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
 > A state-of-the-art multimodal Visual Question Answering system that combines LiDAR Bird's Eye View (BEV) features and multi-camera vision for autonomous driving scene understanding.
 
@@ -666,7 +666,7 @@ If you use this work in your research, please cite:
 ```bibtex
 @software{lidar_vision_vqa2024,
   title={LiDAR-Vision-VQA: Multimodal Visual Question Answering for Autonomous Driving},
-  author={Your Name},
+  author={Advaith Sajeev},
   year={2024},
   url={https://github.com/Advaith-Sajeev/LiDAR-Vision-VQA}
 }
@@ -696,13 +696,13 @@ Special thanks to:
 
 - **GitHub Issues**: For bug reports and feature requests
 - **Discussions**: For questions and general discussion
-- **Email**: [your-email@domain.com] (replace with your actual contact)
+- **GitHub**: [@Advaith-Sajeev](https://github.com/Advaith-Sajeev)
 
 ---
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License. See [MIT License](https://opensource.org/licenses/MIT) for details.
 
 ---
 
