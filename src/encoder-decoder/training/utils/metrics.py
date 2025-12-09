@@ -250,12 +250,14 @@ def calculate_caption_metrics(predictions: List[str], references: List[str], con
 
     if needs_meteor:
         try:
-            from nltk.translate.meteor_score import meteor_score
+            from nltk.translate.meteor_score import meteor_score as nltk_meteor_score
         except ImportError:
             print("[metrics] Warning: nltk meteor_score not available. Install nltk>=3.8.1")
-            meteor_score = None
+            meteor_fn = None
+        else:
+            meteor_fn = nltk_meteor_score
     else:
-        meteor_score = None
+        meteor_fn = None
     
     # Filter out empty predictions/references to avoid metric calculation crashes
     # pycocoevalcap and BERTScore can fail or produce undefined results with empty strings
@@ -326,9 +328,12 @@ def calculate_caption_metrics(predictions: List[str], references: List[str], con
         except Exception as e:
             print(f"[metrics] ROUGE-L calculation failed: {e}")
 
-    if needs_meteor and meteor_score is not None:
+    if needs_meteor and meteor_fn is not None:
         try:
-            meteor_scores = [meteor_score([ref], pred) for _, pred, ref in valid_pairs]
+            meteor_scores = [
+                meteor_fn([ref.split()], pred.split())
+                for _, pred, ref in valid_pairs
+            ]
             results["meteor"] = float(np.mean(meteor_scores)) if meteor_scores else 0.0
         except Exception as e:
             print(f"[metrics] METEOR calculation failed: {e}")

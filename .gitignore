@@ -30,3 +30,7 @@ checkpoints/
 
 # gitfiles
 .git 
+
+#inference outputs
+/modal_inference/
+modal_inference.zip

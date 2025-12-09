@@ -271,6 +271,33 @@ def save_inference_artifacts(
     elif vision_requested and sample_token and engine.nusc is None:
         print("[artifacts] Warning: nuScenes handle missing; skipping image copy")
 
+    copied_lidar = None
+    if sample_token and engine.nusc is not None:
+        try:
+            sample_rec = engine.nusc.get("sample", sample_token)
+            lidar_token = (sample_rec.get("data") or {}).get("LIDAR_TOP")
+            if lidar_token:
+                sd_rec = engine.nusc.get("sample_data", lidar_token)
+                lidar_rel = sd_rec.get("filename")
+                if not lidar_rel:
+                    print("[artifacts] Warning: LiDAR sample_data missing filename")
+                else:
+                    dataroot_val = getattr(engine.nusc, "dataroot", None)
+                    if not dataroot_val:
+                        print("[artifacts] Warning: nuScenes dataroot unset; skipping LiDAR copy")
+                    else:
+                        lidar_src = (Path(dataroot_val) / lidar_rel).resolve()
+                        if lidar_src.exists():
+                            lidar_dest = target_dir / f"lidar_{lidar_src.name}"
+                            shutil.copy2(lidar_src, lidar_dest)
+                            copied_lidar = lidar_dest.name
+                        else:
+                            print(f"[artifacts] Warning: LiDAR file missing → {lidar_src}")
+            else:
+                print("[artifacts] Warning: No LIDAR_TOP token on sample")
+        except Exception as exc:
+            print(f"[artifacts] Warning: Failed to copy LiDAR scan: {exc}")
+
     record = dict(sample_payload)
     record.setdefault("sequence_id", seq_id)
     record.setdefault("sample_token", sample_token)
@@ -279,6 +306,7 @@ def save_inference_artifacts(
     record["artifacts"] = {
         "copied_bev_file": copied_bev,
         "copied_image_files": copied_images,
+        "copied_lidar_file": copied_lidar,
     }
 
     with open(target_dir / "sample.json", "w", encoding="utf-8") as f:

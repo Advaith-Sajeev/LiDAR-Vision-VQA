@@ -186,6 +186,10 @@ def get_modal_training_config() -> Dict:
         # For "grounding" mode: must be divisible by 2
         # For "both" mode: must be divisible by 4
         "inference_samples_n": 40,
+        # Optional override used only by src/modal-trainer/modal-infer.py to
+        # control how many samples Modal inference exports without mutating
+        # training/validation configs. When None, falls back to inference_samples_n.
+        "modal_inference_samples_n": 100,
         
         # Test JSON files for inference sampling (used based on dataset_mode)
         # Set to None to disable (safe when not using that mode)

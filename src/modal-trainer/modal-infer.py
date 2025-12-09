@@ -4,9 +4,8 @@
 LiDAR-Vision-LLM Modal Inference Runner :: src/modal-trainer/modal-infer.py
 
 Runs the same validation-time inference sampling loop (with identical logs)
-that Trainer uses between epochs, but as a standalone Modal job. After the
-predictions are generated it also archives every sample's BEV .npy, six camera
-images, and per-sample metadata JSON for offline inspection.
+import modal
+
 
 Usage examples:
     modal run src/modal-trainer/modal-infer.py                       # default config
@@ -42,6 +41,10 @@ def _to_jsonable(obj):
 app = modal.App("lidar-vision-training")
 volume = modal.Volume.from_name("lidar-llm", create_if_missing=False)
 FLASH_ATTN_CACHE = Path("/data/build_cache/flash-attn")
+SPICE_CACHE = Path("/data/model_cache/spice")
+STANFORD_CORENLP_VERSION = "4.5.6"
+STANFORD_CORENLP_ARCHIVE = f"stanford-corenlp-{STANFORD_CORENLP_VERSION}.zip"
+STANFORD_CORENLP_URL = f"https://nlp.stanford.edu/software/{STANFORD_CORENLP_ARCHIVE}"
 
 # ----------------------------------------------------------------------------
 # IMAGE DEFINITION: match training/test environment
@@ -52,6 +55,9 @@ image = (
         add_python="3.11",
     )
     .env({"DEBIAN_FRONTEND": "noninteractive", "TZ": "Asia/Kolkata"})
+
+
+
     .run_commands(
         "ln -snf /usr/share/zoneinfo/Asia/Kolkata /etc/localtime",
         "echo Asia/Kolkata > /etc/timezone",
@@ -59,6 +65,7 @@ image = (
     .apt_install(
         "git", "wget", "build-essential", "ninja-build",
         "clang", "llvm-dev", "libopencv-dev", "pkg-config",
+        "default-jre-headless",
     )
     .run_commands(
         "pip3 install torch>=2.4.0 torchvision>=0.19.0 --index-url https://download.pytorch.org/whl/cu126"
@@ -176,6 +183,39 @@ def _ensure_flash_attn_cached() -> None:
     _install_from_wheel(wheels[-1])
 
 
+def _ensure_spice_resources() -> None:
+    """Download + cache Stanford CoreNLP once so SPICE can reuse it across runs."""
+    import os
+    import urllib.request
+    import zipfile
+    from urllib.error import HTTPError
+
+    cache_dir = SPICE_CACHE
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    corenlp_dir = cache_dir / f"stanford-corenlp-{STANFORD_CORENLP_VERSION}"
+    archive_path = cache_dir / STANFORD_CORENLP_ARCHIVE
+
+    if not corenlp_dir.exists():
+        if not archive_path.exists():
+            print(f"[modal_infer] Downloading {STANFORD_CORENLP_ARCHIVE} for SPICE cache")
+            try:
+                urllib.request.urlretrieve(STANFORD_CORENLP_URL, archive_path)
+            except HTTPError as exc:
+                raise RuntimeError(
+                    f"Failed to download {STANFORD_CORENLP_ARCHIVE} (HTTP {exc.code})."
+                    " Check the URL or manually pre-populate the cache."
+                ) from exc
+        print(f"[modal_infer] Extracting {STANFORD_CORENLP_ARCHIVE} to {cache_dir}")
+        with zipfile.ZipFile(archive_path, "r") as zf:
+            zf.extractall(cache_dir)
+
+    work_dir = cache_dir / "work"
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    os.environ.setdefault("STANFORD_CORENLP_HOME", str(corenlp_dir))
+    os.environ.setdefault("SPICE_WORK_DIR", str(work_dir))
+
+
 @app.function(
     gpu="L4",
     cpu=32.0,
@@ -212,6 +252,7 @@ def run_modal_inference(
     os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
     _ensure_flash_attn_cached()
+    _ensure_spice_resources()
 
     src_path = "/root/src"
     encoder_decoder_path = "/root/src/encoder-decoder"
@@ -228,9 +269,15 @@ def run_modal_inference(
 
     try:
         config = get_modal_training_config()
+        modal_samples_n = config.get("modal_inference_samples_n")
         if sample_override > 0:
             print(f"[modal_infer] Overriding inference_samples_n → {sample_override}")
-            config["inference_samples_n"] = sample_override
+            runtime_override_samples = sample_override
+        elif isinstance(modal_samples_n, int) and modal_samples_n > 0:
+            print(f"[modal_infer] Using modal_inference_samples_n → {modal_samples_n}")
+            runtime_override_samples = modal_samples_n
+        else:
+            runtime_override_samples = None
         if dataset_mode_override:
             print(f"[modal_infer] Overriding dataset_mode → {dataset_mode_override}")
             config["dataset_mode"] = dataset_mode_override
@@ -269,13 +316,22 @@ def run_modal_inference(
             if key in config:
                 runtime_config[key] = config[key]
 
+        if runtime_override_samples is not None:
+            runtime_config["inference_samples_n"] = runtime_override_samples
+
         advanced_metric_flags = {
             "eval_caption_rougel": True,
             "eval_caption_meteor": True,
+            "eval_caption_spice": True,
+            "eval_caption_bertscore": True,
             "eval_det_area_rougel": True,
             "eval_det_area_meteor": True,
+            "eval_det_area_spice": True,
+            "eval_det_area_bertscore": True,
             "eval_det_object_rougel": True,
             "eval_det_object_meteor": True,
+            "eval_det_object_spice": True,
+            "eval_det_object_bertscore": True,
         }
         runtime_config.update(advanced_metric_flags)
 
