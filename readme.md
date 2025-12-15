@@ -68,11 +68,11 @@ The core multimodal fusion and language generation module:
 
 #### Architecture Snapshots
 
-![End-to-end overview](arch/abstract_ach_v1.png)
+![End-to-end overview](arch-viz-assets/abstract_ach_v1.png)
 
-![LiDAR encoder stack](arch/lidar_enc_arch_v2.png)
+![LiDAR encoder stack](arch-viz-assets/lidar_enc_arch_v2.png)
 
-![Vision encoder stack](arch/vision_enc_arch_v2.png)
+![Vision encoder stack](arch-viz-assets/vision_enc_arch_v2.png)
 
 ## 🔧 Installation
 
