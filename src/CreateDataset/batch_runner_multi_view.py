@@ -24,20 +24,22 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ============== CONFIGURATION ==============
-# Input/Output directories
-ARTIFACTS_DIR = Path("samples/artifacts")
-OUTPUT_DIR = Path("samples/annotations_multi_view")
-LOG_DIR = Path("samples/logs_multi_view")
+# Batch configuration - splits all API keys into NUM_BATCHES static batches
+NUM_BATCHES = 5
+BATCH_TO_USE = 1  # Change this to use a different batch (1-5)
+
+# Input/Output directories - automatically determined based on batch number
+SCRIPT_DIR = Path(__file__).parent
+DATA_DIR = SCRIPT_DIR / "DATA"
+ARTIFACTS_DIR = DATA_DIR / f"batch_{BATCH_TO_USE}" / "artifacts"
+OUTPUT_DIR = DATA_DIR / f"batch_{BATCH_TO_USE}" / "annotations_multi_view"
+LOG_DIR = DATA_DIR / f"batch_{BATCH_TO_USE}" / "logs_multi_view"
 
 # Number of samples to process (set to None to process all)
 NUM_SAMPLES = None
 
 # API key pattern to match in .env
 API_KEY_PATTERN = r".+_API_\d+$"
-
-# Batch configuration - splits all API keys into NUM_BATCHES static batches
-NUM_BATCHES = 5
-BATCH_TO_USE = 1  # Change this to use a different batch (1-5)
 
 # Timeout for individual API calls (seconds)
 WORKER_TIMEOUT = 180  # Higher timeout for 6-image processing
