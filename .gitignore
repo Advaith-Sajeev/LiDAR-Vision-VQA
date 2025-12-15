@@ -34,3 +34,4 @@ checkpoints/
 #inference outputs
 /modal_inference/
 modal_inference.zip
+DATA/
