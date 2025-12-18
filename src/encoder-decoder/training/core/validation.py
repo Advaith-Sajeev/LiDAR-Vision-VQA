@@ -72,6 +72,11 @@ def run_validation(dl, device, tok, base, vision_adapter, runtime, nusc, config,
         # Check validation toggles
         use_vision_in_validation = config.get("validation_use_vision", True)
 
+        # Unpack batch
+        p_ids = batch["prompt_ids"].to(device, non_blocking=True)
+        a_ids = batch["answer_ids"].to(device, non_blocking=True)
+        sample_tokens = batch["sample_tokens"]
+
         # Vision pipeline - use batched processing for efficiency
         # Vision pipeline - use batched processing for efficiency
         vision_kv = None
@@ -198,7 +203,11 @@ def save_val_inference_samples(
         return model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model
 
     base_model = unwrap(base)
+    was_training_base = base_model.training
     base_model.eval()
+
+    vision_adapter_model = unwrap(vision_adapter)
+    was_training_adapter = vision_adapter_model.training
     vision_adapter_model.eval()
 
     device = next(base_model.parameters()).device
@@ -217,22 +226,70 @@ def save_val_inference_samples(
 
 
 
+            # Vision encoding
+            vision_views = None
+            if config.get("validation_use_vision", True) and nusc is not None:
+                try:
+                    mv = multiview_tokens_from_sample_token(
+                        sample_token, nusc, runtime=runtime, view_order=DEFAULT_VIEW_ORDER, strict=False
+                    )
+                    if mv.get("tokens") and len(mv["tokens"]) == NUM_VIEWS:
+                        view_tokens = [t.to(device) for t in mv["tokens"]]
+                        # Use forward_batch for consistency
+                        encoded_batch = vision_adapter_model.forward_batch([view_tokens])
+                        vision_views = encoded_batch[0]
+                except Exception as e:
+                    print(f"[warn] Vision encoding failed for {sample_token}: {e}")
+                    vision_views = None
+
             # Generate prediction
             msgs = [
                 {
                     "role": "system",
-                    "content": "You are a driving assistant. Use LiDAR and camera context provided via prefix tokens.",
+                    "content": "You are a driving assistant. Use camera context provided via prefix tokens.",
                 },
                 {"role": "user", "content": question},
             ]
-            prompt = tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
+            text_prompt = tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
+            
+            # Build input sequence
+            with torch.inference_mode():
+                E = base_model.get_input_embeddings()
+                prompt_ids = tok(text_prompt, return_tensors="pt", add_special_tokens=False).input_ids.to(device)
+                prompt_embeds = E(prompt_ids)
+                
+                def emb_token(txt):
+                    ids = tok([txt], add_special_tokens=False, return_tensors="pt").input_ids.to(device)
+                    return E(ids)
+
+                inputs_embeds, _ = build_inference_sequence(
+                    device=device,
+                    dtype=prompt_embeds.dtype,
+                    batch_size=1,
+                    tok_emb=prompt_embeds,
+                    view_tokens_list=vision_views,
+                    get_special_token_emb=emb_token
+                )
+                
+                attn = torch.ones(1, inputs_embeds.shape[1], dtype=torch.long, device=device)
+                
+                outputs = base_model.generate(
+                    inputs_embeds=inputs_embeds,
+                    attention_mask=attn,
+                    max_new_tokens=128,
+                    do_sample=False, # Use greedy for validation stability
+                    pad_token_id=tok.pad_token_id,
+                    eos_token_id=tok.eos_token_id,
+                    use_cache=True
+                )
+                prediction = tok.decode(outputs[0], skip_special_tokens=True).strip()
 
             results.append(
                 {
                     "sample_token": sample_token,
                     "question": question,
                     "ground_truth": ground_truth,
-                    "prediction": "[generation not implemented - add your inference code here]",
+                    "prediction": prediction,
                 }
             )
         except Exception as e:
@@ -525,7 +582,7 @@ def run_inference_sampling(
             if use_system_in_inference:
                 system_prompt = config.get(
                     "system_prompt", 
-                    "You are an expert autonomous driving assistant. Analyze the 3D LiDAR point cloud and camera images to understand the driving scene. Provide accurate, concise descriptions of objects, their locations, distances, and spatial relationships. Use directional terms like 'ahead', 'left', 'right', 'behind' and specify distances in meters when describing object locations."
+                    "You are an expert autonomous driving assistant. Analyze the camera images to understand the driving scene. Provide accurate, concise descriptions of objects, their locations, distances, and spatial relationships. Use directional terms like 'ahead', 'left', 'right', 'behind' and specify distances in meters when describing object locations."
                 )
                 msgs = [
                     {"role": "system", "content": system_prompt},
