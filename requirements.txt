@@ -13,18 +13,7 @@ pillow>=10.0.0
 tqdm>=4.65.0
 pyyaml>=6.0
 
-# ============================================================================
-# LiDAR Processing (lidar-encoder/PCDet)
-# ============================================================================
-llvmlite
-numba
-tensorboardX
-easydict
-scikit-image
-SharedArray
-opencv-python
-pyquaternion
-spconv-cu120  # For CUDA 12.x, adjust version for your CUDA
+
 
 # ============================================================================
 # Vision Models (deepencoder)
@@ -72,12 +61,6 @@ rouge-score>=0.1.2  # ROUGE metrics
 # conda create --name mahexh-lidar-llm python=3.11 -y
 # conda activate mahexh-lidar-llm
 # pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu130
-# pip install spconv-cu120
-# cd src/lidar-encoder/
-# pip install llvmlite numba tensorboardX easydict pyyaml scikit-image tqdm SharedArray opencv-python pyquaternion
-# pip install -e . --no-build-isolation
-# python tools/verify_dependency.py
-# cd ../..
 # pip install -r requirements.txt
 # 
 # # Download NLTK data (required for evaluation metrics)

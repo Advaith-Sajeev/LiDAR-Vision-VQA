@@ -1,4 +1,4 @@
-"""Checkpoint management utilities for epoch-level resumability"""
+"""Checkpoint management utilities for vision-only model training"""
 
 import random
 import numpy as np
@@ -21,8 +21,6 @@ def save_state(
     optim,
     sched,
     scaler=None,  # GradScaler for mixed precision
-    vat_lidar: nn.Module,
-    vat_vision: Optional[nn.Module],
     base: nn.Module,
     clip_vit: Optional[nn.Module],
     vision_adapter: Optional[nn.Module] = None,
@@ -44,7 +42,7 @@ def save_state(
     step_loss_steps: Optional[List[int]] = None,
 ):
     """
-    Save training state and model checkpoints.
+    Save training state and model checkpoints for vision-only model.
     
     Supports both epoch-level saves (end of epoch) and step-level saves
     (mid-epoch checkpoints for crash recovery).
@@ -61,8 +59,6 @@ def save_state(
         optim: Optimizer
         sched: Learning rate scheduler
         scaler: GradScaler for mixed precision (optional)
-        vat_lidar: LiDAR VAT model
-        vat_vision: Vision VAT model (optional)
         base: Base LLM model
         clip_vit: CLIP model (optional)
         vision_adapter: Vision adapter model (optional)
@@ -83,11 +79,9 @@ def save_state(
         return model.module if isinstance(model, nn.parallel.DistributedDataParallel) else model
     
     # Save model weights
-    torch.save(unwrap(vat_lidar).state_dict(), out_dir / "vat_lidar_latest.pt")
-    if vat_vision is not None:
-        torch.save(unwrap(vat_vision).state_dict(), out_dir / "vat_vision_latest.pt")
     # save_embedding_layers=True: We resize embeddings for special tokens, so explicitly save them
     unwrap(base).save_pretrained(out_dir / "qwen2_lora_adapter_latest", save_embedding_layers=True)
+    
     if vision_adapter is not None:
         torch.save(unwrap(vision_adapter).state_dict(), out_dir / "vision_adapter_latest.pt")
     if projector is not None:

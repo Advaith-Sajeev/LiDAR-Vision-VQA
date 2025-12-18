@@ -74,26 +74,10 @@ def get_training_config() -> Dict:
         "debug_modules": [],      # ← [] = all modules, or ["trainer", "dataset"]
         
         
-        # ==================== I/O Configuration ====================
-        # Directories containing BEV feature .npy files (one per sample_token)
-        "feature_dirs": ["/home/j_bindu/fyp-26-grp-38/bev_feats"],
+
         
-        # =========================================================================
-        # DATASET MODE SELECTION
-        # =========================================================================
-        # Choose which dataset(s) to use for training, validation, and inference:
-        #   "caption"   - Only nuCaption dataset (scene descriptions)
-        #   "grounding" - Only nuGrounding dataset (object detection/localization)
-        #   "both"      - Both datasets combined (default, recommended for full training)
-        # 
-        # SAFETY: When using "caption" mode, grounding paths can be set to None
-        #         to prevent any accidental data leakage.
-        "dataset_mode": "both",  # "caption", "grounding", or "both"
-        
-        # JSON/JSONL file paths for each dataset type
-        # Set to None to disable a dataset (safe when not using that mode)
-        "caption_json": "/home/j_bindu/fyp-26-grp-38/Dataset_subset/external/nuCaption.json",
-        "grounding_json": "/home/j_bindu/fyp-26-grp-38/Dataset_subset/external/nuGrounding.json",
+        # JSON/JSONL file paths
+        "jsons": ["/home/j_bindu/fyp-26-grp-38/Dataset_subset/external/nuCaption.json"],
         
         # Output directory for checkpoints, logs, and plots
         # If resume=False: Use base directory (e.g., "./checkpoints")
@@ -160,10 +144,8 @@ def get_training_config() -> Dict:
         # For "both" mode: must be divisible by 4
         "inference_samples_n": 12,
         
-        # Test JSON files for inference sampling (used based on dataset_mode)
-        # Set to None to disable (safe when not using that mode)
-        "inference_caption_json": "/home/j_bindu/fyp-26-grp-38/Datasets/LiDAR-LLM-Nu-Caption/val.json",
-        "inference_grounding_json": "/home/j_bindu/fyp-26-grp-38/Datasets/LiDAR-LLM-Nu-Grounding/LiDAR-LLM-Nu-Grounding-val.json",
+        # Test JSON files for inference sampling
+        "inference_json": "/home/j_bindu/fyp-26-grp-38/Datasets/LiDAR-LLM-Nu-Caption/val.json",
         
         # Generation parameters for inference sampling
         "inference_max_tokens": 64,
@@ -181,32 +163,9 @@ def get_training_config() -> Dict:
         "eval_caption_spice": True,
         "eval_caption_bertscore": True,
         
-        # Grounding Det Area Dashboard Metrics (text quality + bbox accuracy)
-        "eval_det_area_bleu4": True,
-        "eval_det_area_cider": True,
-        "eval_det_area_spice": True,
-        "eval_det_area_bertscore": True,
-        "eval_det_area_top1_acc": True,      # Object class identification accuracy
-        "eval_det_area_bev_iou": True,       # 2D Bird's Eye View IoU
-        
-        # Grounding Det Object Dashboard Metrics (text quality only)
-        "eval_det_object_bleu4": True,
-        "eval_det_object_cider": True,
-        "eval_det_object_spice": True,
-        "eval_det_object_bertscore": True,
-        
-        # Toggle components during training (for debugging/ablation studies)
-        # WARNING: Disabling components during training will train a model that doesn't use them!
-        "training_use_vision": True,    # Include vision tokens in training
-        "training_use_lidar": True,     # Include LiDAR tokens in training
-        
-        # Toggle components during validation (for debugging/ablation studies)
-        "validation_use_vision": True,  # Include vision tokens in validation
-        "validation_use_lidar": True,   # Include LiDAR tokens in validation
+
         
         # Toggle components during inference sampling (for debugging/ablation studies)
-        "inference_use_vision": True,   # Include vision tokens in inference
-        "inference_use_lidar": True,    # Include LiDAR tokens in inference
         "inference_use_system": True,   # Include system prompt in inference
         
         
@@ -216,7 +175,7 @@ def get_training_config() -> Dict:
         "model_id": "Qwen/Qwen2.5-0.5B",
         
         # Field name in JSON containing target answer
-        "target_field": "answer", # or answer_lidar
+        "target_field": "answer",
         
         # Maximum answer tokens (longer answers will be truncated)
         "max_ans_toks": 64,
@@ -226,26 +185,7 @@ def get_training_config() -> Dict:
         "prefix_scale": 0.2,
         
         
-        # ==================== LiDAR VAT Configuration ====================
-        # Number of learnable query tokens for LiDAR VAT
-        # MUST be divisible by 6 (for 6 spatial sectors)
-        # Recommended: 12 (testing), 576 (medium), 768 (large)
-        "vat_queries": 6,
-        
-        # Number of transformer layers in LiDAR VAT
-        "vat_layers": 1,
-        
-        # Number of attention heads in LiDAR VAT
-        "vat_heads": 2,
-        
-        # MLP expansion ratio (d_mlp = d_model * vat_mlp_ratio)
-        "vat_mlp_ratio": 4.0,
-        
-        # Dropout rate in transformer blocks
-        "vat_dropout": 0.10,
-        
-        # Dropout rate after final projection
-        "vat_post_dropout": 0.10,
+
         
         
         # ==================== Vision VAT Configuration ====================
@@ -328,8 +268,7 @@ def get_training_config() -> Dict:
         
         
         # ==================== Optimization Configuration ====================
-        # Learning rate for LiDAR VAT
-        "lr_vat": 5e-4,
+
         
         # Learning rate for Vision VAT
         "lr_vision_vat": 5e-4,
@@ -374,52 +313,7 @@ def get_training_config() -> Dict:
         "openclip_pretrained": "openai",
     }
     
-    # =========================================================================
-    # BUILD DYNAMIC CONFIGS BASED ON DATASET MODE
-    # =========================================================================
-    # Automatically build the jsons list based on dataset_mode setting
-    # Validates that required paths are configured for the selected mode
-    mode = config["dataset_mode"]
-    
-    if mode == "caption":
-        # Caption mode: only caption_json is required
-        if not config.get("caption_json"):
-            raise ValueError(
-                "dataset_mode='caption' requires 'caption_json' to be set. "
-                "Please configure a valid path to the caption JSON file."
-            )
-        config["jsons"] = [config["caption_json"]]
-        
-    elif mode == "grounding":
-        # Grounding mode: only grounding_json is required
-        if not config.get("grounding_json"):
-            raise ValueError(
-                "dataset_mode='grounding' requires 'grounding_json' to be set. "
-                "Please configure a valid path to the grounding JSON file."
-            )
-        config["jsons"] = [config["grounding_json"]]
-        
-    elif mode == "both":
-        # Both mode: both paths are required
-        if not config.get("caption_json"):
-            raise ValueError(
-                "dataset_mode='both' requires 'caption_json' to be set. "
-                "Please configure a valid path to the caption JSON file."
-            )
-        if not config.get("grounding_json"):
-            raise ValueError(
-                "dataset_mode='both' requires 'grounding_json' to be set. "
-                "Please configure a valid path to the grounding JSON file."
-            )
-        config["jsons"] = [config["caption_json"], config["grounding_json"]]
-        
-    else:
-        raise ValueError(
-            f"Invalid dataset_mode: '{mode}'. "
-            f"Must be one of: 'caption', 'grounding', 'both'"
-        )
-    
-    return config
+
 
 
 def setup_output_directory(config: Dict) -> str:
@@ -574,74 +468,7 @@ def main():
     # config["max_samples"] = 10
     # config["epochs"] = 2
     # config["batch_size"] = 1
-    # config["vat_queries"] = 12
-    # config["vision_queries"] = 12
-    
-    # Ablation studies: Toggle components across training/validation/inference
-    # Useful for understanding which components contribute to performance
-    
-    # ===== Training Toggles =====
-    # WARNING: Disabling components during training trains a model that doesn't use them!
-    
-    # Example: Train LiDAR-only model (no vision)
-    # config["training_use_vision"] = False
-    # config["training_use_lidar"] = True
-    
-    # Example: Train vision-only model (no LiDAR)
-    # config["training_use_vision"] = True
-    # config["training_use_lidar"] = False
-    
-    # ===== Validation Toggles =====
-    # Test different component combinations during validation
-    
-    # Example: Validate without vision
-    # config["validation_use_vision"] = False
-    # config["validation_use_lidar"] = True
-    
-    # Example: Validate without LiDAR
-    # config["validation_use_vision"] = True
-    # config["validation_use_lidar"] = False
-    
-    # ===== Inference Sampling Toggles =====
-    # Test different component combinations during inference sampling
-    
-    # Example: Inference without vision tokens
-    # config["inference_use_vision"] = False
-    # config["inference_use_lidar"] = True
-    # config["inference_use_system"] = True
-    
-    # Example: Inference without LiDAR tokens
-    # config["inference_use_vision"] = True
-    # config["inference_use_lidar"] = False
-    # config["inference_use_system"] = True
-    
-    # Example: Inference without system prompt
-    # config["inference_use_vision"] = True
-    # config["inference_use_lidar"] = True
-    # config["inference_use_system"] = False
-    
-    # Example: Text-only inference (no multimodal inputs)
-    # config["inference_use_vision"] = False
-    # config["inference_use_lidar"] = False
-    # config["inference_use_system"] = True
-    
-    # ===== Complete Ablation Study Example =====
-    # Train with all modalities, test each individually
-    # config["training_use_vision"] = True
-    # config["training_use_lidar"] = True
-    # Then run multiple experiments with different inference toggles
-    
-    # Full training (production)
-    # config["max_samples"] = None  # Use all data
-    # config["epochs"] = 50
-    # config["batch_size"] = 2
-    # config["grad_accum"] = 4
-    # config["vat_queries"] = 576
-    # config["vision_queries"] = 1536
-    # config["fp16"] = True
-    
-    # LiDAR only (no vision)
-    # config["use_vision"] = False
+
     
     # Large model
     # config["model_id"] = "Qwen/Qwen2.5-3B"
@@ -665,14 +492,14 @@ def main():
     
     # Custom LoRA configuration
     # Example 1: Only tune attention layers in LLM
-    # config["lora_target_modules"] = ["q_proj", "k_proj", "v_proj", "o_proj"]
+    # config["llm_lora_targets"] = ["q_proj", "k_proj", "v_proj", "o_proj"]
     
     # Example 2: Only tune MLP layers in LLM
-    # config["lora_target_modules"] = ["gate_proj", "up_proj", "down_proj"]
+    # config["llm_lora_targets"] = ["gate_proj", "up_proj", "down_proj"]
     
     # Example 3: Higher rank LoRA for more capacity
-    # config["lora_r"] = 16
-    # config["lora_alpha"] = 32
+    # config["llm_lora_r"] = 16
+    # config["llm_lora_alpha"] = 32
     
     # Example 4: Custom CLIP LoRA targets (attention only)
     # config["clip_lora_target_modules"] = ["qkv_proj", "out_proj"]
@@ -686,34 +513,14 @@ def main():
     # config["epochs"] = 1
     
     
-    # ==================== Validate Configuration ====================
-    # Check for problematic configurations
-    training_vision = config.get("training_use_vision", True)
-    training_lidar = config.get("training_use_lidar", True)
-    
-    if not training_vision and not training_lidar:
-        print("\n" + "!" * 80)
-        print("CRITICAL WARNING: Both Vision and LiDAR are DISABLED during training!")
-        print("!" * 80)
-        print("This configuration will train a model that only processes text prompts.")
-        print("The model will NOT learn to use multimodal inputs (LiDAR/vision).")
-        print("")
-        print("If this is intentional for a text-only baseline, proceed.")
-        print("Otherwise, enable at least one modality:")
-        print("  - Set config['training_use_vision'] = True  (for vision)")
-        print("  - Set config['training_use_lidar'] = True   (for LiDAR)")
-        print("!" * 80)
-        
-        # Give user a chance to see this
-        import time
-        time.sleep(3)
+
     
     # ==================== Print Configuration ====================
     print("=" * 80)
     print("TRAINING CONFIGURATION")
     print("=" * 80)
     print(f"\n{'='*30} I/O {'='*30}")
-    print(f"Feature dirs: {config['feature_dirs']}")
+
     print(f"JSON files: {config['jsons']}")
     print(f"Output dir: {config['out_dir']}")
     print(f"Max samples: {config['max_samples']}")
@@ -730,19 +537,20 @@ def main():
     print(f"\n{'='*30} Model {'='*30}")
     print(f"Base model: {config['model_id']}")
     print(f"Use vision: {config['use_vision']}")
-    print(f"LiDAR VAT queries: {config['vat_queries']} (layers={config['vat_layers']}, heads={config['vat_heads']})")
+
     if config['use_vision']:
         print(f"Vision VAT queries: {config['vision_queries']} (layers={config['vision_layers']}, heads={config['vision_heads']})")
     print(f"\nLoRA Configuration:")
-    print(f"  Rank: {config['lora_r']}, Alpha: {config['lora_alpha']}, Dropout: {config['lora_dropout']}")
-    print(f"  LLM target modules: {config.get('lora_target_modules', 'default')}")
+    print(f"  Tuning Mode: {config.get('tuning_mode', 'qlora')}")
+    print(f"  Rank: {config['llm_lora_r']}, Alpha: {config['llm_lora_alpha']}, Dropout: {config['llm_lora_dropout']}")
+    print(f"  LLM target modules: {config.get('llm_lora_targets', 'default')}")
     if config['use_vision']:
         clip_targets = config.get('clip_lora_target_modules', None)
         print(f"  CLIP LoRA enabled: {config.get('clip_lora_enabled', True)}")
         print(f"  CLIP target modules: {clip_targets if clip_targets is not None else 'auto-detect'}")
     
     print(f"\n{'='*30} Optimization {'='*30}")
-    print(f"LR VAT: {config['lr_vat']}")
+
     print(f"LR LoRA: {config['lr_lora']}")
     if config['use_vision']:
         print(f"LR Vision VAT: {config['lr_vision_vat']}")

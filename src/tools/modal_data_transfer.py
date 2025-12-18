@@ -10,7 +10,7 @@ It does NOT:
 - Load the model
 - Run inference
 - Save sample.json
-- Save LiDAR/BEV files
+
 
 Usage:
     modal run src/tools/modal_data_transfer.py
@@ -93,8 +93,8 @@ def copy_samples_remote():
 
     from nuscenes import NuScenes
     from configs.modal_config import get_modal_training_config
-    # We can import DEFAULT_VIEW_ORDER from configs.default_config as it has no heavy deps
-    from configs.default_config import DEFAULT_VIEW_ORDER
+    # We can import DEFAULT_VIEW_ORDER from configs.constants as it has no heavy deps
+    from configs.constants import DEFAULT_VIEW_ORDER
 
     print("=" * 80)
     print("🚀 STARTING REMOTE DATA COPY (PARALLELIZED)")

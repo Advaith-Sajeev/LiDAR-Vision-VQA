@@ -30,6 +30,7 @@ import modal
 from typing import Dict
 from datetime import datetime
 import os
+from pathlib import Path
 
 # ============================================================================
 # MODAL SETUP - Define Cloud Environment
@@ -37,6 +38,48 @@ import os
 
 app = modal.App("lidar-vision-training")
 volume = modal.Volume.from_name("lidar-llm", create_if_missing=False)
+FLASH_ATTN_CACHE = Path("/data/build_cache/flash-attn")
+
+
+def _ensure_flash_attn_cached() -> None:
+    """Install flash-attn from a cached wheel on the Modal volume, building once if absent."""
+    import subprocess
+    import sys
+
+    cache_dir = FLASH_ATTN_CACHE
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    def _install_from_wheel(wheel_path: Path) -> None:
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", str(wheel_path), "--no-build-isolation"],
+            check=True,
+        )
+
+    wheels = sorted(cache_dir.glob("flash_attn*.whl"))
+    if wheels:
+        wheel = wheels[-1]
+        print(f"[modal_train] Installing cached flash-attn wheel → {wheel.name}")
+        _install_from_wheel(wheel)
+        return
+
+    print("[modal_train] flash-attn wheel cache empty; compiling once for reuse")
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "wheel",
+            "flash-attn",
+            "--no-build-isolation",
+            "-w",
+            str(cache_dir),
+        ],
+        check=True,
+    )
+    wheels = sorted(cache_dir.glob("flash_attn*.whl"))
+    if not wheels:
+        raise RuntimeError("flash-attn wheel build failed; no wheel found in cache")
+    _install_from_wheel(wheels[-1])
 
 # ----------------------------------------------------------------------------
 # IMAGE DEFINITION: CUDA 12.6 + PyTorch + Custom Compilation
@@ -60,8 +103,9 @@ image = (
     # - libopencv-dev: OpenCV system libraries
     # - pkg-config: Used by many build systems
     .apt_install(
-        "git", "wget", "build-essential", "ninja-build", 
-        "clang", "llvm-dev", "libopencv-dev", "pkg-config"
+        "git", "wget", "build-essential", "ninja-build",
+        "clang", "llvm-dev", "libopencv-dev", "pkg-config",
+        "default-jre-headless",
     )
     # Install PyTorch with CUDA 12.6 support
     # NOTE: pip_install does not support pre_install_commands parameter
@@ -69,28 +113,13 @@ image = (
     .run_commands(
         "pip3 install torch>=2.4.0 torchvision>=0.19.0 --index-url https://download.pytorch.org/whl/cu126"
     )
-    # Install spconv for CUDA 12.6 (Critical for L4 performance)
     .pip_install("spconv-cu126")
-    
-    # Dependencies for lidar-encoder (order matters for compilation)
-    # Install packages that may require compilation first
     .pip_install(
-        "llvmlite", "numba",  # Installed first as they have LLVM dependencies
+        "llvmlite", "numba",
     )
     .pip_install(
         "tensorboardX", "easydict", "pyyaml",
         "scikit-image", "tqdm", "SharedArray", "opencv-python", "pyquaternion",
-    )
-    # Compile lidar-encoder (pcdet)
-    # copy=True ensures files are built into the image for subsequent build steps
-    .add_local_dir(
-        local_path="./src/lidar-encoder",
-        remote_path="/tmp/lidar-encoder",
-        copy=True
-    )
-    .run_commands(
-        "cd /tmp/lidar-encoder && pip install -e . --no-build-isolation",
-        gpu="any", 
     )
     # Install remaining Python dependencies
     .pip_install(
@@ -109,12 +138,11 @@ image = (
         "optimum>=1.15.0",
         "pytest>=7.4.0",
         "pytest-cov>=4.1.0",
+        "nltk>=3.8.1",
         "sacrebleu>=2.3.0",
         "rouge-score>=0.1.2",
     )
-    # Install flash-attn last
-    .pip_install("flash-attn", extra_options="--no-build-isolation")
-    .run_commands("python -c 'import nltk; nltk.download(\"punkt\"); nltk.download(\"wordnet\")'")
+    .run_commands("python -c 'import nltk; nltk.download(\"punkt\"); nltk.download(\"wordnet\"); nltk.download(\"omw-1.4\")'")
     # Add the entire src directory to the image (excluding lidar-encoder which was already added)
     .add_local_dir(
         local_path="./src",
@@ -156,11 +184,7 @@ def get_modal_training_config() -> Dict:
     gpu="H100",  # H100 80GB for large model + data validation
     cpu=40.0,       # 40 cores (Modal max) for parallel validation
     memory=262144,  # 256 GB RAM
-    # -------------------------------------------------------------------------
-    # Phase 2 Config (uncomment for actual training after validation passes):
-    # gpu="H200",
-    # cpu=24.0,       # 24 cores
-    # memory=65536,   # 64 GB RAM
+    # ------------------------------------------------------------------------
     
     image=image,
     volumes={"/data": volume},
@@ -189,10 +213,6 @@ def train_model():
     import torch
     from pathlib import Path
     
-    print("=" * 80)
-    print("🚀 MODAL TRAINING STARTED (CUDA 12.6 + A100)")
-    print("=" * 80)
-    
     # 0. Setup Model Cache on Persistent Volume
     # This ensures downloaded models (Qwen, CLIP, SAM) are reused across runs
     model_cache_dir = "/data/model_cache"
@@ -210,6 +230,8 @@ def train_model():
     # CUDA memory optimization: use expandable segments to reduce fragmentation
     # This helps when reserved-but-unallocated memory is large
     os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+    
+    _ensure_flash_attn_cached()
     
     print(f"📦 Model cache directory: {model_cache_dir}")
     print(f"   HuggingFace cache: {os.environ['HF_HOME']}")
@@ -235,7 +257,8 @@ def train_model():
     config = get_modal_training_config()
     
     # 3. Directory Logic (The "Smart Resume" System)
-    root_ckpt_dir = Path(config["checkpoints_root"])
+    # Use the configured out_dir as the root for checkpoints
+    root_ckpt_dir = Path(config["out_dir"])
     
     # Explicit check to create the directory if it's the very first run on this volume
     if not root_ckpt_dir.exists():
@@ -357,7 +380,6 @@ def main():
         raise SystemExit(1)
         
     print("✓ Project root verified")
-    print("✓ Configuration: A100 GPU, 10 Retries, 24h Timeout")
     print("✓ Deploying to Modal...")
     
     try:

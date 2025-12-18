@@ -4,28 +4,34 @@ Sequence Builder for LLM Embedding Assembly.
 This module provides explicit position tracking for building multimodal
 input sequences. The order is guaranteed and documented:
 
-    SEQUENCE ORDER (when all modalities enabled):
+    SEQUENCE ORDER (vision-only with per-view delimiters):
     ┌─────────────────────────────────────────────────────────────────┐
-    │ Position 0: <vision_start>                                       │
-    │ Position 1: vision_tokens [n_vision_queries, d_model]            │
-    │ Position 2: <vision_end>                                         │
-    │ Position 3: <lidar_start>                                        │
-    │ Position 4: lidar_tokens [n_lidar_queries, d_model]              │
-    │ Position 5: <lidar_end>                                          │
-    │ Position 6: text_prompt [prompt_len, d_model]                    │
-    │ Position 7: answer_tokens [answer_len, d_model] (for training)   │
+    │ [cam_front_start] [256 tokens] [cam_front_end]                  │
+    │ [cam_front_right_start] [256 tokens] [cam_front_right_end]      │
+    │ [cam_front_left_start] [256 tokens] [cam_front_left_end]        │
+    │ [cam_back_start] [256 tokens] [cam_back_end]                    │
+    │ [cam_back_right_start] [256 tokens] [cam_back_right_end]        │
+    │ [cam_back_left_start] [256 tokens] [cam_back_left_end]          │
+    │ text_prompt [prompt_len, d_model]                               │
+    │ answer_tokens [answer_len, d_model] (for training)              │
     └─────────────────────────────────────────────────────────────────┘
 
-If a modality is disabled, its positions are skipped but the relative
-order is preserved (vision always before LiDAR, LiDAR always before text).
+Each camera view has its own start and end delimiter tokens for explicit
+position marking in the sequence.
 """
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Callable
 from dataclasses import dataclass, field
 import torch
 
-# Import ModalityPosition from centralized configs
-from configs.default_config import ModalityPosition
+# Import from centralized configs
+from configs.constants import (
+    ModalityPosition, 
+    DEFAULT_VIEW_ORDER,
+    VIEW_POSITIONS,
+    VIEW_DELIMITER_TOKENS,
+    NUM_VIEWS,
+)
 
 
 @dataclass
@@ -50,11 +56,10 @@ class SequenceBuilder:
     Usage:
         builder = SequenceBuilder(batch_size=B, device=device, dtype=dtype)
         
-        # Add pieces in any order - they'll be sorted correctly
-        if use_vision:
-            builder.add_vision(prefix_vision, vision_start_emb, vision_end_emb)
-        if use_lidar:
-            builder.add_lidar(prefix_lidar, lidar_start_emb, lidar_end_emb)
+        # Add per-view vision tokens with delimiters
+        builder.add_per_view_vision(view_tokens_list, get_special_token_emb)
+        
+        # Add text
         builder.add_text_prompt(tok_emb)
         
         # Build concatenated sequence
@@ -65,66 +70,62 @@ class SequenceBuilder:
     dtype: torch.dtype
     pieces: List[SequencePiece] = field(default_factory=list)
     
-    def add_vision(
-        self, 
-        vision_tokens: torch.Tensor,
-        vision_start_emb: torch.Tensor,
-        vision_end_emb: torch.Tensor,
-    ) -> "SequenceBuilder":
-        """
-        Add vision modality tokens with explicit position markers.
-        
-        Args:
-            vision_tokens: [B, n_queries, d_model] vision VAT output
-            vision_start_emb: [B, 1, d_model] start delimiter
-            vision_end_emb: [B, 1, d_model] end delimiter
-        """
-        self.pieces.append(SequencePiece(
-            position=ModalityPosition.VISION_START,
-            tensor=vision_start_emb,
-            name="<vision_start>"
-        ))
-        self.pieces.append(SequencePiece(
-            position=ModalityPosition.VISION_TOKENS,
-            tensor=vision_tokens,
-            name=f"vision_tokens[{vision_tokens.shape[1]}]"
-        ))
-        self.pieces.append(SequencePiece(
-            position=ModalityPosition.VISION_END,
-            tensor=vision_end_emb,
-            name="<vision_end>"
-        ))
-        return self
-    
-    def add_lidar(
+    def add_per_view_vision(
         self,
-        lidar_tokens: torch.Tensor,
-        lidar_start_emb: torch.Tensor,
-        lidar_end_emb: torch.Tensor,
+        view_tokens_list: List[torch.Tensor],
+        get_special_token_emb: Callable[[str], torch.Tensor],
     ) -> "SequenceBuilder":
         """
-        Add LiDAR modality tokens with explicit position markers.
+        Add all 6 camera views with per-view delimiters.
+        
+        Each view gets:
+        - <cam_X_start> delimiter
+        - View tokens [B, 256, d_model]
+        - <cam_X_end> delimiter
         
         Args:
-            lidar_tokens: [B, n_queries, d_model] LiDAR VAT output
-            lidar_start_emb: [B, 1, d_model] start delimiter
-            lidar_end_emb: [B, 1, d_model] end delimiter
+            view_tokens_list: List of 6 tensors from VisionAdapter,
+                             each [256, d_model] or [B, 256, d_model]
+            get_special_token_emb: Function(str) -> [1, 1, d_model] for special tokens
         """
-        self.pieces.append(SequencePiece(
-            position=ModalityPosition.LIDAR_START,
-            tensor=lidar_start_emb,
-            name="<lidar_start>"
-        ))
-        self.pieces.append(SequencePiece(
-            position=ModalityPosition.LIDAR_TOKENS,
-            tensor=lidar_tokens,
-            name=f"lidar_tokens[{lidar_tokens.shape[1]}]"
-        ))
-        self.pieces.append(SequencePiece(
-            position=ModalityPosition.LIDAR_END,
-            tensor=lidar_end_emb,
-            name="<lidar_end>"
-        ))
+        if len(view_tokens_list) != NUM_VIEWS:
+            raise ValueError(f"Expected {NUM_VIEWS} view tensors, got {len(view_tokens_list)}")
+        
+        for i, view_name in enumerate(DEFAULT_VIEW_ORDER):
+            view_tokens = view_tokens_list[i]
+            
+            # Ensure batch dimension
+            if view_tokens.dim() == 2:
+                # [HW, d_model] -> [B, HW, d_model]
+                view_tokens = view_tokens.unsqueeze(0).expand(self.batch_size, -1, -1)
+            
+            # Get delimiter tokens for this view
+            start_token, end_token = VIEW_DELIMITER_TOKENS[view_name]
+            start_pos, tokens_pos, end_pos = VIEW_POSITIONS[view_name]
+            
+            # Add start delimiter
+            start_emb = get_special_token_emb(start_token).expand(self.batch_size, -1, -1)
+            self.pieces.append(SequencePiece(
+                position=start_pos,
+                tensor=start_emb,
+                name=start_token
+            ))
+            
+            # Add view tokens
+            self.pieces.append(SequencePiece(
+                position=tokens_pos,
+                tensor=view_tokens,
+                name=f"{view_name.lower()}_tokens[{view_tokens.shape[1]}]"
+            ))
+            
+            # Add end delimiter
+            end_emb = get_special_token_emb(end_token).expand(self.batch_size, -1, -1)
+            self.pieces.append(SequencePiece(
+                position=end_pos,
+                tensor=end_emb,
+                name=end_token
+            ))
+        
         return self
     
     def add_text_prompt(self, tok_emb: torch.Tensor) -> "SequenceBuilder":
@@ -215,12 +216,11 @@ def build_training_sequence(
     batch_size: int,
     tok_emb: torch.Tensor,
     ans_emb: torch.Tensor,
-    prefix_vision: Optional[torch.Tensor] = None,
-    prefix_lidar: Optional[torch.Tensor] = None,
-    get_special_token_emb,  # Callable to get special token embeddings
+    view_tokens_list: Optional[List[torch.Tensor]] = None,
+    get_special_token_emb: Callable[[str], torch.Tensor],
 ) -> Tuple[torch.Tensor, Dict]:
     """
-    Build a training sequence with explicit position markers.
+    Build a training sequence with per-view delimiters.
     
     This is a convenience function that uses SequenceBuilder internally.
     
@@ -231,8 +231,7 @@ def build_training_sequence(
         batch_size: Batch size
         tok_emb: [B, seq_len, d_model] text prompt embeddings
         ans_emb: [B, seq_len, d_model] answer embeddings
-        prefix_vision: [B, n_queries, d_model] vision VAT output, or None
-        prefix_lidar: [B, n_queries, d_model] LiDAR VAT output, or None
+        view_tokens_list: List of 6 tensors from VisionAdapter, each [256, d_model]
         get_special_token_emb: Function(str) -> [1, 1, d_model] for special tokens
     
     Returns:
@@ -245,20 +244,9 @@ def build_training_sequence(
         dtype=dtype,
     )
     
-    # Add modalities in explicit order (SequenceBuilder sorts by position anyway)
-    if prefix_vision is not None:
-        builder.add_vision(
-            vision_tokens=prefix_vision,
-            vision_start_emb=get_special_token_emb("<vision_start>").expand(batch_size, -1, -1),
-            vision_end_emb=get_special_token_emb("<vision_end>").expand(batch_size, -1, -1),
-        )
-    
-    if prefix_lidar is not None:
-        builder.add_lidar(
-            lidar_tokens=prefix_lidar,
-            lidar_start_emb=get_special_token_emb("<lidar_start>").expand(batch_size, -1, -1),
-            lidar_end_emb=get_special_token_emb("<lidar_end>").expand(batch_size, -1, -1),
-        )
+    # Add per-view vision tokens with delimiters
+    if view_tokens_list is not None:
+        builder.add_per_view_vision(view_tokens_list, get_special_token_emb)
     
     builder.add_text_prompt(tok_emb)
     builder.add_answer(ans_emb)
@@ -272,20 +260,18 @@ def build_inference_sequence(
     dtype: torch.dtype,
     batch_size: int,
     tok_emb: torch.Tensor,
-    prefix_vision: Optional[torch.Tensor] = None,
-    prefix_lidar: Optional[torch.Tensor] = None,
-    get_special_token_emb,  # Callable to get special token embeddings
+    view_tokens_list: Optional[List[torch.Tensor]] = None,
+    get_special_token_emb: Callable[[str], torch.Tensor],
 ) -> Tuple[torch.Tensor, Dict]:
     """
-    Build an inference sequence with explicit position markers (no answer tokens).
+    Build an inference sequence with per-view delimiters (no answer tokens).
     
     Args:
         device: Target device
         dtype: Target dtype
         batch_size: Batch size
         tok_emb: [B, seq_len, d_model] text prompt embeddings
-        prefix_vision: [B, n_queries, d_model] vision VAT output, or None
-        prefix_lidar: [B, n_queries, d_model] LiDAR VAT output, or None
+        view_tokens_list: List of 6 tensors from VisionAdapter, each [256, d_model]
         get_special_token_emb: Function(str) -> [1, 1, d_model] for special tokens
     
     Returns:
@@ -298,19 +284,8 @@ def build_inference_sequence(
         dtype=dtype,
     )
     
-    if prefix_vision is not None:
-        builder.add_vision(
-            vision_tokens=prefix_vision,
-            vision_start_emb=get_special_token_emb("<vision_start>").expand(batch_size, -1, -1),
-            vision_end_emb=get_special_token_emb("<vision_end>").expand(batch_size, -1, -1),
-        )
-    
-    if prefix_lidar is not None:
-        builder.add_lidar(
-            lidar_tokens=prefix_lidar,
-            lidar_start_emb=get_special_token_emb("<lidar_start>").expand(batch_size, -1, -1),
-            lidar_end_emb=get_special_token_emb("<lidar_end>").expand(batch_size, -1, -1),
-        )
+    if view_tokens_list is not None:
+        builder.add_per_view_vision(view_tokens_list, get_special_token_emb)
     
     builder.add_text_prompt(tok_emb)
     

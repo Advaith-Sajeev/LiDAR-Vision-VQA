@@ -7,33 +7,28 @@ LiDAR-Vision-VQA fuses 3D LiDAR geometry with multi-camera context to answer fre
 
 **LiDAR-Vision-VQA** is an advanced multimodal Visual Question Answering system specifically designed for autonomous driving scenarios. It seamlessly integrates:
 
-- **🔷 LiDAR BEV Features**: 3D spatial understanding through Bird's Eye View representations
 - **📷 Multi-Camera Vision**: 6-camera surround-view perception using CLIP and SAM encoders
 - **🤖 Large Language Model**: Natural language understanding and generation
-### Why LiDAR-Vision-VQA?
 
-Traditional VQA systems often rely solely on camera images, missing crucial 3D spatial information. By fusing LiDAR BEV features with multi-view camera data, our system achieves:
-- **Superior 3D spatial reasoning** through BEV representations
-- **Robust scene understanding** across different lighting and weather conditions
-- **Accurate object localization** combining vision and depth information
+### Why Vision-Only VQA?
+
+Traditional VQA systems often rely solely on single camera images. By utilizing multi-view camera data (surround view), our system achieves:
+- **Comprehensive scene understanding** covering 360 degrees
+- **Robust object reasoning** across different viewing angles
+- **Detailed visual analysis** using state-of-the-art vision encoders
 
 ## 🏛️ Architecture
 
-The system consists of three main components:
+The system consists of two main components:
 
-### 1. **LiDAR Encoder** (`src/lidar-encoder/`)
-- Built on PCDet framework for 3D object detection
-- Extracts BEV feature maps from LiDAR point clouds
-- Outputs: `[B, C, H, W]` BEV tensors (e.g., 256×256×256)
-
-### 2. **Vision Encoder** (`src/deepencoder/`)
+### 1. **Vision Encoder** (`src/deepencoder/`)
 - **CLIP ViT-L/14**: Semantic understanding (1024-dim per token)
 - **SAM ViT-B**: Spatial and structural features (1024-dim per token)
 - **Projector**: Fuses features to 2048-dim per-token representation
 - Processes 6 camera views: Front, Front-Left, Front-Right, Back, Back-Left, Back-Right
 - Outputs: `[6 views × 256 tokens, 2048-dim]` = 1536 tokens per sample
 
-### 3. **Encoder-Decoder** (`src/encoder-decoder/`)
+### 2. **Encoder-Decoder** (`src/encoder-decoder/`)
 The core multimodal fusion and language generation module:
 
 #### **VATVision** (Vision VAT)
@@ -44,18 +39,9 @@ The core multimodal fusion and language generation module:
   - Learned query tokens with cross-attention
 - **Output**: Compact vision representation `[n_queries, d_model]`
 
-#### **VATLiDAR** (LiDAR VAT)
-- **Input**: BEV feature maps `[B, C, H, W]`
-- **Processing**:
-  - Geometric positional encodings (x, y, r, sin θ, cos θ)
-  - 6-sector view embeddings (spatial partitioning)
-  - View-aligned query tokens with cross-attention
-- **Output**: Compact BEV representation `[n_queries, d_model]`
-
 #### **Sequence Construction**
 ```
 [<vision_start>] [vision_queries] [<vision_end>]
-[<lidar_start>]  [lidar_queries]  [<lidar_end>]
 [text_prompt_tokens]
 [answer_tokens]  # Training only
 ```
@@ -69,8 +55,6 @@ The core multimodal fusion and language generation module:
 #### Architecture Snapshots
 
 ![End-to-end overview](arch-viz-assets/abstract_ach_v1.png)
-
-![LiDAR encoder stack](arch-viz-assets/lidar_enc_arch_v2.png)
 
 ![Vision encoder stack](arch-viz-assets/vision_enc_arch_v2.png)
 
@@ -97,36 +81,19 @@ pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu12
 pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu120
 ```
 
-### Step 3: Install LiDAR Encoder (PCDet)
-```bash
-cd src/lidar-encoder/
 
-# Install dependencies
-pip install llvmlite numba tensorboardX easydict pyyaml scikit-image tqdm SharedArray opencv-python pyquaternion
 
-# Install spconv (adjust for your CUDA version)
-pip install spconv-cu120  # or spconv-cu126
-
-# Install PCDet in editable mode
-pip install -e . --no-build-isolation
-
-# Verify installation
-python tools/verify_dependency.py
-
-cd ../..
-```
-
-### Step 4: Install Core Dependencies
+### Step 3: Install Core Dependencies
 ```bash
 pip install -r requirements.txt
 ```
 
-### Step 5: Download NLTK Data (for evaluation)
+### Step 4: Download NLTK Data (for evaluation)
 ```bash
 python -c "import nltk; nltk.download('punkt'); nltk.download('wordnet')"
 ```
 
-### Step 6: Install Flash Attention (Optional but Recommended)
+### Step 5: Install Flash Attention (Optional but Recommended)
 ```bash
 # Must be installed after all other dependencies
 pip install flash-attn --no-build-isolation
@@ -135,7 +102,6 @@ pip install flash-attn --no-build-isolation
 ### Verify Installation
 ```bash
 python -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA: {torch.cuda.is_available()}')"
-python -c "from pcdet.version import __version__; print(f'PCDet: {__version__}')"
 ```
 
 ---
@@ -154,12 +120,7 @@ LiDAR-Vision-VQA/
 │   │   ├── modal_config.py            # Modal cloud training config
 │   │   └── training_config.py         # Additional training configs
 │   │
-│   ├── lidar-encoder/                  # LiDAR BEV feature extraction
-│   │   ├── pcdet/                     # PCDet framework (3D detection)
-│   │   ├── tools/                     # Utility scripts
-│   │   ├── readme.md                  # LiDAR encoder documentation
-│   │   └── setup.py                   # Installation script
-│   │
+
 │   ├── deepencoder/                    # Vision feature extraction
 │   │   ├── clip_sdpa.py               # CLIP ViT-L/14 encoder
 │   │   ├── sam_vary_sdpa.py           # SAM ViT-B encoder
@@ -174,7 +135,6 @@ LiDAR-Vision-VQA/
 │   │   │   │   └── trainer.py         # Main Trainer class
 │   │   │   ├── models/                # Model architectures
 │   │   │   │   ├── vat_vision.py      # Vision VAT
-│   │   │   │   ├── vat_lidar.py       # LiDAR VAT
 │   │   │   │   ├── vat_blocks.py      # Shared VAT components
 │   │   │   │   ├── vision_adapter.py  # Vision preprocessing
 │   │   │   │   └── lora_utils.py      # LoRA utilities
@@ -259,9 +219,7 @@ LiDAR-Vision-VQA/
 ### Ablation Studies
 | Configuration | BLEU-4 | CIDEr | Notes |
 |---------------|--------|-------|-------|
-| Vision Only | 0.178 | 0.521 | Struggles with 3D spatial relationships |
-| LiDAR Only | 0.165 | 0.489 | Lacks fine-grained object details |
-| **Vision + LiDAR** | **0.203** | **0.598** | Best overall performance |
+| **Vision Only** | 0.203 | 0.598 | Best overall performance |
 
 
 ## 🤝 Contributing
@@ -309,7 +267,6 @@ If you use this work in your research, please cite:
 
 This project builds upon several excellent open-source projects:
 
-- **[PCDet](https://github.com/open-mmlab/OpenPCDet)**: 3D object detection framework for LiDAR processing
 - **[nuScenes](https://www.nuscenes.org/)**: Comprehensive autonomous driving dataset
 - **[CLIP](https://github.com/openai/CLIP)**: Vision-language pre-training by OpenAI
 - **[SAM](https://github.com/facebookresearch/segment-anything)**: Segment Anything Model by Meta

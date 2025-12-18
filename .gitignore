@@ -37,3 +37,5 @@ modal_inference.zip
 DATA/
 src/CreateDataset/DATA
 src/CreateDataset/.env
+
+.bin/*

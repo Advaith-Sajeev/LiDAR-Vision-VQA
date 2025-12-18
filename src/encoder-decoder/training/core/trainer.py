@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from typing import Dict
 
-from ..data import MixedNuDataset, make_collate, SingleProcessDetSampler
+from ..data import VisionNuDataset, make_collate, SingleProcessDetSampler
 from ..utils import (
     init_dist_if_needed,
     is_main_process,
@@ -32,10 +32,10 @@ from ..utils import (
     DEBUG_TRACE,
 )
 from ..utils.sequence_builder import build_training_sequence, ModalityPosition
-from .model_setup import setup_models, create_vat_lidar, setup_optimizer_and_scheduler
+from .model_setup import setup_models, setup_optimizer_and_scheduler
 from .validation import run_validation, run_inference_sampling
 from deepencoder.deepencoder_infer import multiview_tokens_from_sample_token, batch_multiview_tokens_from_sample_tokens
-from configs.default_config import (
+from configs.constants import (
     DEFAULT_VIEW_ORDER,
     TOKENS_PER_VIEW,
     PROJECTOR_DIM,
@@ -80,7 +80,6 @@ class Trainer:
         
         # Enable cuDNN benchmark mode for faster convolutions
         # This is safe because our cuDNN inputs have fixed sizes:
-        #   - BEV features: validated to have consistent (C,H,W) during dataset init
         #   - Camera images: resized to fixed 384x384 in preprocessing
         # Variable-length text sequences don't use cuDNN (they use matmuls)
         if config.get("cudnn_benchmark", True) and self.device.type == "cuda":
@@ -117,36 +116,41 @@ class Trainer:
         debug.info("trainer", "Initializing datasets...")
         self._setup_datasets()
         
-        # Create LiDAR VAT now that we know BEV shape
-        debug.info("trainer", f"Creating LiDAR VAT (c_in={self.c_in}, d_model={self.d_model})...")
-        self.vat_lidar = create_vat_lidar(self.c_in, self.d_model, config, self.device)
-        
         # Verify dtype consistency across all models
         if is_main_process():
             print("\n[dtype] Model dtype verification:")
-            # For QLoRA, base weights are 4-bit quantized, compute happens in qlora_compute_dtype
-            if config.get("use_qlora", False):
+            # Check if using QLoRA/LoRA
+            use_qlora = (config.get("tuning_mode", "qlora") == "qlora")
+            if use_qlora:
                 print(f"[dtype]   LLM: 4-bit NF4 (compute_dtype={config.get('qlora_compute_dtype', 'bfloat16')})")
             else:
                 print(f"[dtype]   LLM: {next(self.base.parameters()).dtype}")
-            print(f"[dtype]   VAT LiDAR: {next(self.vat_lidar.parameters()).dtype}")
-            if config["use_vision"]:
-                print(f"[dtype]   VAT Vision: {next(self.vat_vision.parameters()).dtype}")
-                print(f"[dtype]   Vision Adapter: {next(self.vision_adapter.parameters()).dtype}")
-                print(f"[dtype]   DeepEncoder CLIP: {next(self.runtime.clip_vit.parameters()).dtype}")
-                print(f"[dtype]   DeepEncoder Projector: {next(self.runtime.projector.parameters()).dtype}")
-                print(f"[dtype]   DeepEncoder SAM: {next(self.runtime.sam.parameters()).dtype}")
+            print(f"[dtype]   Vision Adapter: {next(self.vision_adapter.parameters()).dtype}")
+            print(f"[dtype]   DeepEncoder CLIP: {next(self.runtime.clip_vit.parameters()).dtype}")
+            print(f"[dtype]   DeepEncoder Projector: {next(self.runtime.projector.parameters()).dtype}")
+            print(f"[dtype]   DeepEncoder SAM: {next(self.runtime.sam.parameters()).dtype}")
         
         # Print parameter counts
         t_base, a_base, _ = count_trainable_params(self.base)
-        t_lidar, a_lidar, _ = count_trainable_params(self.vat_lidar)
-        print(f"[param] trainable={t_base + t_lidar:,}")
+        t_adapter, a_adapter, _ = count_trainable_params(self.vision_adapter)
+        
+        # Check if runtime has parameters() method 
+        if hasattr(self.runtime, "parameters"):
+           # Create a dummy container to reuse the counting utility
+            class RuntimeContainer(nn.Module):
+                def __init__(self, params):
+                    super().__init__()
+                    self.params = nn.ParameterList(list(params))
+            
+            t_runtime, a_runtime, _ = count_trainable_params(RuntimeContainer(self.runtime.parameters()))
+        else:
+            # Fallback (should not happen with our fix)
+            t_runtime, a_runtime = 0, 0
+            
+        print(f"[param] trainable={t_base + t_adapter + t_runtime:,}")
         
         debug.param_count("trainer", "base_model", self.base)
-        debug.param_count("trainer", "vat_lidar", self.vat_lidar)
-        if config["use_vision"]:
-            debug.param_count("trainer", "vat_vision", self.vat_vision)
-            debug.param_count("trainer", "vision_adapter", self.vision_adapter)
+        debug.param_count("trainer", "vision_adapter", self.vision_adapter)
         
         # Setup DDP
         debug.info("trainer", "Setting up DDP...")
@@ -180,20 +184,7 @@ class Trainer:
             "spice": [],
             "bertscore_f1": []
         }
-        self.grounding_det_area_metrics_history = {
-            "bleu4": [],
-            "cider": [],
-            "spice": [],
-            "bertscore_f1": [],
-            "top1_accuracy": [],
-            "bev_iou": []
-        }
-        self.grounding_det_object_metrics_history = {
-            "bleu4": [],
-            "cider": [],
-            "spice": [],
-            "bertscore_f1": []
-        }
+
         self.metrics_epochs = []
         
         # Handle mixed precision config (supports legacy fp16 and new mixed_precision)
@@ -226,7 +217,6 @@ class Trainer:
         (
             self.tok,
             self.base,
-            self.vat_vision,
             self.vision_adapter,
             self.runtime,
             self.nusc,
@@ -236,7 +226,7 @@ class Trainer:
     def _setup_datasets(self):
         """Initialize datasets and dataloaders"""
         # Check if we should load images in DataLoader workers
-        load_images = self.config.get("use_vision", False)
+        load_images = True
         
         # Master validation toggle - if True, skip ALL validation checks
         skip_all = self.config.get("skip_all_validation", False)
@@ -244,28 +234,17 @@ class Trainer:
             print("[dataset] ⚠️  skip_all_validation=True - ALL data validation disabled!")
         
         # Full dataset with comprehensive validation
-        # All validation settings are configurable via config
-        ds_full = MixedNuDataset(
-            self.config["jsons"],
-            self.config["feature_dirs"],
+        ds_full = VisionNuDataset(
+            json_paths=self.config["jsons"],
             target_field=self.config["target_field"],
             max_samples=self.config["max_samples"],
-            seed=self.config["seed"],
-            nusc=self.nusc if load_images else None,
-            load_images=load_images,
-            # BEV shape validation (defaults match default_config.py)
-            validate_bev_shapes=False if skip_all else self.config.get("validate_bev_shapes", True),
-            validate_all_bev=False if skip_all else self.config.get("validate_all_bev_shapes", True),
-            bev_validation_sample_fraction=self.config.get("bev_validation_sample_fraction", 1.0),
-            bev_validation_min_samples=self.config.get("bev_validation_min_samples", 10),
-            bev_validation_max_samples=self.config.get("bev_validation_max_samples", 100000),
-            bev_validation_workers=self.config.get("bev_validation_workers", 16),
-            # Additional validations (defaults match default_config.py)
-            validate_json_schema=False if skip_all else self.config.get("validate_json_schema", True),
-            validate_token_coverage=False if skip_all else self.config.get("validate_token_coverage", True),
-            validate_image_paths=False if skip_all else self.config.get("validate_image_paths", True),
-            validate_bev_dtype=False if skip_all else self.config.get("validate_bev_dtype", True),
+            nusc=self.nusc,
+            load_images=True,
+            view_order=DEFAULT_VIEW_ORDER,
+            validate_json_schema=not skip_all,
+            validate_image_paths=not skip_all,
         )
+
         
         # Train/val split
         val_size = max(1, int(len(ds_full) * self.config["val_split"]))
@@ -277,24 +256,11 @@ class Trainer:
         )
         
         # Store reference to full dataset for token2path access
-        self.ds_full = ds_full
+        # self.ds_full = ds_full
         
         if is_main_process():
             print(f"[dataset] train={train_size}  val={val_size}")
         
-        # Get BEV channel dimension from validated dataset shape
-        # This is safer than probing a single sample - validation ensures consistency
-        if ds_full.bev_channels is not None:
-            self.c_in = ds_full.bev_channels
-            if is_main_process():
-                print(f"[BEV] Using validated channel dimension: C={self.c_in}")
-        else:
-            # Fallback: probe first sample (validation disabled)
-            probe = ds_full[0]["bev"]
-            self.c_in = int(probe.shape[0])
-            if is_main_process():
-                print(f"[BEV] Probed channel dimension: C={self.c_in} (validation disabled)")
-        self.config["c_in"] = self.c_in
         
         # Samplers
         sampler_train = (
@@ -359,32 +325,24 @@ class Trainer:
         if self.world_size > 1:
             # find_unused_parameters=False improves performance when all params are always used
             # Set to True only if you see "unused parameter" errors during training
-            self.vat_lidar = nn.parallel.DistributedDataParallel(
-                self.vat_lidar, device_ids=[self.local_rank], find_unused_parameters=False
-            )
+            # Removed LiDAR VAT DDP wrapping
             self.base = nn.parallel.DistributedDataParallel(
                 self.base, device_ids=[self.local_rank], find_unused_parameters=False
             )
-            if self.config["use_vision"]:
-                self.vision_adapter = nn.parallel.DistributedDataParallel(
-                    self.vision_adapter, device_ids=[self.local_rank], find_unused_parameters=False
-                )
-                self.vat_vision = nn.parallel.DistributedDataParallel(
-                    self.vat_vision, device_ids=[self.local_rank], find_unused_parameters=False
-                )
-                self.runtime.projector = nn.parallel.DistributedDataParallel(
-                    self.runtime.projector, device_ids=[self.local_rank], find_unused_parameters=False
-                )
-                self.runtime.clip_vit = nn.parallel.DistributedDataParallel(
-                    self.runtime.clip_vit, device_ids=[self.local_rank], find_unused_parameters=False
-                )
+            self.vision_adapter = nn.parallel.DistributedDataParallel(
+                self.vision_adapter, device_ids=[self.local_rank], find_unused_parameters=False
+            )
+            self.runtime.projector = nn.parallel.DistributedDataParallel(
+                self.runtime.projector, device_ids=[self.local_rank], find_unused_parameters=False
+            )
+            self.runtime.clip_vit = nn.parallel.DistributedDataParallel(
+                self.runtime.clip_vit, device_ids=[self.local_rank], find_unused_parameters=False
+            )
     
     def _setup_optimizer(self):
         """Setup optimizer and scheduler"""
         self.optim, self.sched, self.sched_meta = setup_optimizer_and_scheduler(
             self.base,
-            self.vat_lidar,
-            self.vat_vision,
             self.vision_adapter,
             self.runtime,
             self.config,
@@ -425,13 +383,13 @@ class Trainer:
         
         # Get current config values based on adapter type
         if adapter_type == "CLIP":
-            current_r = self.config.get("lora_r", 8)
-            current_alpha = self.config.get("lora_alpha", 16)
+            current_r = self.config.get("clip_lora_r", 8)
+            current_alpha = self.config.get("clip_lora_alpha", 16)
             current_target_modules = self.config.get("clip_lora_target_modules")
         else:  # LLM
-            current_r = self.config.get("lora_r", 8)
-            current_alpha = self.config.get("lora_alpha", 16)
-            current_target_modules = self.config.get("lora_target_modules")
+            current_r = self.config.get("llm_lora_r", 8)
+            current_alpha = self.config.get("llm_lora_alpha", 16)
+            current_target_modules = self.config.get("llm_lora_targets")
         
         # Get saved config values
         saved_r = saved_config.get("r")
@@ -474,43 +432,32 @@ class Trainer:
                 print(f"[resume] loading from {tag}")
             
             # Load model states
-            vat_lidar_path = self.out_dir / f"vat_lidar_{tag}.pt"
-            if vat_lidar_path.exists():
-                vat_lidar_model = (
-                    self.vat_lidar.module
-                    if isinstance(self.vat_lidar, nn.parallel.DistributedDataParallel)
-                    else self.vat_lidar
-                )
-                vat_lidar_model.load_state_dict(torch.load(vat_lidar_path, map_location=self.device))
+            # Removed LiDAR VAT loading
+            if self.world_size > 1:
+               self.base.module.load_state_dict(prev_state["base"])
+            else:
+               self.base.load_state_dict(prev_state["base"])
+               
+            # Load vision components
+            # Load vision components
+            va_path = self.out_dir / f"vision_adapter_{tag}.pt"
+            proj_path = self.out_dir / f"projector_{tag}.pt"
             
-            if self.config["use_vision"]:
-                vat_vision_path = self.out_dir / f"vat_vision_{tag}.pt"
-                if vat_vision_path.exists():
-                    vat_vision_model = (
-                        self.vat_vision.module
-                        if isinstance(self.vat_vision, nn.parallel.DistributedDataParallel)
-                        else self.vat_vision
-                    )
-                    vat_vision_model.load_state_dict(torch.load(vat_vision_path, map_location=self.device))
-                
-                va_path = self.out_dir / f"vision_adapter_{tag}.pt"
-                proj_path = self.out_dir / f"projector_{tag}.pt"
-                
-                if va_path.exists():
-                    vision_adapter_model = (
-                        self.vision_adapter.module
-                        if isinstance(self.vision_adapter, nn.parallel.DistributedDataParallel)
-                        else self.vision_adapter
-                    )
-                    vision_adapter_model.load_state_dict(torch.load(va_path, map_location=self.device))
-                
-                if proj_path.exists():
-                    proj_model = (
-                        self.runtime.projector.module
-                        if isinstance(self.runtime.projector, nn.parallel.DistributedDataParallel)
-                        else self.runtime.projector
-                    )
-                    proj_model.load_state_dict(torch.load(proj_path, map_location=self.device))
+            if va_path.exists():
+                vision_adapter_model = (
+                    self.vision_adapter.module
+                    if isinstance(self.vision_adapter, nn.parallel.DistributedDataParallel)
+                    else self.vision_adapter
+                )
+                vision_adapter_model.load_state_dict(torch.load(va_path, map_location=self.device))
+            
+            if proj_path.exists():
+                proj_model = (
+                    self.runtime.projector.module
+                    if isinstance(self.runtime.projector, nn.parallel.DistributedDataParallel)
+                    else self.runtime.projector
+                )
+                proj_model.load_state_dict(torch.load(proj_path, map_location=self.device))
                 
                 # Load CLIP LoRA adapter
                 clip_lora_path = self.out_dir / f"clip_lora_adapter_{tag}"
@@ -682,10 +629,6 @@ class Trainer:
             # Restore metrics history for live plotting
             if prev_state.get("caption_metrics_history") is not None:
                 self.caption_metrics_history = prev_state["caption_metrics_history"]
-            if prev_state.get("grounding_det_area_metrics_history") is not None:
-                self.grounding_det_area_metrics_history = prev_state["grounding_det_area_metrics_history"]
-            if prev_state.get("grounding_det_object_metrics_history") is not None:
-                self.grounding_det_object_metrics_history = prev_state["grounding_det_object_metrics_history"]
             if prev_state.get("metrics_epochs") is not None:
                 self.metrics_epochs = prev_state["metrics_epochs"]
             
@@ -720,30 +663,17 @@ class Trainer:
         """Main training loop"""
         # Log component toggles
         if is_main_process():
-            use_vision_training = self.config.get("training_use_vision", True)
-            use_lidar_training = self.config.get("training_use_lidar", True)
-            use_vision_validation = self.config.get("validation_use_vision", True)
-            use_lidar_validation = self.config.get("validation_use_lidar", True)
-            
-            print(f"\n[training_toggles] Vision={use_vision_training}, LiDAR={use_lidar_training}")
-            print(f"[validation_toggles] Vision={use_vision_validation}, LiDAR={use_lidar_validation}")
-            
             # Log image loading mode
             if self.load_images:
                 print(f"[vision_pipeline] Using DataLoader workers for image loading (fast path)")
-            elif self.config.get("use_vision", False):
+            else:
                 print(f"[vision_pipeline] Loading images in training loop (fallback path)")
-            
-            if not use_vision_training or not use_lidar_training:
-                # show which components are disabled
-                print(f"[WARNING] Training with disabled components {' '.join([comp for comp, enabled in zip(['VISION', 'LiDAR'], [use_vision_training, use_lidar_training]) if not enabled])} will train a model that doesn't use them!")
         
         # Set models to train mode
         self.base.train()
-        self.vat_lidar.train()
-        if self.config["use_vision"]:
+        # Removed LiDAR VAT train mode
+        if True:
             self.vision_adapter.train()
-            self.vat_vision.train()
             # Use runtime.train() to properly set CLIP/Projector to train mode
             # while keeping SAM frozen in eval mode
             self.runtime.train()
@@ -855,20 +785,18 @@ class Trainer:
                     print(f"\n[inference_sampling] Running at epoch {epoch}")
                 metrics = run_inference_sampling(
                     self.base,
-                    self.vat_lidar,
-                    self.vat_vision if self.config["use_vision"] else None,
-                    self.vision_adapter if self.config["use_vision"] else None,
-                    self.runtime if self.config["use_vision"] else None,
-                    self.nusc if self.config["use_vision"] else None,
+                    self.vision_adapter,
+                    self.runtime,
+                    self.nusc,
                     self.tok,
                     self.config,
                     self.out_dir,
                     epoch,
                     self.device,
-                    self.ds_full.token2path,
                     self.best_step,
                     use_amp=self.use_amp,
                     amp_dtype=self.amp_dtype,
+                    val_dataset=self.ds_val,
                 )
                 
                 # Store metrics for live plotting
@@ -884,32 +812,12 @@ class Trainer:
                         self.caption_metrics_history["bertscore_f1"].append(cap_dash.get("bertscore_f1", 0.0))
                         print(f"[trainer] Stored caption metrics for epoch {epoch}")
                     
-                    # Store grounding det_area metrics (text + bbox)
-                    if "grounding_det_area_dashboard" in metrics:
-                        area_dash = metrics["grounding_det_area_dashboard"]
-                        self.grounding_det_area_metrics_history["bleu4"].append(area_dash.get("bleu4", 0.0))
-                        self.grounding_det_area_metrics_history["cider"].append(area_dash.get("cider", 0.0))
-                        self.grounding_det_area_metrics_history["spice"].append(area_dash.get("spice", 0.0))
-                        self.grounding_det_area_metrics_history["bertscore_f1"].append(area_dash.get("bertscore_f1", 0.0))
-                        self.grounding_det_area_metrics_history["top1_accuracy"].append(area_dash.get("top1_accuracy", 0.0))
-                        self.grounding_det_area_metrics_history["bev_iou"].append(area_dash.get("bev_iou", 0.0))
-                        print(f"[trainer] Stored grounding det_area metrics for epoch {epoch}")
-                    
-                    # Store grounding det_object metrics (text only)
-                    if "grounding_det_object_dashboard" in metrics:
-                        obj_dash = metrics["grounding_det_object_dashboard"]
-                        self.grounding_det_object_metrics_history["bleu4"].append(obj_dash.get("bleu4", 0.0))
-                        self.grounding_det_object_metrics_history["cider"].append(obj_dash.get("cider", 0.0))
-                        self.grounding_det_object_metrics_history["spice"].append(obj_dash.get("spice", 0.0))
-                        self.grounding_det_object_metrics_history["bertscore_f1"].append(obj_dash.get("bertscore_f1", 0.0))
-                        print(f"[trainer] Stored grounding det_object metrics for epoch {epoch}")
+                        print(f"[trainer] Stored caption metrics for epoch {epoch}")
                     
                     # Generate live plots
                     try:
                         plot_all_metrics(
                             self.caption_metrics_history,
-                            self.grounding_det_area_metrics_history,
-                            self.grounding_det_object_metrics_history,
                             self.metrics_epochs,
                             self.out_dir
                         )
@@ -944,26 +852,17 @@ class Trainer:
         debug.trace("trainer", "=" * 60)
         
         # Use non_blocking=True for async CPU→GPU transfers (overlaps with other work)
-        bev = batch["bev"].to(self.device, non_blocking=True)
         p_ids = batch["prompt_ids"].to(self.device, non_blocking=True)
         a_ids = batch["answer_ids"].to(self.device, non_blocking=True)
         sample_tokens = batch["sample_tokens"]
         
-        debug.shape("trainer", "bev", bev)
         debug.shape("trainer", "prompt_ids", p_ids)
         debug.shape("trainer", "answer_ids", a_ids)
-        debug.debug("trainer", f"Batch size: {bev.shape[0]}")
+        debug.debug("trainer", f"Batch size: {p_ids.shape[0]}")
         debug.debug("trainer", f"Sample tokens: {sample_tokens[:3] if len(sample_tokens) > 3 else sample_tokens}...")
         
         # Check training toggles
-        use_vision_in_training = self.config.get("training_use_vision", True)
-        use_lidar_in_training = self.config.get("training_use_lidar", True)
-        
-        debug.debug("trainer", f"Training toggles: vision={use_vision_in_training}, lidar={use_lidar_in_training}")
-        
-        # Vision pipeline
-        vision_kv = None
-        if self.config["use_vision"] and use_vision_in_training:
+        if self.config["use_vision"]:
             debug.start_timer("trainer", "vision_processing")
             debug.data_flow("trainer", "vision_start", f"Processing {len(sample_tokens)} samples")
             
@@ -1057,33 +956,34 @@ class Trainer:
                     self._special_token_cache[txt] = E(ids)  # [1, 1, d_model]
                 return self._special_token_cache[txt]
             
-            # Process LiDAR (if enabled)
-            # Note: VAT models now include learned output_scale internally,
-            # replacing the external prefix_scale multiplication.
-            debug.start_timer("trainer", "lidar_vat")
+            # Process LiDAR (skipped/removed)
             prefix_lidar = None
-            if use_lidar_in_training:
-                debug.data_flow("trainer", "lidar_start", f"Input BEV shape={tuple(bev.shape)}")
-                prefix_lidar = self.vat_lidar(bev)  # Learned scale applied inside VAT
-                debug.shape("trainer", "prefix_lidar", prefix_lidar)
-                debug.tensor_stats("trainer", "prefix_lidar", prefix_lidar)
-                debug.data_flow("trainer", "lidar_complete", f"Output shape={tuple(prefix_lidar.shape)}")
-            else:
-                debug.debug("trainer", "LiDAR processing skipped (disabled)")
-            debug.end_timer("trainer", "lidar_vat")
+
             
             # Process vision (if enabled and available)
-            debug.start_timer("trainer", "vision_vat")
-            prefix_vision = None
+            # Flatten batch of lists -> list of batched tensors
+            batched_view_tokens = None
             if vision_kv is not None and use_vision_in_training:
-                debug.data_flow("trainer", "vision_vat_start", f"Input shape={tuple(vision_kv.shape)}")
-                prefix_vision = self.vat_vision(vision_kv)  # Learned scale applied inside VAT
-                debug.shape("trainer", "prefix_vision", prefix_vision)
-                debug.tensor_stats("trainer", "prefix_vision", prefix_vision)
-                debug.data_flow("trainer", "vision_vat_complete", f"Output shape={tuple(prefix_vision.shape)}")
+                debug.start_timer("trainer", "vision_collation")
+                # vision_kv is List[List[Tensor]] -> [Batch][View]
+                # We need List[Tensor] -> [View][Batch, Seq, Dim]
+                try:
+                    num_views = len(vision_kv[0])
+                    batched_view_tokens = []
+                    for v_idx in range(num_views):
+                        # Stack view v for all samples
+                        # each t is [256, d_model]
+                        # stacked is [B, 256, d_model]
+                        v_tokens = torch.stack([sample[v_idx] for sample in vision_kv], dim=0)
+                        batched_view_tokens.append(v_tokens)
+                    debug.debug("trainer", f"Collated {num_views} views")
+                except Exception as e:
+                    debug.error("trainer", f"Vision collation failed: {e}")
+                    batched_view_tokens = None
+                debug.end_timer("trainer", "vision_collation")
             else:
-                debug.debug("trainer", "Vision VAT skipped (vision_kv not available or disabled)")
-            debug.end_timer("trainer", "vision_vat")
+                debug.debug("trainer", "Vision processing skipped (vision_kv not available or disabled)")
+
             
             # Get text embeddings
             tok_emb = E(p_ids)
@@ -1098,7 +998,7 @@ class Trainer:
             # See sequence_builder.py for position definitions
             debug.data_flow("trainer", "embedding_assembly", "Building input sequence with explicit positions")
             
-            B = bev.size(0)
+            B = p_ids.size(0)
             inp, seq_info = build_training_sequence(
                 E=E,
                 device=self.device,
@@ -1106,8 +1006,7 @@ class Trainer:
                 batch_size=B,
                 tok_emb=tok_emb,
                 ans_emb=ans_emb,
-                prefix_vision=prefix_vision,
-                prefix_lidar=prefix_lidar,
+                view_tokens_list=batched_view_tokens,
                 get_special_token_emb=get_cached_emb,
             )
             
@@ -1168,7 +1067,6 @@ class Trainer:
         # Unscale gradients before clipping (required for proper grad norm computation)
         self.scaler.unscale_(self.optim)
         
-        torch.nn.utils.clip_grad_norm_(self.vat_lidar.parameters(), self.config["clip_norm"])
         torch.nn.utils.clip_grad_norm_(
             [p for p in self.base.parameters() if p.requires_grad], self.config["clip_norm"]
         )
@@ -1180,7 +1078,10 @@ class Trainer:
             torch.nn.utils.clip_grad_norm_(
                 [p for p in self.runtime.clip_vit.parameters() if p.requires_grad], self.config["clip_norm"]
             )
-            torch.nn.utils.clip_grad_norm_(self.vat_vision.parameters(), self.config["clip_norm"])
+            # SAM compression head gradients are clipped via runtime.sam trainable parameters
+            torch.nn.utils.clip_grad_norm_(
+                [p for p in self.runtime.sam.parameters() if p.requires_grad], self.config["clip_norm"]
+            )
         
         # Step optimizer with scaler (handles inf/nan gradients gracefully)
         self.scaler.step(self.optim)
@@ -1203,8 +1104,8 @@ class Trainer:
             self.device,
             self.tok,
             self.base,
-            self.vat_lidar,
-            self.vat_vision if self.config["use_vision"] else None,
+            self.base,
+            None, # No LiDAR VAT
             self.vision_adapter if self.config["use_vision"] else None,
             self.runtime if self.config["use_vision"] else None,
             self.nusc if self.config["use_vision"] else None,
@@ -1239,8 +1140,6 @@ class Trainer:
             optim=self.optim,
             sched=self.sched,
             scaler=self.scaler,  # Save GradScaler state for mixed precision
-            vat_lidar=self.vat_lidar,
-            vat_vision=self.vat_vision if self.config["use_vision"] else None,
             base=self.base,
             clip_vit=self.runtime.clip_vit if self.config["use_vision"] else None,
             vision_adapter=self.vision_adapter if self.config["use_vision"] else None,
@@ -1252,8 +1151,6 @@ class Trainer:
             val_epochs=self.val_epochs,
             # Metrics history for live plotting (restore on resume)
             caption_metrics_history=self.caption_metrics_history,
-            grounding_det_area_metrics_history=self.grounding_det_area_metrics_history,
-            grounding_det_object_metrics_history=self.grounding_det_object_metrics_history,
             metrics_epochs=self.metrics_epochs,
             # Step-level loss tracking (for detailed plots)
             step_losses=self.step_losses,
@@ -1285,8 +1182,6 @@ class Trainer:
             optim=self.optim,
             sched=self.sched,
             scaler=self.scaler,
-            vat_lidar=self.vat_lidar,
-            vat_vision=self.vat_vision if self.config["use_vision"] else None,
             base=self.base,
             clip_vit=self.runtime.clip_vit if self.config["use_vision"] else None,
             vision_adapter=self.vision_adapter if self.config["use_vision"] else None,
@@ -1297,8 +1192,6 @@ class Trainer:
             val_losses=self.val_losses,
             val_epochs=self.val_epochs,
             caption_metrics_history=self.caption_metrics_history,
-            grounding_det_area_metrics_history=self.grounding_det_area_metrics_history,
-            grounding_det_object_metrics_history=self.grounding_det_object_metrics_history,
             metrics_epochs=self.metrics_epochs,
             step_in_epoch=step_in_epoch,  # Key field for mid-epoch resume detection
             step_losses=self.step_losses,  # Step-level loss history
@@ -1379,10 +1272,6 @@ class Trainer:
         def unwrap(model):
             return model.module if isinstance(model, nn.parallel.DistributedDataParallel) else model
         
-        torch.save(unwrap(self.vat_lidar).state_dict(), self.out_dir / "vat_lidar_best.pt")
-        
-        if self.config["use_vision"]:
-            torch.save(unwrap(self.vat_vision).state_dict(), self.out_dir / "vat_vision_best.pt")
         
         # save_embedding_layers=True: We resize embeddings for special tokens, so explicitly save them
         unwrap(self.base).save_pretrained(self.out_dir / "qwen2_lora_adapter_best", save_embedding_layers=True)

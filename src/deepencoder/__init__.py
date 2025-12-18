@@ -14,7 +14,7 @@ from .clip_sdpa import (
 from .lora_config import DeepEncoderLoRAConfig
 
 # Re-export from centralized config
-from configs.default_config import (
+from configs.constants import (
 	DEFAULT_VIEW_ORDER,
 	TOKENS_PER_VIEW,
 	PROJECTOR_DIM,

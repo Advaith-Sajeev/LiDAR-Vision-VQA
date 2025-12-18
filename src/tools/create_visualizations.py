@@ -42,21 +42,7 @@ _VIEW_KEYWORDS: List[Tuple[str, str]] = [
 ]
 
 
-def load_lidar_points(lidar_path: Path) -> np.ndarray:
-    """Load nuScenes LIDAR_TOP .pcd.bin and return XYZ + intensity."""
-    if not lidar_path or not lidar_path.exists():
-        return np.empty((0, 4), dtype=np.float32)
 
-    data = np.fromfile(lidar_path, dtype=np.float32)
-    if data.size == 0:
-        return np.empty((0, 4), dtype=np.float32)
-
-    feature_dim = 5  # nuScenes stores x, y, z, intensity, ring index
-    usable = (data.size // feature_dim) * feature_dim
-    if usable == 0:
-        return np.empty((0, 4), dtype=np.float32)
-    data = data[:usable].reshape(-1, feature_dim)
-    return data[:, :4].copy()  # x, y, z, intensity
 
 
 def detect_view(question: str) -> Optional[str]:
@@ -88,46 +74,20 @@ def wrap_text(label: str, text: str, width: int = TEXT_WRAP_WIDTH) -> str:
     return f"{label}:\n{body}"
 
 
-def render_visual(sample_data: Dict, lidar_points: np.ndarray, image_path: Path, out_path: Path) -> None:
+def render_visual(sample_data: Dict, image_path: Path, out_path: Path) -> None:
     image = Image.open(image_path)
     fig = plt.figure(figsize=FIG_SIZE)
-    gs = fig.add_gridspec(1, 3, wspace=0.05, width_ratios=_GRID_WIDTH_RATIOS)
-
-    # LiDAR BEV column
-    ax_lidar = fig.add_subplot(gs[0, 0])
-    if lidar_points.size:
-        xs, ys = lidar_points[:, 0], lidar_points[:, 1]
-        ax_lidar.scatter(xs, ys, c="#ffffff", s=2.5, alpha=1.0)
-        ax_lidar.set_xlim(-10, 10)
-        ax_lidar.set_ylim(-10, 10)
-        ax_lidar.set_aspect("equal", adjustable="box")
-    else:
-        ax_lidar.text(
-            0.5,
-            0.5,
-            "No LiDAR",
-            ha="center",
-            va="center",
-            fontsize=22,
-            color="#f2f2f2",
-        )
-        ax_lidar.set_xlim(-1, 1)
-        ax_lidar.set_ylim(-1, 1)
-    ax_lidar.set_facecolor("#000000")
-    ax_lidar.set_title("LiDAR BEV", fontsize=24, pad=6)
-    ax_lidar.set_xticks([])
-    ax_lidar.set_yticks([])
-    for spine in ax_lidar.spines.values():
-        spine.set_visible(False)
+    # 2 columns instead of 3: Camera, Text
+    gs = fig.add_gridspec(1, 2, wspace=0.05, width_ratios=[4.0, 3.0])
 
     # Camera image column
-    ax_img = fig.add_subplot(gs[0, 1])
+    ax_img = fig.add_subplot(gs[0, 0])
     ax_img.imshow(image)
     ax_img.axis("off")
     ax_img.set_title("Camera View", fontsize=24, pad=6)
 
     # Text column
-    ax_txt = fig.add_subplot(gs[0, 2])
+    ax_txt = fig.add_subplot(gs[0, 1])
     ax_txt.axis("off")
     ax_txt.set_facecolor("#f8f9fb")
     ax_txt.set_xlim(0, 1)
@@ -174,7 +134,7 @@ def process_sample(sample_dir: Path, unmatched: List[Dict], out_dir: Path) -> No
     target_view = detect_view(question)
     artifacts = sample.get("artifacts", {})
     image_files = artifacts.get("copied_image_files", [])
-    lidar_file = artifacts.get("copied_lidar_file")
+    image_files = artifacts.get("copied_image_files", [])
 
     if not target_view:
         unmatched.append(
@@ -198,21 +158,9 @@ def process_sample(sample_dir: Path, unmatched: List[Dict], out_dir: Path) -> No
         )
         return
 
-    lidar_path = sample_dir / lidar_file if lidar_file else None
-    if lidar_path is None or not lidar_path.exists():
-        unmatched.append(
-            {
-                "sample_token": sample.get("sample_token"),
-                "reason": "LiDAR scan not found",
-            }
-        )
-        return
-
-    lidar_points = load_lidar_points(lidar_path)
-
     filename = f"{sample.get('sequence_id', 0):04d}_{sample.get('sample_token')}_{target_view}.png"
     out_path = out_dir / filename
-    render_visual(sample, lidar_points, image_path, out_path)
+    render_visual(sample, image_path, out_path)
 
 
 def locate_latest_run(inference_root: Path) -> Path:

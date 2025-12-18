@@ -178,18 +178,14 @@ def plot_metric_curves(
 
 def plot_all_metrics(
     caption_metrics: Dict[str, List],
-    grounding_det_area_metrics: Dict[str, List],
-    grounding_det_object_metrics: Dict[str, List],
     epochs: List[int],
     out_dir: Path
 ):
     """
-    Plot all caption and grounding metrics for three dashboards.
+    Plot all caption metrics.
     
     Args:
         caption_metrics: Dictionary of caption metric histories
-        grounding_det_area_metrics: Dictionary of det_area metric histories (text + bbox)
-        grounding_det_object_metrics: Dictionary of det_object metric histories (text only)
         epochs: Epoch numbers
         out_dir: Output directory
     """
@@ -197,14 +193,7 @@ def plot_all_metrics(
     metrics_dir = out_dir / "metrics"
     metrics_dir.mkdir(parents=True, exist_ok=True)
     
+    
     # Plot caption metrics
     if caption_metrics:
         plot_metric_curves(caption_metrics, epochs, metrics_dir, "caption")
-    
-    # Plot grounding det_area metrics (text + bbox)
-    if grounding_det_area_metrics:
-        plot_metric_curves(grounding_det_area_metrics, epochs, metrics_dir, "grounding_det_area")
-    
-    # Plot grounding det_object metrics (text only)
-    if grounding_det_object_metrics:
-        plot_metric_curves(grounding_det_object_metrics, epochs, metrics_dir, "grounding_det_object")

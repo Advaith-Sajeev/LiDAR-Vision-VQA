@@ -5,17 +5,15 @@ Changes vs OG DeepSeek-OCR vLLM path (and the earlier version of this script):
   • Image is always **resized with preserved aspect ratio and padded to 1024×1024** (no stretching).
   • **OG normalization** is applied: x = (x - 0.5) / 0.5  (RGB channels, after [0,1] scaling).
   • No local tiles/crops; **global view only**.
-  • Projector now maps **2048 → 2048** (kept for modality-mixing; downstream MLP will map to decoder d_model).
-  • Encoder returns **[HW, 2048]** tokens with grid `(FIXED_GRID_SIDE, FIXED_GRID_SIDE)`; row/newline + final separator are added **downstream**.
+  • Projector maps **2048 → output_dim** (configurable, defaults to decoder's d_model).
+  • Encoder returns **[HW, output_dim]** tokens with grid `(FIXED_GRID_SIDE, FIXED_GRID_SIDE)`; row/newline + final separator are added **downstream**.
 
 Usage:
     python deepencoder_infer.py
 
 Notes:
-  • If you integrate with a downstream LLM: after you receive tokens of shape [256, 2048],
+  • If you integrate with a downstream LLM: after you receive tokens of shape [256, output_dim],
     insert 16 row-delimiters (one after each 16 tokens) and an optional final view-separator downstream.
-    If your delimiter embeddings live in d_model space, map 2048→d_model first (with your downstream MLP),
-    then append delimiters; or append 2048-dim delimiters and map everything together—be consistent.
 """
 
 import math
@@ -222,7 +220,7 @@ def load_and_preprocess_image(
     try:
         img = Image.open(str(image_path))
         img = resize_and_pad_to_square(img)
-        x = _pil_to_tensor_og_norm(img, dtype=dtype)  # [1, 3, 1024, 1024] on CPU
+        x = _pil_to_tensor_og_norm(img, dtype=dtype)  # [1, 3, 1024, 1024]
         return x
     except Exception as e:
         debug.warn(_MODULE, f"Failed to load image {image_path}: {e}")
@@ -401,7 +399,7 @@ from typing import List, Optional, Sequence, Tuple
 from nuscenes.nuscenes import NuScenes
 
 # Import from centralized config
-from configs.default_config import DEFAULT_VIEW_ORDER
+from configs.constants import DEFAULT_VIEW_ORDER
 
 
 def resolve_cam_image_paths(
@@ -428,8 +426,9 @@ class DeepEncoderRuntime:
     Train-ready runtime:
       • SAM is **frozen** and always runs under no_grad() + eval().
       • CLIP is **trainable**; optionally wrapped with LoRA (PEFT).
-      • Projector is **trainable**.
+      • Projector is **trainable** and maps 2048 → output_dim.
       • encode_image / encode_views DO NOT disable grad for CLIP/projector.
+      • Output dimension is configurable via output_dim parameter (defaults to 2048).
     """
 
     def __init__(
@@ -442,6 +441,7 @@ class DeepEncoderRuntime:
         openclip_pretrained: str = "openai",
         lora_config: DeepEncoderLoRAConfig = DeepEncoderLoRAConfig(),
         freeze_clip_backbone_when_lora_enabled: bool = True,
+        output_dim: int = 2048,
     ):
         self.image_size = FIXED_IMAGE_SIZE
         self.grid = (FIXED_GRID_SIDE, FIXED_GRID_SIDE)
@@ -449,14 +449,13 @@ class DeepEncoderRuntime:
         self.dtype = _to_dtype(dtype) if isinstance(dtype, str) else dtype
         self.lora_config = lora_config
         self.freeze_clip_backbone_when_lora_enabled = freeze_clip_backbone_when_lora_enabled
+        self.output_dim = output_dim
 
         # Ensure SAM weights exist
         ckpt = download_sam_if_needed(sam_ckpt, auto_download=auto_download_sam)
 
         # -------- SAM (always frozen) --------
         self.sam = build_sam_vit_b(checkpoint=ckpt).to(device=self.device, dtype=self.dtype)
-        # for p in self.sam.parameters():
-        #     p.requires_grad = False
         for name, p in self.sam.named_parameters():
             # net_2 and net_3 are the DeepEncoder/VARY compression head
             if name.startswith("net_2") or name.startswith("net_3"):
@@ -520,9 +519,9 @@ class DeepEncoderRuntime:
                         lora_count += 1
                 debug.debug(_MODULE, f"CLIP backbone: {frozen_count} params frozen, {lora_count} {lora_type} params trainable")
 
-        # -------- Projector (trainable) --------
+        # -------- Projector (trainable, maps 2048 → output_dim) --------
         self.projector = MlpProjector(
-            EasyDict(projector_type="linear", input_dim=2048, n_embed=2048)
+            EasyDict(projector_type="linear", input_dim=2048, n_embed=self.output_dim)
         ).to(device=self.device, dtype=self.dtype)
 
     def train(self):
@@ -539,14 +538,39 @@ class DeepEncoderRuntime:
         self.projector.eval()
         return self
 
-    def trainable_parameters(self):
-        """Return only parameters that should be optimized (CLIP/LoRA + projector)."""
-        params = []
+    def parameters(self):
+        """Return all trainable parameters (CLIP/LoRA + Projector + SAM heads)."""
+        # CLIP / LoRA
         for p in self.clip_vit.parameters():
             if p.requires_grad:
-                params.append(p)
-        params += list(self.projector.parameters())
-        return params
+                yield p
+        
+        # Projector
+        for p in self.projector.parameters():
+            if p.requires_grad:
+                yield p
+                
+        # SAM (only compression heads)
+        for p in self.sam.parameters():
+            if p.requires_grad:
+                yield p
+
+    def named_parameters(self):
+        """Return all trainable named parameters."""
+        # CLIP / LoRA
+        for n, p in self.clip_vit.named_parameters():
+            if p.requires_grad:
+                yield f"clip_vit.{n}", p
+        
+        # Projector
+        for n, p in self.projector.named_parameters():
+            if p.requires_grad:
+                yield f"projector.{n}", p
+                
+        # SAM
+        for n, p in self.sam.named_parameters():
+            if p.requires_grad:
+                yield f"sam.{n}", p
 
     def _sam_features(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -588,10 +612,10 @@ class DeepEncoderRuntime:
         fused = torch.cat([clip_tokens, sam_tokens], dim=-1)      # [B, HW, 2048]
         debug.trace(_MODULE, f"📐 Fused [CLIP+SAM]: {fused.shape}")
         
-        vision_tokens = self.projector(fused)                      # [B, HW, 2048]
-        debug.trace(_MODULE, f"📐 After projector (2048→2048): {vision_tokens.shape}")
+        vision_tokens = self.projector(fused)                      # [B, HW, output_dim]
+        debug.trace(_MODULE, f"📐 After projector (2048→{self.output_dim}): {vision_tokens.shape}")
 
-        vt = vision_tokens.squeeze(0)  # [HW, 2048]
+        vt = vision_tokens.squeeze(0)  # [HW, output_dim]
         debug.trace(_MODULE, f"✓ Vision encoding complete: {vt.shape}")
         return {"tokens": vt, "grid": self.grid, "image_size": self.image_size}
 
@@ -602,7 +626,7 @@ class DeepEncoderRuntime:
         strict: bool = True,
         view_order: Sequence[str] = DEFAULT_VIEW_ORDER,
     ) -> dict:
-        """Encode multiple camera views. Output tokens are **[HW, 2048]** per view.
+        """Encode multiple camera views. Output tokens are **[HW, output_dim]** per view.
         Missing views -> zeros (unless strict=True, which raises).
         TODO : Change actual 0s to fall-back incase of missing views
         """
@@ -654,7 +678,7 @@ class DeepEncoderRuntime:
                     OR a single batched tensor [N, 3, 1024, 1024]
         
         Returns:
-            vision_tokens: [N, HW, 2048] tensor of vision tokens
+            vision_tokens: [N, HW, output_dim] tensor of vision tokens
         """
         # Stack if list of tensors
         if isinstance(images, list):
