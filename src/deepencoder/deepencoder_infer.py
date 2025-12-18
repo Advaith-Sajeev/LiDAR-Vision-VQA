@@ -3,7 +3,7 @@
 DeepEncoder inference (SAM ViT-B + CLIP ViT-L/14) with a fixed **global-only** view (no local tiles).
 Changes vs OG DeepSeek-OCR vLLM path (and the earlier version of this script):
   • Image is always **resized with preserved aspect ratio and padded to 1024×1024** (no stretching).
-  • **OG normalization** is applied: x = (x - 0.5) / 0.5  (RGB channels, after [0,1] scaling).
+  • **SAM normalization** is applied using official pixel_mean/pixel_std on 0-255 scale.
   • No local tiles/crops; **global view only**.
   • Projector maps **2048 → output_dim** (configurable, defaults to decoder's d_model).
   • Encoder returns **[HW, output_dim]** tokens with grid `(FIXED_GRID_SIDE, FIXED_GRID_SIDE)`; row/newline + final separator are added **downstream**.
@@ -51,9 +51,9 @@ try:
 except Exception:
     _HAS_OPENCLIP = False
 
-# Optional: PEFT for LoRA/QLoRA
+# Optional: PEFT for LoRA
 try:
-    from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+    from peft import LoraConfig, get_peft_model
     _HAS_PEFT = True
 except Exception:
     _HAS_PEFT = False
@@ -122,8 +122,6 @@ def download_sam_if_needed(sam_ckpt: str | None, auto_download: bool = True) -> 
         )
 
     debug.info(_MODULE, f"Downloading SAM ViT-B weights to: {dest_path}")
-    # Some environments need this to avoid SSL inspection issues
-    ctx = ssl.create_default_context()  # noqa: F841 (placeholder for custom handlers)
     try:
         urllib.request.urlretrieve(SAM_VIT_B_URL, dest_path, _progress_hook)
         debug.info(_MODULE, "\nDownload complete.")
@@ -175,9 +173,14 @@ def resize_and_pad_to_square(im: Image.Image, target: int = FIXED_IMAGE_SIZE) ->
     return canvas
 
 
-def _pil_to_tensor_og_norm(im: Image.Image, dtype: torch.dtype = torch.float32) -> torch.Tensor:
-    """PIL RGB -> FloatTensor [1,3,H,W] with **OG normalization** to [-1, 1].
-    Steps: convert to [0,1], then (x - 0.5) / 0.5
+# SAM's official normalization parameters (on 0-255 scale)
+SAM_PIXEL_MEAN = [123.675, 116.28, 103.53]  # RGB
+SAM_PIXEL_STD = [58.395, 57.12, 57.375]     # RGB
+
+
+def _pil_to_tensor_sam_norm(im: Image.Image, dtype: torch.dtype = torch.float32) -> torch.Tensor:
+    """PIL RGB -> FloatTensor [1,3,H,W] with **SAM normalization**.
+    Uses SAM's official pixel_mean and pixel_std on 0-255 scale.
     
     Args:
         im: PIL Image in RGB mode
@@ -185,18 +188,22 @@ def _pil_to_tensor_og_norm(im: Image.Image, dtype: torch.dtype = torch.float32) 
                Using target dtype directly saves memory by avoiding intermediate float32 allocation
                
     Returns:
-        Tensor [1,3,H,W] in range [-1, 1] with the specified dtype
+        Tensor [1,3,H,W] normalized with SAM parameters, with the specified dtype
     """
     if im.mode != "RGB":
         im = im.convert("RGB")
-    # Use float32 for numpy operations (required for division), then convert to target dtype
-    arr = np.array(im, dtype=np.float32) / 255.0  # [0,1]
+    # Keep on 0-255 scale for SAM normalization
+    arr = np.array(im, dtype=np.float32)  # [0,255]
+    # Apply SAM normalization: (x - mean) / std
+    mean = np.array(SAM_PIXEL_MEAN, dtype=np.float32).reshape(1, 1, 3)
+    std = np.array(SAM_PIXEL_STD, dtype=np.float32).reshape(1, 1, 3)
+    arr = (arr - mean) / std
     t = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0)  # [1,3,H,W]
-    t = (t - 0.5) / 0.5  # OG normalization → [-1,1]
     # Convert to target dtype if not float32 (saves memory when using fp16/bf16)
     if dtype != torch.float32:
         t = t.to(dtype=dtype)
     return t
+
 
 
 def load_and_preprocess_image(
@@ -213,14 +220,14 @@ def load_and_preprocess_image(
                Pass target dtype (e.g., bfloat16) to save memory
         
     Returns:
-        Preprocessed tensor [1, 3, 1024, 1024] on CPU, or None if loading fails
+        Preprocessed tensor [1, 3, 1024, 1024], or None if loading fails
     """
     if image_path is None or not Path(image_path).exists():
         return None
     try:
         img = Image.open(str(image_path))
         img = resize_and_pad_to_square(img)
-        x = _pil_to_tensor_og_norm(img, dtype=dtype)  # [1, 3, 1024, 1024]
+        x = _pil_to_tensor_sam_norm(img, dtype=dtype)  # [1, 3, 1024, 1024]
         return x
     except Exception as e:
         debug.warn(_MODULE, f"Failed to load image {image_path}: {e}")
@@ -266,14 +273,14 @@ def load_openclip_vitl14_into_vitmodel(
         if "class_embedding" in sd and hasattr(vit.embeddings, "class_embedding"):
             vit.embeddings.class_embedding.copy_(sd["class_embedding"].to(dtype))
 
-        # positional embedding: [1, 257, 1024] -> Embedding(num_positions, dim)
+        # positional embedding: [257, 1024] -> Embedding(num_positions, dim)
         if "positional_embedding" in sd and hasattr(vit.embeddings, "position_embedding"):
-            pe = sd["positional_embedding"].to(dtype)  # [1, 257, 1024]
-            if vit.embeddings.num_positions == pe.shape[1]:
-                vit.embeddings.position_embedding.weight.copy_(pe.squeeze(0))
+            pe = sd["positional_embedding"].to(dtype)  # [257, 1024]
+            if vit.embeddings.num_positions == pe.shape[0]:
+                vit.embeddings.position_embedding.weight.copy_(pe)
             else:
-                n = min(vit.embeddings.num_positions, pe.shape[1])
-                vit.embeddings.position_embedding.weight[:n].copy_(pe.squeeze(0)[:n])
+                n = min(vit.embeddings.num_positions, pe.shape[0])
+                vit.embeddings.position_embedding.weight[:n].copy_(pe[:n])
 
         # transformer blocks
         my_blocks = vit.transformer.layers
@@ -322,61 +329,6 @@ def load_openclip_vitl14_into_vitmodel(
 
     debug.debug(_MODULE, "CLIP weights loaded where shapes matched. Unmatched params stay randomly-initialized.")
 
-
-# ------------------------------
-# Inference-only helper (kept): SAM ➜ CLIP ➜ concat ➜ projector (2048→2048)
-# This keeps @torch.no_grad() **only** for the standalone helper.
-# Training should use DeepEncoderRuntime below.
-@torch.no_grad()
-def deepencoder_infer(
-    image_path: str,
-    sam_ckpt: str,
-    device: str = "cuda",
-    dtype: torch.dtype = torch.bfloat16,
-    openclip_pretrained: str = "openai",
-):
-    # 1) Load and prep image → fixed 1024×1024 with OG normalization (via padding after aspect-preserving resize)
-    img = Image.open(image_path)
-    img = resize_and_pad_to_square(img)
-    # Use target dtype directly to save memory (avoid intermediate float32 allocation)
-    x = _pil_to_tensor_og_norm(img, dtype=dtype).to(device=device)  # [1,3,1024,1024], [-1,1]
-
-    # 2) Build SAM ViT-B and load checkpoint
-    sam = build_sam_vit_b(checkpoint=sam_ckpt).to(device=device, dtype=dtype)
-    sam.eval()
-
-    # 3) Build CLIP-L/14 and (optionally) load OpenCLIP weights
-    clip_vit = build_clip_l().to(device=device, dtype=dtype)
-    clip_vit.eval()
-    load_openclip_vitl14_into_vitmodel(
-        clip_vit, device=device, dtype=dtype, openclip_pretrained=openclip_pretrained
-    )
-
-    # 4) Build projector (now 2048 -> 2048)
-    projector = MlpProjector(EasyDict(projector_type="linear", input_dim=2048, n_embed=2048)).to(device=device, dtype=dtype)
-    projector.eval()
-
-    # 5) SAM features (global-only)
-    sam_feats = sam(x)  # [B, 1024, Hs, Ws]
-
-    # 6) CLIP tokens conditioned on SAM patch features
-    clip_y = clip_vit(x, sam_feats)  # [B, 1+HW, 1024]
-
-    # 7) Fuse: concat(CLIP_no_CLS, SAM_flat) -> projector (2048→2048)
-    clip_tokens = clip_y[:, 1:, :]                      # [B, HW, 1024]
-    sam_tokens  = sam_feats.flatten(2).permute(0, 2, 1) # [B, HW, 1024]
-    fused = torch.cat([clip_tokens, sam_tokens], dim=-1)      # [B, HW, 2048]
-    vision_tokens = projector(fused)                          # [B, HW, 2048]
-
-    side = FIXED_GRID_SIDE  # 16
-    return {
-        "vision_tokens": vision_tokens,     # [B, 256, 2048] for current (16×16) grid configuration
-        "grid": (side, side),               # (16, 16)
-        "image_size": FIXED_IMAGE_SIZE,     # 1024
-        "normalization": "og_0.5_mean_0.5_std",
-    }
-
-
 def _to_dtype(s: str) -> torch.dtype:
     """Convert string dtype specification to torch.dtype.
     
@@ -394,7 +346,7 @@ def _to_dtype(s: str) -> torch.dtype:
     raise ValueError(f"Unsupported dtype string: {s}. Supported: bf16/bfloat16, fp16/float16, fp32/float32")
 
 
-# ======== Optional: multi-view helpers (kept, now returning 2048-dim tokens) ========
+# ======== Optional: multi-view helpers (kept, now returning output_dim tokens) ========
 from typing import List, Optional, Sequence, Tuple
 from nuscenes.nuscenes import NuScenes
 
@@ -474,7 +426,7 @@ class DeepEncoderRuntime:
 
         if self.lora_config.enabled:
             if not _HAS_PEFT:
-                raise RuntimeError("LoRA/QLoRA requested but 'peft' is not installed.")
+                raise RuntimeError("LoRA requested but 'peft' is not installed.")
 
             # Infer target modules if not explicitly provided
             target_modules = self.lora_config.target_modules
@@ -484,16 +436,6 @@ class DeepEncoderRuntime:
                 target_modules = list(clip_l_lora_default_targets())
                 print(f"[DeepEncoder] Auto-inferred CLIP LoRA targets: {target_modules}")
 
-            # Check if using QLoRA for CLIP (not recommended, CLIP is small)
-            use_qlora = getattr(self.lora_config, 'use_qlora', False)
-            if use_qlora:
-                debug.info(_MODULE, "Preparing CLIP for QLoRA (k-bit training)")
-                self.clip_vit = prepare_model_for_kbit_training(
-                    self.clip_vit,
-                    use_gradient_checkpointing=True,
-                    gradient_checkpointing_kwargs={"use_reentrant": False},
-                )
-
             lcfg = LoraConfig(
                 r=self.lora_config.r,
                 lora_alpha=self.lora_config.lora_alpha,
@@ -502,10 +444,10 @@ class DeepEncoderRuntime:
                 target_modules=target_modules,
                 task_type="FEATURE_EXTRACTION",
             )
-            lora_type = "QLoRA" if use_qlora else "LoRA"
-            debug.debug(_MODULE, f"Applying {lora_type} to CLIP: r={self.lora_config.r}, alpha={self.lora_config.lora_alpha}, targets={target_modules}")
+            debug.debug(_MODULE, f"Applying LoRA to CLIP: r={self.lora_config.r}, alpha={self.lora_config.lora_alpha}, targets={target_modules}")
             self.clip_vit = get_peft_model(self.clip_vit, lcfg)
-            # Optionally freeze the non-LoRA CLIP backbone params:
+            
+            # Freeze the non-LoRA CLIP backbone params
             if self.freeze_clip_backbone_when_lora_enabled:
                 frozen_count = 0
                 lora_count = 0
@@ -517,7 +459,7 @@ class DeepEncoderRuntime:
                         frozen_count += 1
                     else:
                         lora_count += 1
-                debug.debug(_MODULE, f"CLIP backbone: {frozen_count} params frozen, {lora_count} {lora_type} params trainable")
+                debug.debug(_MODULE, f"CLIP backbone: {frozen_count} params frozen, {lora_count} LoRA params trainable")
 
         # -------- Projector (trainable, maps 2048 → output_dim) --------
         self.projector = MlpProjector(
@@ -591,7 +533,7 @@ class DeepEncoderRuntime:
         original_size = img.size
         img = resize_and_pad_to_square(img)
         # Use target dtype directly to save memory (avoid intermediate float32 allocation)
-        x = _pil_to_tensor_og_norm(img, dtype=self.dtype).to(device=self.device)  # [1,3,1024,1024]
+        x = _pil_to_tensor_sam_norm(img, dtype=self.dtype).to(device=self.device)  # [1,3,1024,1024]
         debug.trace(_MODULE, f"📐 Image: {original_size} → {img.size} → tensor {x.shape} dtype={x.dtype}")
 
         # SAM features (frozen)
@@ -640,7 +582,7 @@ class DeepEncoderRuntime:
             debug.trace(_MODULE, f"Processing view {i+1}/{len(image_paths)}: {view_name}")
             if p is not None and Path(p).exists():
                 out_i = self.encode_image(str(p))
-                t = out_i["tokens"]  # [HW, 2048]
+                t = out_i["tokens"]  # [HW, output_dim]
                 tokens_list.append(t)
                 present_mask.append(True)
                 debug.trace(_MODULE, f"✓ View {i+1} ({view_name}) encoded: {t.shape}")
@@ -702,7 +644,7 @@ class DeepEncoderRuntime:
         sam_tokens = sam_feats.flatten(2).permute(0, 2, 1)  # [N, HW, 1024]
         
         fused = torch.cat([clip_tokens, sam_tokens], dim=-1)  # [N, HW, 2048]
-        vision_tokens = self.projector(fused)  # [N, HW, 2048]
+        vision_tokens = self.projector(fused)  # [N, HW, output_dim]
         
         debug.debug(_MODULE, f"✓ Batch encoding complete: {vision_tokens.shape}")
         return vision_tokens
@@ -722,7 +664,7 @@ class DeepEncoderRuntime:
             view_order: Order of camera views (for sizing)
         
         Returns:
-            List of B samples, each containing V tensors [HW, 2048]
+            List of B samples, each containing V tensors [HW, output_dim]
         """
         B = len(batch_images)
         V = len(view_order)
@@ -740,7 +682,7 @@ class DeepEncoderRuntime:
         if not all_images:
             # All missing - return zeros
             HW = self.grid[0] * self.grid[1]  # 256
-            D = 2048
+            D = self.output_dim
             return [[torch.zeros((HW, D), device=self.device, dtype=self.dtype) for _ in range(V)] for _ in range(B)]
         
         debug.debug(_MODULE, f"🚀 Encoding {len(all_images)} pre-loaded images (batch={B}, views={V})")
@@ -749,7 +691,7 @@ class DeepEncoderRuntime:
         batch_tensor = torch.cat(all_images, dim=0).to(device=self.device, dtype=self.dtype)  # [N_valid, 3, 1024, 1024]
         
         # Batch encode all valid images on GPU
-        all_tokens = self.encode_images_batch(batch_tensor)  # [N_valid, HW, 2048]
+        all_tokens = self.encode_images_batch(batch_tensor)  # [N_valid, HW, output_dim]
         
         HW, D = all_tokens.shape[1], all_tokens.shape[2]
         
@@ -781,7 +723,7 @@ class DeepEncoderRuntime:
             view_order: Order of camera views
         
         Returns:
-            List of B samples, each containing V tensors [HW, 2048]
+            List of B samples, each containing V tensors [HW, output_dim]
         """
         from concurrent.futures import ThreadPoolExecutor, as_completed
         
@@ -799,7 +741,7 @@ class DeepEncoderRuntime:
                 img = resize_and_pad_to_square(img)
                 # Convert to tensor on CPU with target dtype
                 # Using target dtype directly saves memory during torch.cat() later
-                x = _pil_to_tensor_og_norm(img, dtype=self.dtype)  # [1, 3, 1024, 1024] on CPU
+                x = _pil_to_tensor_sam_norm(img, dtype=self.dtype)  # [1, 3, 1024, 1024] on CPU
                 return (b_idx, v_idx, x)
             except Exception as e:
                 debug.warn(_MODULE, f"Failed to load image {p}: {e}")
@@ -842,7 +784,7 @@ class DeepEncoderRuntime:
         batch_tensor = torch.cat(all_images, dim=0).to(device=self.device)  # [N_valid, 3, 1024, 1024]
         
         # Batch encode all valid images on GPU
-        all_tokens = self.encode_images_batch(batch_tensor)  # [N_valid, HW, 2048]
+        all_tokens = self.encode_images_batch(batch_tensor)  # [N_valid, HW, output_dim]
         
         HW, D = all_tokens.shape[1], all_tokens.shape[2]
         
@@ -876,7 +818,7 @@ def batch_multiview_tokens_from_sample_tokens(
         strict: Raise on missing views
     
     Returns:
-        List of B samples, each containing 6 view tensors [HW, 2048]
+        List of B samples, each containing 6 view tensors [HW, output_dim]
     """
     # Resolve all image paths
     batch_paths = []
