@@ -181,7 +181,7 @@ def setup_models(config: Dict, device: torch.device, is_main: bool):
     # Load base model
     base = AutoModelForCausalLM.from_pretrained(
         config["model_id"],
-        torch_dtype=model_dtype,
+        dtype=model_dtype,
         device_map={"": device},
         quantization_config=quantization_config,
         attn_implementation=attn_implementation,
@@ -238,11 +238,13 @@ def setup_models(config: Dict, device: torch.device, is_main: bool):
     clip_lora_config = None
     if config.get("clip_lora_enabled", False):
         clip_target_modules = config.get("clip_lora_target_modules", None)
-        if clip_target_modules is None:
-            from ..models import infer_clip_lora_targets
-            clip_target_modules = infer_clip_lora_targets(config["openclip_pretrained"])
-            if is_main:
-                print(f"[CLIP LoRA] Auto-detected target modules: {clip_target_modules}")
+        # If None, DeepEncoder will auto-detect targets internally
+        # No need to call infer_clip_lora_targets here
+        if is_main:
+            if clip_target_modules is not None:
+                print(f"[CLIP LoRA] Using configured target modules: {clip_target_modules}")
+            else:
+                print(f"[CLIP LoRA] Target modules not specified - DeepEncoder will auto-detect from CLIP architecture")
         
         clip_lora_config = DeepEncoderLoRAConfig(
             enabled=True,  # Must set to True for LoRA to be applied

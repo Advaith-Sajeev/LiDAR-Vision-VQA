@@ -48,8 +48,8 @@ def move_folder(old_path: str, new_path: str):
 
 @app.local_entrypoint()
 def main():
-    old_path = "checkpoints/run_20251201_111658"
-    new_path = "checkpoints_backup/run_20251201_overfitting_baseline"
+    old_path = "checkpoints/run_20251203_010659"
+    new_path = "checkpoints_backup/run_20251203_010659-old-train"
 
     print("Moving checkpoint folder...")
     print(f"  From: {old_path}")

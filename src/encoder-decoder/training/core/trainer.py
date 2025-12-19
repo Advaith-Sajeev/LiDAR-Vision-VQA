@@ -222,6 +222,95 @@ class Trainer:
             self.nusc,
             self.d_model,
         ) = setup_models(self.config, self.device, is_main_process())
+        
+        # Logging & Verification
+        if is_main_process():
+            self._log_model_stats("LLM (Base)", self.base)
+            self._log_model_stats("DeepEncoder CLIP", self.runtime.clip_vit)
+            self._log_model_stats("Vision Adapter", self.vision_adapter)
+            
+            self._verify_initialization("LLM", self.base)
+            self._verify_initialization("DeepEncoder CLIP", self.runtime.clip_vit)
+            self._verify_initialization("Vision Adapter", self.vision_adapter)
+
+    def _log_model_stats(self, name: str, model: nn.Module):
+        """Log detailed parameter statistics (Frozen vs Trainable/Random)"""
+        print(f"\n[param_stats] ========= {name} Statistics =========")
+        
+        total_storage = 0
+        total_logical = 0
+        trainable_params = 0
+        frozen_params = 0
+        
+        # Categorize by module/type
+        categories = {
+            "Pretrained/Frozen": 0,
+            "Adapter/LoRA (Trainable)": 0,
+            "Projector/Head (Trainable)": 0,
+            "Other (Trainable)": 0
+        }
+        
+        for n, p in model.named_parameters():
+            storage_count = p.numel()
+            
+            # Check for 4-bit quantization (packed 2 params per byte)
+            if p.dtype == torch.uint8:
+                logical_count = storage_count * 2
+            else:
+                logical_count = storage_count
+                
+            total_storage += storage_count
+            total_logical += logical_count
+            
+            if p.requires_grad:
+                trainable_params += logical_count
+                # Heuristic categorization
+                if "lora_" in n or "adapter" in n:
+                    categories["Adapter/LoRA (Trainable)"] += logical_count
+                elif "projector" in n or "head" in n or "embed" in n:
+                    categories["Projector/Head (Trainable)"] += logical_count
+                else:
+                    categories["Other (Trainable)"] += logical_count
+            else:
+                frozen_params += logical_count
+                categories["Pretrained/Frozen"] += logical_count
+        
+        print(f"[param_stats] Total Params (Logical): {total_logical:,}")
+        if total_logical != total_storage:
+             print(f"[param_stats] Total Storage (Packed): {total_storage:,} (Quantized)")
+             
+        if total_logical > 0:
+            print(f"[param_stats] Frozen (Pretrained): {frozen_params:,} ({frozen_params/total_logical:.1%})")
+            print(f"[param_stats] Trainable (New/Fine-tuned): {trainable_params:,} ({trainable_params/total_logical:.1%})")
+        
+        for cat, count in categories.items():
+            if count > 0:
+                print(f"[param_stats]   - {cat}: {count:,}")
+
+    def _verify_initialization(self, name: str, model: nn.Module):
+        """Verify weights are valid (no NaN/Inf) and key layers are initialized"""
+        print(f"[param_stats] Verifying {name} initialization...")
+        has_issue = False
+        
+        for n, p in model.named_parameters():
+            # Check for NaNs
+            if torch.isnan(p).any():
+                print(f"[param_stats] ❌ NaN found in {n}")
+                has_issue = True
+            if torch.isinf(p).any():
+                print(f"[param_stats] ❌ Inf found in {n}")
+                has_issue = True
+                
+            # Check for Zero Init (only warnings)
+            # lora_B is typically zero-initialized, so we skip it
+            if p.requires_grad and "lora_B" not in n:
+                if (p == 0).all():
+                    # Only warn if it's not a bias (biases can be zero)
+                    if "bias" not in n:
+                        print(f"[param_stats] ⚠️  Warning: {n} is all zeros (unexpected for weight)")
+                        
+        if not has_issue:
+            print(f"[param_stats] ✓ Weights verified: No NaNs/Infs found.")
     
     def _setup_datasets(self):
         """Initialize datasets and dataloaders"""
@@ -431,15 +520,8 @@ class Trainer:
             if is_main_process():
                 print(f"[resume] loading from {tag}")
             
-            # Load model states
-            # Removed LiDAR VAT loading
-            if self.world_size > 1:
-               self.base.module.load_state_dict(prev_state["base"])
-            else:
-               self.base.load_state_dict(prev_state["base"])
-               
             # Load vision components
-            # Load vision components
+            # Note: LLM LoRA is loaded separately below (lines 529-567) from qwen2_lora_adapter_latest/
             va_path = self.out_dir / f"vision_adapter_{tag}.pt"
             proj_path = self.out_dir / f"projector_{tag}.pt"
             
@@ -812,8 +894,6 @@ class Trainer:
                         self.caption_metrics_history["bertscore_f1"].append(cap_dash.get("bertscore_f1", 0.0))
                         print(f"[trainer] Stored caption metrics for epoch {epoch}")
                     
-                        print(f"[trainer] Stored caption metrics for epoch {epoch}")
-                    
                     # Generate live plots
                     try:
                         plot_all_metrics(
@@ -883,8 +963,9 @@ class Trainer:
                     # Use batched VisionAdapter forward pass
                     with torch.autocast(device_type=self.device.type, dtype=self.amp_dtype, enabled=self.use_amp):
                         vision_kv = self.vision_adapter.forward_batch(batch_view_tokens)
-                    debug.shape("trainer", "vision_kv_batch", vision_kv)
-                    debug.data_flow("trainer", "vision_complete", f"shape={tuple(vision_kv.shape)}")
+                    # vision_kv is List[List[Tensor]], each tensor is [HW, d_model]
+                    debug.debug("trainer", f"Vision batch complete: {len(vision_kv)} samples, {len(vision_kv[0])} views")
+                    debug.data_flow("trainer", "vision_complete", f"samples={len(vision_kv)}, views={len(vision_kv[0])}")
                     
                 except Exception as e:
                     debug.warn("trainer", f"Pre-loaded image encoding failed: {e}")
@@ -907,9 +988,10 @@ class Trainer:
                     
                     # Use batched VisionAdapter forward pass (single operation for all B samples)
                     with torch.autocast(device_type=self.device.type, dtype=self.amp_dtype, enabled=self.use_amp):
-                        vision_kv = self.vision_adapter.forward_batch(batch_view_tokens_device)  # [B, V*HW, d_model]
-                    debug.shape("trainer", "vision_kv_batch", vision_kv)
-                    debug.data_flow("trainer", "vision_complete", f"shape={tuple(vision_kv.shape)}")
+                        vision_kv = self.vision_adapter.forward_batch(batch_view_tokens_device)  # List[List[Tensor]]
+                    # vision_kv is List[List[Tensor]], each tensor is [HW, d_model]
+                    debug.debug("trainer", f"Vision batch complete: {len(vision_kv)} samples, {len(vision_kv[0])} views")
+                    debug.data_flow("trainer", "vision_complete", f"samples={len(vision_kv)}, views={len(vision_kv[0])}")
                     
                 except Exception as e:
                     # Fallback to sequential processing if batched fails
@@ -963,7 +1045,7 @@ class Trainer:
             # Process vision (if enabled and available)
             # Flatten batch of lists -> list of batched tensors
             batched_view_tokens = None
-            if vision_kv is not None and use_vision_in_training:
+            if vision_kv is not None and self.config["use_vision"]:
                 debug.start_timer("trainer", "vision_collation")
                 # vision_kv is List[List[Tensor]] -> [Batch][View]
                 # We need List[Tensor] -> [View][Batch, Seq, Dim]
@@ -1104,8 +1186,6 @@ class Trainer:
             self.device,
             self.tok,
             self.base,
-            self.base,
-            None, # No LiDAR VAT
             self.vision_adapter if self.config["use_vision"] else None,
             self.runtime if self.config["use_vision"] else None,
             self.nusc if self.config["use_vision"] else None,

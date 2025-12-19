@@ -163,9 +163,14 @@ def get_modal_training_config() -> Dict:
     the Modal container where /root/src is mounted.
     """
     import sys
+    # Add both paths to ensure imports work
     if "/root/src" not in sys.path:
         sys.path.insert(0, "/root/src")
-    from configs.modal_config import get_modal_training_config as _get_config
+    if "/root/src/modal-trainer" not in sys.path:
+        sys.path.insert(0, "/root/src/modal-trainer")
+    
+    # Import from modal-trainer directory (where modal_config.py lives)
+    from modal_config import get_modal_training_config as _get_config
     return _get_config()
 
 
@@ -227,6 +232,14 @@ def train_model():
     os.environ["TORCH_HOME"] = f"{model_cache_dir}/torch"
     os.environ["XDG_CACHE_HOME"] = model_cache_dir  # For open_clip
     
+    # BERTScore caches the RoBERTa model here (~1.4GB download)
+    # Point it to our persistent volume so it's cached between runs
+    os.environ["BERT_SCORE_CACHE"] = f"{model_cache_dir}/bertscore"
+    os.makedirs(f"{model_cache_dir}/bertscore", exist_ok=True)
+    
+    # Transformers cache (used by BERTScore internally) - relies on HF_HOME
+    # os.environ["TRANSFORMERS_CACHE"] = f"{model_cache_dir}/huggingface"
+    
     # CUDA memory optimization: use expandable segments to reduce fragmentation
     # This helps when reserved-but-unallocated memory is large
     os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
@@ -236,6 +249,7 @@ def train_model():
     print(f"📦 Model cache directory: {model_cache_dir}")
     print(f"   HuggingFace cache: {os.environ['HF_HOME']}")
     print(f"   Torch cache: {os.environ['TORCH_HOME']}")
+    print(f"   BERTScore cache: {os.environ['BERT_SCORE_CACHE']}")
     
     # 1. Setup Environment
     src_path = "/root/src"

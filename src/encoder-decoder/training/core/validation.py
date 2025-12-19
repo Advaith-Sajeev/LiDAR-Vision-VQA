@@ -23,7 +23,7 @@ from configs.constants import (
     PROJECTOR_DIM,
 )
 from ..data.utils import validate_image_paths
-from ..utils import calculate_metrics_by_type, calculate_sample_level_metrics
+from ..utils import calculate_metrics_by_type, calculate_sample_level_metrics, debug
 from ..utils.sequence_builder import build_training_sequence, build_inference_sequence, ModalityPosition
 
 
@@ -681,15 +681,28 @@ def run_inference_sampling(
                     "num_beams": 1,
                 }
             else:
+                # Check if we should sample or greedy decode
+                do_sample = config.get("inference_do_sample", True)
+                temperature = config.get("inference_temperature", 0.7)
+                
+                # If temperature is 0, force greedy decoding (sampling not possible)
+                if temperature <= 1e-5:
+                    do_sample = False
+                
                 generation_kwargs = {
                     **common_kwargs,
-                    "temperature": config.get("inference_temperature", 0.7),
-                    "top_p": config.get("inference_top_p", 0.9),
-                    "top_k": config.get("inference_top_k", 50),
-                    "do_sample": config.get("inference_do_sample", True),
+                    "do_sample": do_sample,
                     "num_beams": config.get("inference_num_beams", 1),
                     "repetition_penalty": 1.0,
                 }
+                
+                # Only add sampling parameters if sampling is enabled
+                if do_sample:
+                    generation_kwargs.update({
+                        "temperature": temperature,
+                        "top_p": config.get("inference_top_p", 0.9),
+                        "top_k": config.get("inference_top_k", 50),
+                    })
             
             # Generate with torch.inference_mode for speed
             try:

@@ -19,7 +19,20 @@ def make_collate(tokenizer, max_ans_toks: int, system_prompt: str = "", load_ima
     """
     # Use default if not provided
     if not system_prompt:
-        system_prompt = "You are an expert autonomous driving assistant. Analyze the camera images from multiple viewpoints to understand the driving scene. Provide accurate, concise descriptions of objects, their locations, distances, and spatial relationships. Use directional terms like 'ahead', 'left', 'right', 'behind' and specify distances in meters when describing object locations."
+        system_prompt = """You are an Autonomous Driving Perception Assistant analyzing six surround-view camera images (Front, Front-Left, Front-Right, Back, Back-Left, Back-Right). Your task is to fuse these views into a consistent scene understanding.
+
+Follow the output template based on the requested mode:
+
+1. @SCENE_SUMMARY_MODE
+   Output Template: A cohesive narrative text describing the driving scene.
+
+2. @ENTITY_LIST_MODE
+   Output Template: Strictly valid JSON using the following schema:
+   {
+     "detected_entities": [
+       [ "Category", "Type", { "KeyAttributes": "Value" }, "Relative_Location" ]
+     ]
+   }"""
     
     def collate(items: List[Dict]):
         tokens = [it["token"] for it in items]

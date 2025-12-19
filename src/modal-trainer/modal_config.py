@@ -61,7 +61,7 @@ def get_modal_training_config() -> Dict:
     
         # ──────────────────────────────────────────────────────────────────
         # JSON/JSONL file paths
-        "caption_json": "/data/Datasets/nuScenes/external/nuCaption.json",
+        "caption_json": "/data/Datasets/nuScenes/external/vision_finetuning_dataset.json",
         # ──────────────────────────────────────────────────────────────────
 
                 
@@ -72,7 +72,7 @@ def get_modal_training_config() -> Dict:
         
         # Maximum number of samples to use (None = use all data)
         # Set to small number (e.g., 10) for quick testing
-        "max_samples": 10,
+        "max_samples": 16,
         
         
         # =========================================================================
@@ -84,9 +84,14 @@ def get_modal_training_config() -> Dict:
         "skip_all_validation": True,
         
         
+        # ==================== Vision Toggle ====================
+        # Enable vision processing (always True for this vision-only model)
+        "use_vision": True,
+        
+        
         # ==================== Training Configuration ====================
         # Number of training epochs
-        "epochs": 50,
+        "epochs": 5,
         
         # Batch size per GPU
         # Using grad_accum=2 to maintain effective batch size of 32
@@ -94,7 +99,7 @@ def get_modal_training_config() -> Dict:
         
         # Gradient accumulation steps (effective_batch = batch_size * grad_accum * num_gpus)
         # Increased to compensate for smaller batch_size (2 * 16 = 32 effective)
-        "grad_accum": 2,
+        "grad_accum": 1,
         
         # Number of DataLoader workers for parallel data loading
         "num_workers": 16,
@@ -121,7 +126,7 @@ def get_modal_training_config() -> Dict:
         
         # Save checkpoint every N steps (0 = disable step-based saving)
         # This is critical for long training runs - allows resuming from last saved step
-        "save_every_steps": 1000,
+        "save_every_steps": 10,
         
         # Keep only last N checkpoints (older ones are deleted)
         "keep_last_n": 3,
@@ -137,12 +142,25 @@ def get_modal_training_config() -> Dict:
         "validate_every": 1,
         
         # System prompt for the model (used in chat template)
-        "system_prompt": "You are an Autonomous Driving Perception Assistant. You are provided with six surround-view camera images captured from the ego vehicle (Front, Front-Left, Front-Right, Back, Back-Left, Back-Right). Your task is to analyze and fuse all views into a single, consistent scene understanding from the ego vehicle’s perspective, and then answer  the questions ask.",
+        "system_prompt": """You are an Autonomous Driving Perception Assistant analyzing six surround-view camera images (Front, Front-Left, Front-Right, Back, Back-Left, Back-Right). Your task is to fuse these views into a consistent scene understanding.
+
+                            Follow the output template based on the requested mode:
+
+                            1. @SCENE_SUMMARY_MODE
+                            Output Template: A cohesive narrative text describing the driving scene.
+
+                            2. @ENTITY_LIST_MODE
+                            Output Template: Strictly valid JSON using the following schema:
+                            {
+                                "detected_entities": [
+                                [ "Category", "Type", { "KeyAttributes": "Value" }, "Relative_Location" ]
+                                ]
+                            }""",
         
         
         # ==================== Inference Sampling Configuration ====================
         # Generate predictions on validation samples every N epochs (0 = disable)
-        "inference_sampling_every": 5,
+        "inference_sampling_every": 2,
         
         # Total number of samples to generate
         "inference_samples_n": 5,
@@ -163,8 +181,8 @@ def get_modal_training_config() -> Dict:
         # Caption Dashboard Metrics (text quality only)
         "eval_caption_bleu4": True,
         "eval_caption_cider": True,
-        "eval_caption_spice": True,
-        "eval_caption_bertscore": True,
+        "eval_caption_spice": False,
+        "eval_caption_bertscore": False,
         
 
         # ==================== Model Configuration ====================
@@ -244,7 +262,7 @@ def get_modal_training_config() -> Dict:
         "weight_decay": 0.05,  # Increased from 0.01 to combat overfitting
         
         # Number of warmup steps for learning rate scheduler
-        "warmup_steps": 1000,
+        "warmup_steps": 10,
         
         # Gradient clipping norm (prevents exploding gradients)
         "clip_norm": 1.0,
