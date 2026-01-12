@@ -127,6 +127,32 @@ def get_training_config() -> Dict:
         "target_field": "answer",
         "max_ans_toks": 256,
         
+        # ==================== Vision VAT Configuration ====================
+        # Number of learnable query tokens for Vision VAT
+        "vision_queries": 2,
+        
+        # Number of transformer layers in Vision VAT
+        "vision_layers": 1,
+        
+        # Number of attention heads in Vision VAT
+        "vision_heads": 2,
+        
+        # MLP expansion ratio for Vision VAT
+        "vision_mlp_ratio": 4.0,
+        
+        # Dropout rate in Vision VAT transformer blocks
+        "vision_dropout": 0.10,
+        
+        # Dropout rate after Vision VAT final projection
+        "vision_post_dropout": 0.10,
+        
+        # Use separate query embeddings for each camera view
+        "vision_per_view_query": False,
+        
+        # If True, error when per-view not feasible; if False, auto-disable with warning
+        "vision_strict_per_view": False,
+        
+        
         # ==================== QLoRA / LoRA Configuration ====================
         # User Request: Disable QLoRA, Use Standard LoRA
         "use_qlora": False,
@@ -154,6 +180,7 @@ def get_training_config() -> Dict:
         
         # ==================== Optimization Configuration ====================
         "lr_lora": 3e-4,
+        "lr_vision_vat": 5e-4,
         "lr_vision": 5e-4,
         "weight_decay": 0.05,
         "warmup_steps": 200, # Lower for local runs usually
