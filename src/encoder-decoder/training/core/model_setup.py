@@ -90,7 +90,7 @@ def _get_model_dtype(config: Dict, device: torch.device) -> torch.dtype:
         device: Target device
         
     Returns:
-        torch.dtype: Either torch.float16 or torch.bfloat16
+        torch.dtype: torch.float16, torch.bfloat16, or torch.float32
     """
     # Handle new mixed_precision config (preferred)
     mixed_prec = config.get('mixed_precision', None)
@@ -99,7 +99,7 @@ def _get_model_dtype(config: Dict, device: torch.device) -> torch.dtype:
     elif mixed_prec == 'bf16':
         return torch.bfloat16
     elif mixed_prec == 'no':
-        return torch.bfloat16  # Even in "no" AMP mode, use bf16 for model weights
+        return torch.float32  # Full precision training (required for V100)
     
     # Fallback to legacy fp16 config
     if config.get("fp16", False) and device.type == "cuda":
