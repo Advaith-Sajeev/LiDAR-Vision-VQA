@@ -186,9 +186,9 @@ def get_modal_training_config() -> Dict:
     # PHASE 2 (Training):   Switch to H200 + fewer cores once validation passes
     # -------------------------------------------------------------------------
     # Phase 1 Config (validation - will OOM on model loading, that's OK):
-    gpu="H100",  # H100 80GB for large model + data validation
-    cpu=40.0,       # 40 cores (Modal max) for parallel validation
-    memory=262144,  # 256 GB RAM
+    gpu="A100-80GB",  # H100 80GB for large model + data validation
+    cpu=8,       # 40 cores (Modal max) for parallel validation
+    memory=131072,  # 128 GB RAM
     # ------------------------------------------------------------------------
     
     image=image,

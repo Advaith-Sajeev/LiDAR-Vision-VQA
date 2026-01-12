@@ -3,8 +3,6 @@
 """
 LiDAR-Vision-LLM Training Script :: src/encoder-decoder/train.py 
 
-TODO :: improve doc string 
-
 Entry point for trainig 
 
 """
@@ -19,418 +17,263 @@ src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../src'))
 if src_path not in sys.path:
     sys.path.insert(0, src_path)
 
-from typing import Dict
+
+from typing import Dict, List, Optional
 from training.core import Trainer
 
+# Import from modal-trainer to reuse logic if possible, or reimplement
+# We will reimplement the config structure here to be standalone/local-optimized
 
 def get_training_config() -> Dict:
     """
-    Get comprehensive training configuration with all available options.
+    Get comprehensive training configuration for LOCAL training (V100 16GB Optimized).
     
-    All options are explicitly shown here for easy customization.
-    Modify values as needed.
-    
-    IMPORTANT:
-    - If resume=False: Set out_dir to a base directory (e.g., "./checkpoints") 
-                      The system will create a timestamped subdirectory
-    - If resume=True:  Set out_dir to point to a specific run directory 
-                      (e.g., "./checkpoints/run_20251110_143052") OR set to base 
-                      directory and you'll be prompted to select a run
+    This config replicates the 'modal_config.py' structure but with settings 
+    tuned for the local environment and specific hardware constraints.
     """
     
     config = {
         # ╔════════════════════════════════════════════════════════════════╗
         # ║                    DEBUG LOGGING TOGGLE                        ║
         # ╚════════════════════════════════════════════════════════════════╝
-        # 
-        # Quick Enable/Disable Debug Mode:
-        #   - Set "debug_mode" to True to enable extensive debug logging
-        #   - Set "debug_mode" to False for normal training (no overhead)
-        # 
-        # Debug Levels (when debug_mode=True):
-        #   1 = INFO  : High-level flow only (minimal output)
-        #   2 = DEBUG : Detailed flow with data tracking (recommended)
-        #   3 = TRACE : Very detailed with shapes, stats, timing (verbose)
-        # 
-        # Module Filtering:
-        #   - [] (empty)              : Show all modules
-        #   - ["trainer"]             : Show only trainer logs
-        #   - ["trainer", "dataset"]  : Show multiple modules
-        # 
-        # Output is automatically saved to: <out_dir>/debug.log
-        # Terminal output is color-coded for easy reading
-        # 
-        # Performance Impact:
-        #   - debug_mode=False : 0% overhead (completely disabled)
-        #   - debug_level=1    : <1% overhead
-        #   - debug_level=2    : 1-3% overhead
-        #   - debug_level=3    : 5-10% overhead
-        # 
-        # See DEBUG_GUIDE.md for complete documentation
-        # ────────────────────────────────────────────────────────────────
-        
-        "debug_mode": True,      # ← SET TO True TO ENABLE DEBUG LOGGING
-        "debug_level": 3,         # ← 1=INFO, 2=DEBUG (recommended), 3=TRACE
-        "debug_modules": [],      # ← [] = all modules, or ["trainer", "dataset"]
-        
-        
+        "debug_mode": False,      # ← SET TO True TO ENABLE DEBUG LOGGING
+        "debug_level": 0,         # ← 0=DISABLED, 1=INFO, 2=DEBUG, 3=TRACE
+        "debug_modules": [],      # ← [] = all
 
-        
+        # ──────────────────────────────────────────────────────────────────
         # JSON/JSONL file paths
-        "jsons": ["/home/j_bindu/fyp-26-grp-38/Dataset_subset/external/nuCaption.json"],
-        
+        # User path: Dataset_subset/external/vision_finetuning_dataset.json
+        "caption_json": "/home/j_bindu/fyp-26-grp-38/Dataset_subset/external/vision_finetuning_dataset.json",
+        # ──────────────────────────────────────────────────────────────────
+
+        # ──────────────────────────────────────────────────────────────────
         # Output directory for checkpoints, logs, and plots
-        # If resume=False: Use base directory (e.g., "./checkpoints")
-        # If resume=True: Use specific run directory OR base directory (will prompt)
         "out_dir": "./checkpoints",
+        # ──────────────────────────────────────────────────────────────────
         
         # Maximum number of samples to use (None = use all data)
         # Set to small number (e.g., 10) for quick testing
-        "max_samples": 10,  # None for full dataset
-        
-        
-        # ==================== Training Configuration ====================
-        # Number of training epochs
-        "epochs": 10,
-        
-        # Batch size per GPU
-        "batch_size": 1,
-        
-        # Gradient accumulation steps (effective_batch = batch_size * grad_accum * num_gpus)
-        "grad_accum": 1,
-        
-        # Random seed for reproducibility
-        "seed": 42,
-        
-        # Mixed precision training mode
-        # Options: "no" (disabled), "fp16" (float16), "bf16" (bfloat16)
-        # bf16 is recommended for modern GPUs (better numerical stability than fp16)
-        "mixed_precision": "bf16",  # "no", "fp16", or "bf16"
-        
-        # Resume from checkpoint if available
-        "resume": False,
-        
-        # Save checkpoint every N steps (0 = disable step-based saving)
-        "save_every_steps": 1000,
-        
-        # Keep only last N checkpoints (older ones are deleted)
-        "keep_last_n": 5,
-        
-        # Plot loss curves every N epochs (currently not used in loop, always plots)
-        "plot_every": 1,
-        
-        # Print tensor shapes during forward pass (for debugging)
-        "debug_shapes": False, 
+        "max_samples": 50,
         
         
         # ==================== Validation Configuration ====================
-        # Percentage of data to use for validation (0.05 = 5%)
-        "val_split": 0.05,
+        # Phase 1: Run with skip_all_validation=False to validate data
+        "skip_all_validation": False,
+        
+        # Percentage of data to use for validation
+        "val_split": 0.1,
         
         # Run validation every N epochs
         "validate_every": 1,
-        
-        # System prompt for the model (used in chat template)
-        "system_prompt": "You are an expert autonomous driving assistant. Analyze the 3D LiDAR point cloud and camera images to understand the driving scene. Provide accurate, concise descriptions for the question asked.",
-        
-        
-        # ==================== Inference Sampling Configuration ====================
-        # Generate predictions on validation samples every N epochs
-        "inference_sampling_every": 1,
-        
-        # Total number of samples to generate
-        # For "caption" mode: can be any positive integer
-        # For "grounding" mode: must be divisible by 2
-        # For "both" mode: must be divisible by 4
-        "inference_samples_n": 12,
-        
-        # Test JSON files for inference sampling
-        "inference_json": "/home/j_bindu/fyp-26-grp-38/Datasets/LiDAR-LLM-Nu-Caption/val.json",
-        
-        # Generation parameters for inference sampling
-        "inference_max_tokens": 64,
-        "inference_temperature": 0.7,
-        "inference_top_p": 0.9,
-        "inference_top_k": 50,
-        "inference_do_sample": True,
-        "inference_num_beams": 1,
-        
-        # ==================== Evaluation Metrics Toggles ====================
-        # Enable/disable specific metrics for each dashboard
-        # Caption Dashboard Metrics (text quality only)
-        "eval_caption_bleu4": True,
-        "eval_caption_cider": True,
-        "eval_caption_spice": True,
-        "eval_caption_bertscore": True,
-        
 
         
-        # Toggle components during inference sampling (for debugging/ablation studies)
-        "inference_use_system": True,   # Include system prompt in inference
-        
-        
-        # ==================== Model Configuration ====================
-        # Hugging Face model ID for base LLM
-        # Options: "Qwen/Qwen2.5-0.5B", "Qwen/Qwen2.5-1.5B", "Qwen/Qwen2.5-3B"
-        "model_id": "Qwen/Qwen2.5-0.5B",
-        
-        # Field name in JSON containing target answer
-        "target_field": "answer",
-        
-        # Maximum answer tokens (longer answers will be truncated)
-        "max_ans_toks": 64,
-        
-        # Scale factor applied to VAT prompts before feeding to LLM
-        # Smaller values (0.1-0.2) help stabilize training
-        "prefix_scale": 0.2,
-        
-        
-
-        
-        
-        # ==================== Vision VAT Configuration ====================
-        # Enable vision pipeline (multi-view cameras)
+        # ==================== Vision Toggle ====================
         "use_vision": True,
         
-        # Number of learnable query tokens for Vision VAT
-        # MUST be divisible by 6 (for 6 camera views)
-        # Recommended: 12 (testing), 1536 (medium), 2304 (large)
-        "vision_queries": 2,
         
-        # Number of transformer layers in Vision VAT
-        "vision_layers": 1,
+        # ==================== Training Configuration ====================
+        "epochs": 10,
         
-        # Number of attention heads in Vision VAT
-        "vision_heads": 2,
+        # Batch size per GPU
+        # V100 16GB is small -> Keep batch_size=1
+        "batch_size": 1,
         
-        # MLP expansion ratio for Vision VAT
-        "vision_mlp_ratio": 4.0,
+        # Gradient accumulation to match larger effective batches
+        # 16 accumulation steps * 1 batch size = 16 effective batch size
+        "grad_accum": 16,
         
-        # Dropout rate in Vision VAT transformer blocks
-        "vision_dropout": 0.10,
+        "num_workers": 16, # Local machine might have fewer cores
         
-        # Dropout rate after Vision VAT final projection
-        "vision_post_dropout": 0.10,
+        "prefetch_factor": 2,
         
-        # Use separate query embeddings for each camera view
-        "vision_per_view_query": False, # keep False 
+        "seed": 42,
         
-        # If True, error when per-view not feasible; if False, auto-disable with warning
-        "vision_strict_per_view": False, # keep False
+        # Mixed precision: "no" for float32 (User Request for V100)
+        "mixed_precision": "no",
+        
+        "gradient_checkpointing": True,
+        
+        "resume": True,
+        
+        "save_every_steps": 500,
+        
+        "keep_last_n": 3,
+        
+        "plot_every": 1,
         
         
-        # ==================== QLoRA Configuration ====================
-        # Enable 4-bit quantization (QLoRA) for memory-efficient training
-        # When enabled, the base LLM is loaded in 4-bit precision
-        "use_qlora": False,  # Set to True for memory-efficient training
+        # ==================== Inference Configuration ====================
+        "inference_sampling_every": 5,
+        "inference_samples_n": 10, 
+        "inference_caption_json": None,
         
-        # Quantization type: "nf4" (normalized float4) or "fp4" (float4)
-        # nf4 is recommended for better accuracy
+        "inference_max_tokens": 256,
+        "inference_temperature": 0.0,
+        "inference_do_sample": False,
+        "inference_num_beams": 1,
+        "inference_batch_size": 1, # Safe for 16GB VRAM
+        
+        # ==================== Evaluation Metrics ====================
+        "eval_caption_bleu4": True,
+        "eval_caption_cider": True,
+        "eval_caption_spice": False,
+        "eval_caption_bertscore": False,
+        
+
+        # ==================== Model Configuration ====================
+        # User Request: Keep 0.5B model
+        "model_id": "Qwen/Qwen2.5-0.5B",
+        
+        "target_field": "answer",
+        "max_ans_toks": 256,
+        
+        # ==================== QLoRA / LoRA Configuration ====================
+        # User Request: Disable QLoRA, Use Standard LoRA
+        "use_qlora": False,
+        "tuning_mode": "lora", # "qlora", "lora", or "full"
+        
+        # QLoRA settings (Ignored when use_qlora=False but good to keep structure)
         "qlora_quant_type": "nf4",
-        
-        # Enable double quantization for additional memory savings
-        # Quantizes the quantization constants themselves
         "qlora_double_quant": True,
+        "qlora_compute_dtype": "float32", 
         
-        # Compute dtype for QLoRA operations
-        # Options: "bfloat16", "float16", "float32"
-        "qlora_compute_dtype": "bfloat16",
-        
-        # LoRA rank (higher = more parameters, more expressive)
-        # Typical values: 2-8 for small models, 8-16 for large models
-        "lora_r": 2,
-        
-        # LoRA alpha (scaling factor, typically 2*r)
-        "lora_alpha": 4,
-        
-        # LoRA dropout rate
-        "lora_dropout": 0.05,
-        
-        # LLM LoRA target modules (which layers to apply LoRA to)
-        # Common targets for Qwen/LLaMA-style models:
-        #   - Attention: "q_proj", "k_proj", "v_proj", "o_proj"
-        #   - MLP: "gate_proj", "up_proj", "down_proj"
-        # Set to None to use defaults, or customize the list eg: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
-        "lora_target_modules": ["q_proj",  "down_proj"],
+        # LoRA Config
+        "llm_lora_r": 2,
+        "llm_lora_alpha": 4,
+        "llm_lora_dropout": 0.05,
+        "llm_lora_targets": ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
         
         
         # ==================== CLIP LoRA Configuration ====================
-        # Enable LoRA fine-tuning for CLIP (if False, CLIP is fully frozen)
         "clip_lora_enabled": True,
-        
-        # CLIP LoRA target modules (which layers to apply LoRA to)
-        # Common targets for CLIP ViT models:
-        #   - Attention: "qkv_proj", "out_proj" (combined Q/K/V projection)
-        #   - MLP: "mlp.fc1", "mlp.fc2"
-        # Set to None to use auto-detected defaults from clip_l_lora_default_targets()
-        # Note: CLIP uses the same lora_r, lora_alpha, lora_dropout as LLM above
-        "clip_lora_target_modules": ["qkv_proj", "out_proj"],  # None = auto-detect, or provide list like ["qkv_proj", "out_proj", "mlp.fc1", "mlp.fc2"]
+        "clip_lora_r": 2,
+        "clip_lora_alpha": 4,
+        "clip_lora_dropout": 0.10,
+        "clip_lora_target_modules": None, # Auto-detect
         
         
         # ==================== Optimization Configuration ====================
-
-        
-        # Learning rate for Vision VAT
-        "lr_vision_vat": 5e-4,
-        
-        # Learning rate for LLM LoRA adapters
         "lr_lora": 3e-4,
-        
-        # Learning rate for vision components (VisionAdapter, DeepEncoder projector, CLIP LoRA)
         "lr_vision": 5e-4,
-        
-        # Weight decay for regularization
-        "weight_decay": 0.01,
-        
-        # Number of warmup steps for learning rate scheduler
-        "warmup_steps": 100,
-        
-        # Gradient clipping norm (prevents exploding gradients)
+        "weight_decay": 0.05,
+        "warmup_steps": 200, # Lower for local runs usually
         "clip_norm": 1.0,
+        
+        # ==================== Hardware Optimization ====================
+        # User Request: Disable Flash Attention
+        "use_flash_attn": False,
+        
+        # Torch compile (Disable for debugging/local iteration)
+        "use_torch_compile": False,
         
         
         # ==================== nuScenes / DeepEncoder Configuration ====================
-        # Path to nuScenes dataset root directory
-        # Should contain folders: samples, sweeps, maps, etc.
+        # User path: /home/j_bindu/fyp-26-grp-38/Dataset_subset
         "nu_dataroot": "/home/j_bindu/fyp-26-grp-38/Dataset_subset",
-        
-        # nuScenes version
-        # Options: "v1.0-trainval", "v1.0-mini", "v1.0-test"
         "nu_version": "v1.0-trainval",
         
-        # Path to SAM checkpoint (None = auto-download if auto_download_sam=True)
-        "sam_ckpt": None,
-        
-        # Automatically download SAM weights if missing
+        # SAM Checkpoint (Local path or None to download)
+        "sam_ckpt": None, 
         "auto_download_sam": True,
         
-        # Data type for DeepEncoder processing
-        # Options: "float32", "bfloat16" (bfloat16 faster but requires modern GPU)
-        "deep_dtype": "bfloat16",
+        # Dtype for DeepEncoder: float32 for V100
+        "deep_dtype": "float32",
         
-        # OpenCLIP pretrained weights
-        # Options: "openai", "laion400m_e32", "laion2b_s32b_b79k"
+        # OpenCLIP: Use openai to save memory if needed, or laion based on preference
         "openclip_pretrained": "openai",
+        
+        # Timeout (irrelevant locally but keeps schema consistent)
+        "timeout": 86400,
     }
     
-
+    # Auto-configure jsons list
+    config["jsons"] = [config["caption_json"]]
+    
+    return config
 
 
 def setup_output_directory(config: Dict) -> str:
     """
-    Setup output directory based on resume flag.
+    Setup output directory logic (Interactive for Local).
     
-    If resume=True:
-        - If out_dir is a specific run directory with checkpoints, use it
-        - If out_dir is a base directory with run_* subdirectories, prompt user to choose
-        - User can select which run to resume from
-        - MUST point to a directory containing checkpoints
-    
-    If resume=False: 
-        - out_dir should be a base directory (not a specific run directory)
-        - Create a new timestamped directory inside out_dir
-        - MUST NOT point to an existing run directory
-    
-    Args:
-        config: Training configuration dictionary
-        
-    Returns:
-        Updated output directory path
-        
-    Raises:
-        AssertionError: If configuration is invalid
+    Matches the 'Smart Resume' logic:
+    - If checkpoints exist, prompt to resume.
+    - If fresh, create new.
     """
     base_out_dir = Path(config["out_dir"])
     resume = config.get("resume", False)
     
-    # Validate configuration based on resume flag
-    is_run_directory = base_out_dir.name.startswith("run_") and "_" in base_out_dir.name
+    # Ensure base directory exists
+    base_out_dir.mkdir(parents=True, exist_ok=True)
     
-    if not resume:
-        # Assert: When resume=False, out_dir should NOT be a specific run directory
-        assert not is_run_directory, (
-            f"Configuration Error: resume=False but out_dir points to a run directory!\n"
-            f"  out_dir: {base_out_dir}\n"
-            f"  Expected: Base directory (e.g., './checkpoints')\n"
-            f"  Got: Run directory (e.g., './checkpoints/run_20251110_143052')\n"
-            f"\n"
-            f"Fix: Set out_dir to a base directory like './checkpoints'"
-        )
+    # 1. Look for existing run subdirectories
+    run_dirs = sorted(base_out_dir.glob("run_*"), reverse=True)
     
-    if resume:
-        # Check if the specified directory itself contains checkpoints
-        if (base_out_dir / "training_state_latest.pt").exists() or \
-           list(base_out_dir.glob("training_state_step*.pt")):
-            print(f"[checkpoint] Resume mode: Found checkpoints in {base_out_dir}")
-            return str(base_out_dir)
+    # Filter for valid runs with checkpoints
+    valid_runs = []
+    for run_dir in run_dirs:
+        if (run_dir / "training_state_latest.pt").exists():
+            valid_runs.append(run_dir)
+            
+    # 2. Interactive Selection if runs exist
+    if valid_runs and resume:
+        print("\n" + "=" * 80)
+        print("RESUME TRAINING: Select a run to resume from")
+        print("=" * 80)
         
-        # Look for run_* subdirectories
-        run_dirs = sorted(base_out_dir.glob("run_*"), reverse=True)
+        # Add "Start New Run" as option 0
+        print(f"  [0] START NEW RUN (Create new timestamped directory)")
         
-        # Filter to only runs that have checkpoints
-        valid_runs = []
-        for run_dir in run_dirs:
-            if (run_dir / "training_state_latest.pt").exists() or \
-               list(run_dir.glob("training_state_step*.pt")):
-                valid_runs.append(run_dir)
-        
-        if valid_runs:
-            print("\n" + "=" * 80)
-            print("RESUME TRAINING: Select a run to resume from")
-            print("=" * 80)
-            for idx, run_dir in enumerate(valid_runs, start=1):
-                # Get checkpoint info
-                latest_ckpt = run_dir / "training_state_latest.pt"
-                if latest_ckpt.exists():
-                    import torch
-                    state = torch.load(latest_ckpt, map_location="cpu")
-                    epoch = state.get("epoch", "?")
-                    step = state.get("global_step", "?")
-                    loss = state.get("best_loss", "?")
-                    ckpt_info = f"epoch={epoch}, step={step}, best_loss={loss:.4f}" if isinstance(loss, float) else f"epoch={epoch}, step={step}"
-                else:
-                    ckpt_info = "step checkpoint available"
+        for idx, run_dir in enumerate(valid_runs, start=1):
+            latest_ckpt = run_dir / "training_state_latest.pt"
+            # Try to read epoch/step info
+            ckpt_info = "checkpoint available"
+            try:
+                import torch
+                # Load cpu to peek
+                state = torch.load(latest_ckpt, map_location="cpu") 
+                epoch = state.get("epoch", "?")
+                step = state.get("global_step", "?")
+                ckpt_info = f"epoch={epoch}, step={step}"
+            except:
+                pass
                 
-                print(f"  [{idx}] {run_dir.name} ({ckpt_info})")
+            print(f"  [{idx}] {run_dir.name} ({ckpt_info})")
             
-            print("=" * 80)
-            
-            # Get user selection
-            while True:
-                try:
-                    choice = input(f"Enter your choice [1-{len(valid_runs)}] or 'q' to quit: ").strip()
-                    if choice.lower() == 'q':
-                        print("[checkpoint] Training cancelled by user")
-                        sys.exit(0)
-                    
-                    idx = int(choice)
-                    if 1 <= idx <= len(valid_runs):
-                        selected_run = valid_runs[idx - 1]
-                        print(f"[checkpoint] Selected: {selected_run}")
-                        return str(selected_run)
-                    else:
-                        print(f"Please enter a number between 1 and {len(valid_runs)}")
-                except ValueError:
-                    print("Invalid input. Please enter a number or 'q' to quit")
+        print("=" * 80)
         
-        # Assert: When resume=True, must have checkpoints available
-        raise AssertionError(
-            f"Configuration Error: resume=True but no checkpoints found!\n"
-            f"  out_dir: {base_out_dir}\n"
-            f"  Searched for: run_* subdirectories with checkpoints\n"
-            f"\n"
-            f"Options:\n"
-            f"  1. Set resume=False to start a new training run\n"
-            f"  2. Point out_dir to a directory that contains checkpoints\n"
-            f"  3. Check that checkpoint files exist (training_state_latest.pt or training_state_step*.pt)"
-        )
-    else:
-        # Create new timestamped directory
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        new_out_dir = base_out_dir / f"run_{timestamp}"
-        new_out_dir.mkdir(parents=True, exist_ok=True)
-        print(f"[checkpoint] New training run: Created directory: {new_out_dir}")
-        return str(new_out_dir)
+        while True:
+            try:
+                choice = input(f"Enter your choice [0-{len(valid_runs)}] or 'q' to quit: ").strip()
+                if choice.lower() == 'q':
+                    print("Exiting.")
+                    sys.exit(0)
+                
+                idx = int(choice)
+                if idx == 0:
+                    # User chose new run
+                    break
+                elif 1 <= idx <= len(valid_runs):
+                    selected_run = valid_runs[idx - 1]
+                    print(f"Resuming from: {selected_run}")
+                    return str(selected_run)
+                else:
+                    print("Invalid selection.")
+            except ValueError:
+                print("Invalid input.")
+                
+    # 3. Create New Run (Fallback or explicit choice)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    new_out_dir = base_out_dir / f"run_{timestamp}"
+    new_out_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Created new run directory: {new_out_dir}")
+    
+    # If we created a new run, force resume=False in config logic (implied)
+    # But effectively, the trainer checks for the file. 
+    # If the folder is empty, Trainer starts fresh.
+    
+    return str(new_out_dir)
+
 
 
 def main():

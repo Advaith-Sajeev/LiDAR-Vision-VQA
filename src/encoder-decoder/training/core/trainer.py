@@ -1149,6 +1149,19 @@ class Trainer:
         # Unscale gradients before clipping (required for proper grad norm computation)
         self.scaler.unscale_(self.optim)
         
+        # --- Value Verification: Vision Adapter Gradients ---
+        if self.global_step % 10 == 0:
+            total_norm = 0.0
+            for p in self.vision_adapter.parameters():
+                if p.grad is not None:
+                    param_norm = p.grad.data.norm(2)
+                    total_norm += param_norm.item() ** 2
+            total_norm = total_norm ** 0.5
+            if is_main_process():
+                print(f"[grads] Step {self.global_step}: Vision Adapter Grad Norm = {total_norm:.4f} " + 
+                      ("✅ (Updating)" if total_norm > 0 else "⚠️ (Zero/No Update)"))
+        # ----------------------------------------------------
+        
         torch.nn.utils.clip_grad_norm_(
             [p for p in self.base.parameters() if p.requires_grad], self.config["clip_norm"]
         )

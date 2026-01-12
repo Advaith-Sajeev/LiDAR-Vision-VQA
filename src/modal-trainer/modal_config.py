@@ -56,8 +56,8 @@ def get_modal_training_config() -> Dict:
         # See DEBUG_GUIDE.md for complete documentation
         # ────────────────────────────────────────────────────────────────
         
-        "debug_mode": True,      # ← SET TO True TO ENABLE DEBUG LOGGING
-        "debug_level": 3,         # ← 0=DISABLED, 1=INFO, 2=DEBUG, 3=TRACE
+        "debug_mode": False,      # ← SET TO True TO ENABLE DEBUG LOGGING
+        "debug_level": 0,         # ← 0=DISABLED, 1=INFO, 2=DEBUG, 3=TRACE
     
         # ──────────────────────────────────────────────────────────────────
         # JSON/JSONL file paths
@@ -72,7 +72,7 @@ def get_modal_training_config() -> Dict:
         
         # Maximum number of samples to use (None = use all data)
         # Set to small number (e.g., 10) for quick testing
-        "max_samples": 16,
+        "max_samples": None,
         
         
         # =========================================================================
@@ -91,7 +91,7 @@ def get_modal_training_config() -> Dict:
         
         # ==================== Training Configuration ====================
         # Number of training epochs
-        "epochs": 5,
+        "epochs": 10,
         
         # Batch size per GPU
         # Using grad_accum=2 to maintain effective batch size of 32
@@ -99,7 +99,7 @@ def get_modal_training_config() -> Dict:
         
         # Gradient accumulation steps (effective_batch = batch_size * grad_accum * num_gpus)
         # Increased to compensate for smaller batch_size (2 * 16 = 32 effective)
-        "grad_accum": 1,
+        "grad_accum": 2,
         
         # Number of DataLoader workers for parallel data loading
         "num_workers": 16,
@@ -126,7 +126,7 @@ def get_modal_training_config() -> Dict:
         
         # Save checkpoint every N steps (0 = disable step-based saving)
         # This is critical for long training runs - allows resuming from last saved step
-        "save_every_steps": 10,
+        "save_every_steps": 100,
         
         # Keep only last N checkpoints (older ones are deleted)
         "keep_last_n": 3,
@@ -136,7 +136,7 @@ def get_modal_training_config() -> Dict:
         
         # ==================== Validation Configuration ====================
         # Percentage of data to use for validation (0.1 = 10%, 0.05 = 5%)
-        "val_split": 0.05,
+        "val_split": 0.1,
         
         # Run validation every N epochs
         "validate_every": 1,
@@ -160,10 +160,10 @@ def get_modal_training_config() -> Dict:
         
         # ==================== Inference Sampling Configuration ====================
         # Generate predictions on validation samples every N epochs (0 = disable)
-        "inference_sampling_every": 2,
+        "inference_sampling_every": 5,
         
         # Total number of samples to generate
-        "inference_samples_n": 5,
+        "inference_samples_n": 50,
         
         # Test JSON files for inference sampling (used based on dataset_mode)
         "inference_caption_json": None,
@@ -262,7 +262,7 @@ def get_modal_training_config() -> Dict:
         "weight_decay": 0.05,  # Increased from 0.01 to combat overfitting
         
         # Number of warmup steps for learning rate scheduler
-        "warmup_steps": 10,
+        "warmup_steps": 1000,
         
         # Gradient clipping norm (prevents exploding gradients)
         "clip_norm": 1.0,

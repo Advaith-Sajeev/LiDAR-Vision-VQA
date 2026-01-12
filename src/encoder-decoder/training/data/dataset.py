@@ -2,6 +2,7 @@
 
 import random
 import numpy as np
+import os
 import torch
 from pathlib import Path
 from torch.utils.data import Dataset
@@ -148,7 +149,7 @@ class VisionNuDataset(Dataset):
                 nusc=nusc,
                 sample_tokens=sample_tokens,
                 view_order=self.view_order,
-                 num_workers=0, # Use main process for simplicity or add argument if needed
+                num_workers=os.cpu_count() or 16,
                 # max_samples=None checks ALL samples (entire dataset)
             )
             if image_validation.get('tokens_with_missing', 0) > 0:

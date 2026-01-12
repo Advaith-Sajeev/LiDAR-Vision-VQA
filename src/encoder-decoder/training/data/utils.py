@@ -173,7 +173,9 @@ def validate_image_paths(
     
     # Parallel validation with progress bar
     results = []
-    with ThreadPoolExecutor(max_workers=num_workers) as executor:
+    # Ensure at least 1 worker for thread pool (handles num_workers=0 case)
+    actual_workers = max(1, num_workers)
+    with ThreadPoolExecutor(max_workers=actual_workers) as executor:
         futures = {executor.submit(check_token_images, t): t for t in tokens_to_check}
         with tqdm(
             total=len(futures),

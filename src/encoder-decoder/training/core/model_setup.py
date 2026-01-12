@@ -134,11 +134,16 @@ def setup_models(config: Dict, device: torch.device, is_main: bool):
         print(f"[tokenizer] Added {added} per-view delimiter tokens")
 
     # Determine attention implementation
+    use_flash_attn = config.get("use_flash_attn", True)  # Default to True check availability
     attn_implementation = None
-    if _HAS_FLASH_ATTN and device.type == "cuda":
+    
+    if use_flash_attn and _HAS_FLASH_ATTN and device.type == "cuda":
         attn_implementation = "flash_attention_2"
         if is_main:
             print("[LLM] Using Flash Attention 2 for faster training")
+    elif _HAS_FLASH_ATTN and not use_flash_attn:
+        if is_main:
+            print("[LLM] Flash Attention available but disabled via config")
     elif is_main:
         print("[LLM] Flash Attention not available, using default attention")
 
