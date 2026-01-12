@@ -84,12 +84,12 @@ def get_training_config() -> Dict:
         
         "num_workers": 16, # Local machine might have fewer cores
         
-        "prefetch_factor": 2,
+        "prefetch_factor": 1,  # Reduced for memory
         
         "seed": 42,
         
-        # Mixed precision: "no" for float32 (User Request for V100)
-        "mixed_precision": "no",
+        # Mixed precision: fp16 for V100 (native support, half memory)
+        "mixed_precision": "fp16",
         
         "gradient_checkpointing": True,
         
@@ -163,11 +163,11 @@ def get_training_config() -> Dict:
         "qlora_double_quant": True,
         "qlora_compute_dtype": "float32", 
         
-        # LoRA Config
+        # LoRA Config (attention layers only to reduce memory)
         "llm_lora_r": 2,
         "llm_lora_alpha": 4,
         "llm_lora_dropout": 0.05,
-        "llm_lora_targets": ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+        "llm_lora_targets": ["q_proj", "v_proj"],  # Attention only
         
         
         # ==================== CLIP LoRA Configuration ====================
@@ -175,7 +175,7 @@ def get_training_config() -> Dict:
         "clip_lora_r": 2,
         "clip_lora_alpha": 4,
         "clip_lora_dropout": 0.10,
-        "clip_lora_target_modules": None, # Auto-detect
+        "clip_lora_target_modules": ["qkv_proj", "out_proj"],  # Attention only
         
         
         # ==================== Optimization Configuration ====================
@@ -203,8 +203,8 @@ def get_training_config() -> Dict:
         "sam_ckpt": None, 
         "auto_download_sam": True,
         
-        # Dtype for DeepEncoder: float32 for V100
-        "deep_dtype": "float32",
+        # Dtype for DeepEncoder: fp16 for V100 (native support)
+        "deep_dtype": "float16",
         
         # OpenCLIP: Use openai to save memory if needed, or laion based on preference
         "openclip_pretrained": "openai",
