@@ -260,7 +260,13 @@ def setup_models(config: Dict, device: torch.device, is_main: bool):
         )
 
     # Use model_dtype for DeepEncoder to ensure consistency
-    deep_dtype_str = "bfloat16" if model_dtype == torch.bfloat16 else "float16"
+    # Map torch dtype to string for DeepEncoder
+    dtype_map = {
+        torch.bfloat16: "bfloat16",
+        torch.float16: "float16",
+        torch.float32: "float32",
+    }
+    deep_dtype_str = dtype_map.get(model_dtype, "float32")
     if is_main:
         print(f"[DeepEncoder] Using dtype: {deep_dtype_str} (matches LLM dtype)")
     
