@@ -186,7 +186,7 @@ def setup_models(config: Dict, device: torch.device, is_main: bool):
     # Load base model
     base = AutoModelForCausalLM.from_pretrained(
         config["model_id"],
-        dtype=model_dtype,
+        torch_dtype=model_dtype,
         device_map={"": device},
         quantization_config=quantization_config,
         attn_implementation=attn_implementation,
