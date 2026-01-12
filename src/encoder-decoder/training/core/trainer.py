@@ -197,7 +197,7 @@ class Trainer:
         # GradScaler for mixed precision training (handles loss scaling to prevent underflow)
         # Note: GradScaler is only needed for fp16; bf16 typically doesn't need scaling
         # but we enable it anyway for consistent handling
-        self.scaler = torch.amp.GradScaler('cuda', enabled=self.use_amp and mixed_prec == 'fp16')
+        self.scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp and mixed_prec == 'fp16')
         if self.use_amp and mixed_prec == 'fp16':
             debug.info("trainer", "GradScaler enabled for fp16 mixed precision")
         
