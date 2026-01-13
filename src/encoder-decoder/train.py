@@ -111,7 +111,7 @@ def get_training_config() -> Dict:
         "inference_temperature": 0.0,
         "inference_do_sample": False,
         "inference_num_beams": 1,
-        "inference_batch_size": 1, # Safe for 16GB VRAM
+        "inference_batch_size": 4, # Match training batch size
         
         # ==================== Evaluation Metrics ====================
         "eval_caption_bleu4": True,
