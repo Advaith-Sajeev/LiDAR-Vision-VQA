@@ -103,8 +103,8 @@ def get_training_config() -> Dict:
         
         
         # ==================== Inference Configuration ====================
-        "inference_sampling_every": 5,
-        "inference_samples_n": 0,  # Disabled to save memory 
+        "inference_sampling_every": 1,
+        "inference_samples_n": 10,  # Disabled to save memory 
         "inference_caption_json": None,
         
         "inference_max_tokens": 256,
