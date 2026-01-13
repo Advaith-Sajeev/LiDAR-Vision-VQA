@@ -82,9 +82,9 @@ def get_training_config() -> Dict:
         # 4 accumulation steps * 4 batch size = 16 effective batch size
         "grad_accum": 4,
         
-        "num_workers": 16, # HPC has 28 cores, 128GB RAM
+        "num_workers": 24, # HPC has 28 cores, use 24 for loading
         
-        "prefetch_factor": 2,  # Better data loading overlap (uses CPU RAM, not GPU VRAM)
+        "prefetch_factor": 4,  # Increase buffer to avoid GPU starvation
         
         "seed": 42,
         
