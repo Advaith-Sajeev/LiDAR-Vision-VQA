@@ -134,18 +134,15 @@ class Trainer:
                 print(f"[dtype] Cast {count} trainable parameters in {name} to float32")
 
         cast_trainable_to_fp32(self.base, "LLM (Base) - LoRA adapters")
-        # NOTE: VisionAdapter stays in FP16 - it doesn't use LoRA and receives FP16 inputs from DeepEncoder
-        # Only cast CLIP LoRA adapters and Projector (which outputs to FP16 VisionAdapter input)
+        cast_trainable_to_fp32(self.vision_adapter, "Vision Adapter")
         
+        # Cast DeepEncoder trainable params: CLIP LoRA, Projector, SAM compression heads
         if hasattr(self.runtime, "clip_vit"):
-            # Only cast LoRA parameters in CLIP (not the entire model)
-            lora_count = 0
-            for n, p in self.runtime.clip_vit.named_parameters():
-                if p.requires_grad and "lora_" in n and p.dtype != torch.float32:
-                    p.data = p.data.to(dtype=torch.float32)
-                    lora_count += 1
-            if lora_count > 0 and is_main_process():
-                print(f"[dtype] Cast {lora_count} LoRA parameters in DeepEncoder CLIP to float32")
+            cast_trainable_to_fp32(self.runtime.clip_vit, "DeepEncoder CLIP (LoRA)")
+        if hasattr(self.runtime, "projector"):
+            cast_trainable_to_fp32(self.runtime.projector, "DeepEncoder Projector")
+        if hasattr(self.runtime, "sam"):
+            cast_trainable_to_fp32(self.runtime.sam, "DeepEncoder SAM (compression heads)")
         
         # Initialize datasets
         debug.info("trainer", "Initializing datasets...")
@@ -990,14 +987,15 @@ class Trainer:
                 
                 try:
                     # Encode pre-loaded images (no I/O, just GPU work)
-                    # encode_preloaded_views_batch returns tensors already on GPU
-                    batch_view_tokens = self.runtime.encode_preloaded_views_batch(
-                        batch_images, view_order=DEFAULT_VIEW_ORDER
-                    )
-                    
-                    # Tensors are already on GPU from encode_preloaded_views_batch
-                    # Use batched VisionAdapter forward pass
+                    # Wrap with autocast: FP32 trainable weights receive auto-cast FP16 inputs
                     with torch.autocast(device_type=self.device.type, dtype=self.amp_dtype, enabled=self.use_amp):
+                        # encode_preloaded_views_batch returns tensors already on GPU
+                        batch_view_tokens = self.runtime.encode_preloaded_views_batch(
+                            batch_images, view_order=DEFAULT_VIEW_ORDER
+                        )
+                        
+                        # Tensors are already on GPU from encode_preloaded_views_batch
+                        # Use batched VisionAdapter forward pass
                         vision_kv = self.vision_adapter.forward_batch(batch_view_tokens)
                     # vision_kv is List[List[Tensor]], each tensor is [HW, d_model]
                     debug.debug("trainer", f"Vision batch complete: {len(vision_kv)} samples, {len(vision_kv[0])} views")
@@ -1012,18 +1010,19 @@ class Trainer:
                 # Fallback: load images in training loop (slower, original path)
                 debug.debug("trainer", "Loading images in training loop (fallback path)")
                 try:
-                    batch_view_tokens = batch_multiview_tokens_from_sample_tokens(
-                        sample_tokens, self.nusc, runtime=self.runtime, view_order=DEFAULT_VIEW_ORDER, strict=False
-                    )
-                    
-                    # Move all tensors to device first
-                    batch_view_tokens_device = [
-                        [t.to(self.device) for t in view_tokens]
-                        for view_tokens in batch_view_tokens
-                    ]
-                    
-                    # Use batched VisionAdapter forward pass (single operation for all B samples)
+                    # Wrap with autocast: FP32 trainable weights receive auto-cast FP16 inputs
                     with torch.autocast(device_type=self.device.type, dtype=self.amp_dtype, enabled=self.use_amp):
+                        batch_view_tokens = batch_multiview_tokens_from_sample_tokens(
+                            sample_tokens, self.nusc, runtime=self.runtime, view_order=DEFAULT_VIEW_ORDER, strict=False
+                        )
+                        
+                        # Move all tensors to device first
+                        batch_view_tokens_device = [
+                            [t.to(self.device) for t in view_tokens]
+                            for view_tokens in batch_view_tokens
+                        ]
+                        
+                        # Use batched VisionAdapter forward pass (single operation for all B samples)
                         vision_kv = self.vision_adapter.forward_batch(batch_view_tokens_device)  # List[List[Tensor]]
                     # vision_kv is List[List[Tensor]], each tensor is [HW, d_model]
                     debug.debug("trainer", f"Vision batch complete: {len(vision_kv)} samples, {len(vision_kv[0])} views")
