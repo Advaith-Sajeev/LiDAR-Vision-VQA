@@ -129,6 +129,7 @@ def get_training_config() -> Dict:
         
         "target_field": "answer",
         "max_ans_toks": 256,
+        "system_prompt": "You are an autonomous driving assistant. Analyze the camera images to answer questions about the driving environment, traffic rules, and scene details accurately.",
         
 
         # ==================== QLoRA / LoRA Configuration ====================
