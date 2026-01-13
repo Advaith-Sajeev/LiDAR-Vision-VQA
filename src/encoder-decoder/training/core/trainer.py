@@ -44,6 +44,130 @@ from configs.constants import (
 )
 
 
+def scene_aware_split(dataset, lengths: Sequence[int], generator: torch.Generator, nusc=None) -> List[torch.utils.data.Subset]:
+    """
+    Split dataset ensuring all samples from the same scene end up in the same split.
+    This prevents data leakage in video/sequence datasets.
+    
+    Args:
+        dataset: The dataset to split (must have rows with sample_token)
+        lengths: Sequence of lengths for each split (must sum to close to len(dataset))
+        generator: Generator for reproducibility
+        nusc: NuScenes object for scene token lookup (required if scene_token not in dataset)
+        
+    Returns:
+        List of Subsets
+    """
+    import random
+    
+    if nusc is None:
+        print("[dataset] WARNING: No nusc object provided to scene_aware_split. Falling back to random_split (LEAKAGE RISK!)")
+        return torch.utils.data.random_split(dataset, lengths, generator=generator)
+
+    # 1. Group indices by scene_token
+    scene_to_indices = {}
+    missing_scene_tokens = 0
+    
+    # We need to access the underlying rows. 
+    # Handle direct Dataset access or Subset if needed, but here we expect VisionNuDataset
+    if hasattr(dataset, "rows"):
+        rows = dataset.rows
+    else:
+        print("[dataset] WARNING: Dataset does not have .rows attribute. Falling back to random_split.")
+        return torch.utils.data.random_split(dataset, lengths, generator=generator)
+
+    print(f"[dataset] Grouping {len(rows)} samples by scene for splitting...")
+    
+    # Pre-fetch all sample records to speed up lookup if possible, or naive loop
+    # Naive loop with nusc lookups might be slow for 48k samples. 
+    # Optimization: Cache sample -> scene mapping
+    
+    for idx, row in enumerate(rows):
+        # Try to get scene_token directly
+        scene_token = row.get("scene_token")
+        
+        # If not in row, look up via nusc
+        if not scene_token:
+            sample_token = row.get("sample_token")
+            if sample_token:
+                try:
+                    # Retrieve sample record from nusc
+                    # This is O(1) hash map lookup in nusc
+                    sample_rec = nusc.get('sample', sample_token)
+                    scene_token = sample_rec['scene_token']
+                except Exception:
+                    # Failed lookup
+                    pass
+        
+        # Fallback: check "token" key common in some dataset formats
+        if not scene_token and not row.get("sample_token"):
+             sample_token = row.get("token")
+             if sample_token:
+                try:
+                    sample_rec = nusc.get('sample', sample_token)
+                    scene_token = sample_rec['scene_token']
+                except Exception:
+                    pass
+        
+        if not scene_token:
+            scene_token = "unknown_scene"
+            missing_scene_tokens += 1
+            
+        if scene_token not in scene_to_indices:
+            scene_to_indices[scene_token] = []
+        scene_to_indices[scene_token].append(idx)
+        
+    if missing_scene_tokens > 0:
+        print(f"[dataset] WARNING: {missing_scene_tokens} samples have no resolvable scene_token (grouped under 'unknown_scene')")
+
+    # 2. Shuffle scenes
+    scenes = list(scene_to_indices.keys())
+    # Use the generator state to seed Python's random
+    # Extract seed from generator if possible, or just use a fixed seed from config if accessible
+    # torch.Generator doesn't easily expose state to random.Random. 
+    # We'll use a new Random instance seeded with initial_seed from manual_seed call context if possible, 
+    # but here we might just use the generator's seed if we knew it.
+    # Workaround: generate a random integer from torch generator to seed python random
+    seed = torch.randint(0, 2**32, (1,), generator=generator).item()
+    rng = random.Random(seed)
+    rng.shuffle(scenes)
+    
+    # 3. Allocate scenes to splits
+    # lengths should be [train_len, val_len]
+    # We try to approximate these lengths
+    target_train_len = lengths[0]
+    
+    train_indices = []
+    val_indices = []
+    
+    current_train_len = 0
+    
+    # Helper: add rest to val once train is full? 
+    # Or strict allocation? Let's fill train until target, rest to val.
+    
+    for scene in scenes:
+        indices = scene_to_indices[scene]
+        # logic: if we are under target, add to train
+        # unless adding this scene exceeds target significantly? 
+        # Simple greedy approach:
+        if current_train_len < target_train_len:
+            train_indices.extend(indices)
+            current_train_len += len(indices)
+        else:
+            val_indices.extend(indices)
+            
+    print(f"[dataset] Scene-aware split results:")
+    print(f"  Total scenes: {len(scenes)}")
+    print(f"  Train: {len(train_indices)} samples")
+    print(f"  Val:   {len(val_indices)} samples")
+    
+    return [
+        torch.utils.data.Subset(dataset, train_indices),
+        torch.utils.data.Subset(dataset, val_indices)
+    ]
+
+
+
 class Trainer:
     """Main training orchestrator"""
     
@@ -372,15 +496,23 @@ class Trainer:
         train_size = len(ds_full) - val_size
         
         set_seed(self.config["seed"])
-        ds_train, ds_val = torch.utils.data.random_split(
-            ds_full, [train_size, val_size], generator=torch.Generator().manual_seed(self.config["seed"])
+        
+        # Use scene-aware split instead of random_split
+        ds_train, ds_val = scene_aware_split(
+            ds_full, 
+            [train_size, val_size], 
+            generator=torch.Generator().manual_seed(self.config["seed"]),
+            nusc=self.nusc
         )
         
         # Store reference to full dataset for token2path access
         # self.ds_full = ds_full
         
+        # Update train_size to reflect the actual split length (scene-aware split is approximate)
+        self.train_size = len(ds_train)
+        
         if is_main_process():
-            print(f"[dataset] train={train_size}  val={val_size}")
+            print(f"[dataset] train={len(ds_train)}  val={len(ds_val)}")
         
         
         # Samplers
@@ -547,7 +679,8 @@ class Trainer:
 
     def _try_resume(self):
         """Try to resume from checkpoint"""
-        prev_state, tag = try_load_state(self.out_dir)
+        resume_tag = "best" if self.config.get("resume_from_best", False) else "latest"
+        prev_state, tag = try_load_state(self.out_dir, tag=resume_tag)
         if prev_state is not None:
             if is_main_process():
                 print(f"[resume] loading from {tag}")
@@ -1251,7 +1384,7 @@ class Trainer:
                 self.best_val_loss = val_loss
                 self.best_step = self.global_step
                 print(f"[best-val] new best: {self.best_val_loss:.4f} at step {self.best_step}")
-                self._save_best_checkpoint()
+                self._save_best_checkpoint(epoch)
     
     def _save_checkpoint(self, epoch: int):
         """Save epoch checkpoint (end of epoch)"""
@@ -1394,31 +1527,42 @@ class Trainer:
         except Exception as e:
             print(f"[plot] Warning: Failed to generate step loss plot: {e}")
     
-    def _save_best_checkpoint(self):
-        """Save best model checkpoint"""
+    def _save_best_checkpoint(self, epoch: int):
+        """Save best model checkpoint with full training state"""
         self._ensure_config_dumped()
-        def unwrap(model):
-            return model.module if isinstance(model, nn.parallel.DistributedDataParallel) else model
         
-        
-        # save_embedding_layers=True: We resize embeddings for special tokens, so explicitly save them
-        unwrap(self.base).save_pretrained(self.out_dir / "qwen2_lora_adapter_best", save_embedding_layers=True)
-        
-        if self.config["use_vision"]:
-            torch.save(unwrap(self.vision_adapter).state_dict(), self.out_dir / "vision_adapter_best.pt")
-            torch.save(unwrap(self.runtime.projector).state_dict(), self.out_dir / "projector_best.pt")
-            unwrap(self.runtime.clip_vit).save_pretrained(self.out_dir / "clip_lora_adapter_best")
+        # Now we save the FULL state for the best checkpoint too
+        # This doubles storage but allows resuming from the best point
+        save_state(
+            self.out_dir,
+            "best",  # Tag as "best"
+            step=self.global_step,
+            epoch=epoch, 
+            global_step=self.global_step,
+            epoch_losses=self.epoch_losses,
+            best_loss=self.best_val_loss,
+            best_step=self.best_step,
+            optim=self.optim,
+            sched=self.sched,
+            scaler=self.scaler,
+            base=self.base,
+            clip_vit=self.runtime.clip_vit if self.config["use_vision"] else None,
+            vision_adapter=self.vision_adapter if self.config["use_vision"] else None,
+            projector=self.runtime.projector if self.config["use_vision"] else None,
+            sam=self.runtime.sam if self.config["use_vision"] else None,
+            sched_meta=self.sched_meta,
+            config=self.config,
+            val_losses=self.val_losses,
+            val_epochs=self.val_epochs,
+            caption_metrics_history=self.caption_metrics_history,
+            metrics_epochs=self.metrics_epochs,
+            step_losses=self.step_losses,
+            step_loss_steps=self.step_loss_steps,
+            step_in_epoch=None,
+        )
             
-            # Save SAM compression head (net_2 and net_3 - the trainable DeepEncoder/VARY layers)
-            sam_model = unwrap(self.runtime.sam)
-            sam_compression_head_state = {
-                name: param.clone() for name, param in sam_model.named_parameters()
-                if name.startswith("net_2") or name.startswith("net_3")
-            }
-            if sam_compression_head_state:
-                torch.save(sam_compression_head_state, self.out_dir / "sam_compression_head_best.pt")
-            
-            print(f"[best-val] saved all vision components (including SAM compression head)")
+        if is_main_process():
+            print(f"[best-val] Saved best checkpoint (including optimizer state) to {self.out_dir}/training_state_best.pt")
 
     def _ensure_config_dumped(self):
         """Persist resolved training config once per run."""

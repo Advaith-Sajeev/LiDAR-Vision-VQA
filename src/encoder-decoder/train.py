@@ -53,7 +53,7 @@ def get_training_config() -> Dict:
         
         # Maximum number of samples to use (None = use all data)
         # Set to small number (e.g., 10) for quick testing
-        "max_samples": 1000,
+        "max_samples": None,
         
         
         # ==================== Validation Configuration ====================
@@ -95,7 +95,10 @@ def get_training_config() -> Dict:
         
         "resume": False,  # Disabled for debugging
         
-        "save_every_steps": 500,
+        # Resume strategy: "latest" or "best"
+        "resume_from_best": False,  # If True, resume from 'best' checkpoint instead of 'latest'
+        
+        "save_every_steps": 1000,
         
         "keep_last_n": 3,
         
@@ -141,7 +144,7 @@ def get_training_config() -> Dict:
         # LoRA Config (All linear layers enabled)
         "llm_lora_r": 2,
         "llm_lora_alpha": 4,
-        "llm_lora_dropout": 0.05,
+        "llm_lora_dropout": 0.3,
         "llm_lora_targets": ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
         
         
@@ -149,7 +152,7 @@ def get_training_config() -> Dict:
         "clip_lora_enabled": True,
         "clip_lora_r": 2,
         "clip_lora_alpha": 4,
-        "clip_lora_dropout": 0.10,
+        "clip_lora_dropout": 0.3,
         "clip_lora_target_modules": None, # Auto-detect all compatible layers
         
         
@@ -157,8 +160,8 @@ def get_training_config() -> Dict:
         "lr_lora": 3e-4,
         "lr_vision_vat": 5e-4,
         "lr_vision": 5e-4,
-        "weight_decay": 0.05,
-        "warmup_steps": 60, # ~10% of 625 total steps (1k samples, 10 epochs, effective batch 16)
+        "weight_decay": 0.2,
+        "warmup_steps": 1000, # ~10% of 625 total steps (1k samples, 10 epochs, effective batch 16)
         "clip_norm": 1.0,
         
         # ==================== Hardware Optimization ====================
@@ -376,7 +379,7 @@ def main():
     print(f"Gradient accumulation: {config['grad_accum']}")
     print(f"Effective batch size: {config['batch_size'] * config['grad_accum']}")
     print(f"Mixed Precision: {config['mixed_precision']}")
-    print(f"Resume: {config['resume']}")
+    print(f"Resume: {config['resume']} (Mode: {'BEST' if config.get('resume_from_best', False) else 'LATEST'})")
     print(f"Seed: {config['seed']}")
     
     print(f"\n{'='*30} Model {'='*30}")

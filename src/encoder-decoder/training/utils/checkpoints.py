@@ -78,16 +78,16 @@ def save_state(
     def unwrap(model):
         return model.module if isinstance(model, nn.parallel.DistributedDataParallel) else model
     
-    # Save model weights
+    # Save model weights using dynamic tag
     # save_embedding_layers=True: We resize embeddings for special tokens, so explicitly save them
-    unwrap(base).save_pretrained(out_dir / "qwen2_lora_adapter_latest", save_embedding_layers=True)
+    unwrap(base).save_pretrained(out_dir / f"qwen2_lora_adapter_{tag}", save_embedding_layers=True)
     
     if vision_adapter is not None:
-        torch.save(unwrap(vision_adapter).state_dict(), out_dir / "vision_adapter_latest.pt")
+        torch.save(unwrap(vision_adapter).state_dict(), out_dir / f"vision_adapter_{tag}.pt")
     if projector is not None:
-        torch.save(unwrap(projector).state_dict(), out_dir / "projector_latest.pt")
+        torch.save(unwrap(projector).state_dict(), out_dir / f"projector_{tag}.pt")
     if clip_vit is not None:
-        unwrap(clip_vit).save_pretrained(out_dir / "clip_lora_adapter_latest")
+        unwrap(clip_vit).save_pretrained(out_dir / f"clip_lora_adapter_{tag}")
     
     # Save SAM compression head (net_2 and net_3 - the trainable DeepEncoder/VARY layers)
     if sam is not None:
@@ -97,7 +97,7 @@ def save_state(
             if name.startswith("net_2") or name.startswith("net_3")
         }
         if sam_compression_head_state:
-            torch.save(sam_compression_head_state, out_dir / "sam_compression_head_latest.pt")
+            torch.save(sam_compression_head_state, out_dir / f"sam_compression_head_{tag}.pt")
             print(f"[checkpoint] Saved SAM compression head ({len(sam_compression_head_state)} parameters)")
 
     # Save RNG states for reproducibility
@@ -136,28 +136,29 @@ def save_state(
         "step_losses": step_losses,
         "step_loss_steps": step_loss_steps,
     }
-    torch.save(state, out_dir / "training_state_latest.pt")
+    torch.save(state, out_dir / f"training_state_{tag}.pt")
     
     # Log appropriate message based on checkpoint type
     if step_in_epoch is not None and step_in_epoch > 0:
-        print(f"[checkpoint] Saved step checkpoint: epoch {epoch}, step {step_in_epoch} (global_step={global_step})")
+        print(f"[checkpoint] Saved step checkpoint ({tag}): epoch {epoch}, step {step_in_epoch} (global_step={global_step})")
     else:
-        print(f"[checkpoint] Saved epoch {epoch} checkpoint (global_step={global_step})")
+        print(f"[checkpoint] Saved epoch {epoch} checkpoint ({tag}) (global_step={global_step})")
 
 
-def try_load_state(out_dir: Path):
+def try_load_state(out_dir: Path, tag: str = "latest"):
     """
     Try to load training state from checkpoint.
     
     Args:
         out_dir: Directory containing checkpoints
+        tag: Tag of the checkpoint to load (default "latest", can be "best")
         
     Returns:
         Tuple of (state_dict, tag) if found, else (None, "")
     """
-    p_latest = out_dir / "training_state_latest.pt"
-    if p_latest.exists():
-        st = torch.load(p_latest, map_location="cpu", weights_only=False)
-        return st, "latest"
+    p_checkpoint = out_dir / f"training_state_{tag}.pt"
+    if p_checkpoint.exists():
+        st = torch.load(p_checkpoint, map_location="cpu", weights_only=False)
+        return st, tag
         
     return None, ""
