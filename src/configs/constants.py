@@ -135,19 +135,20 @@ VIEW_DELIMITER_TOKENS: Dict[str, Tuple[str, str]] = {
 # They are derived from the DeepEncoder architecture and should NOT be changed
 # unless the underlying model architecture changes.
 
-# DeepEncoder outputs 16x16 grid of tokens per view
-FIXED_GRID_SIDE: int = 16
-TOKENS_PER_VIEW: int = FIXED_GRID_SIDE * FIXED_GRID_SIDE  # 256 tokens per camera view
+# DeepEncoder outputs 6x6 grid of tokens per view (for 384x384)
+FIXED_GRID_SIDE: int = 6
+TOKENS_PER_VIEW: int = FIXED_GRID_SIDE * FIXED_GRID_SIDE  # 36 tokens per camera view
 
 # DeepEncoder projector output dimension (now configurable to match d_model)
 # Default is 2048 (CLIP 1024 + SAM 1024) but can be set to d_model directly
-PROJECTOR_DIM: int = 2048
+# For Qwen2.5-0.5B, d_model is 896
+PROJECTOR_DIM: int = 896
 
 # Total vision tokens when all 6 views are used (without delimiters)
-TOTAL_VISION_TOKENS: int = NUM_VIEWS * TOKENS_PER_VIEW  # 6 * 256 = 1536
+TOTAL_VISION_TOKENS: int = NUM_VIEWS * TOKENS_PER_VIEW  # 6 * 36 = 216
 
 # Total vision tokens including per-view delimiters (12 delimiter tokens)
-TOTAL_VISION_WITH_DELIMITERS: int = TOTAL_VISION_TOKENS + NUM_VIEWS * 2  # 1536 + 12 = 1548
+TOTAL_VISION_WITH_DELIMITERS: int = TOTAL_VISION_TOKENS + NUM_VIEWS * 2  # 216 + 12 = 228
 
 
 # ============================================================================

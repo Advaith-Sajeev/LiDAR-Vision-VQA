@@ -53,7 +53,7 @@ def get_training_config() -> Dict:
         
         # Maximum number of samples to use (None = use all data)
         # Set to small number (e.g., 10) for quick testing
-        "max_samples": 50,
+        "max_samples": 100,
         
         
         # ==================== Validation Configuration ====================
@@ -82,7 +82,7 @@ def get_training_config() -> Dict:
         # 16 accumulation steps * 1 batch size = 16 effective batch size
         "grad_accum": 16,
         
-        "num_workers": 16, # Local machine might have fewer cores
+        "num_workers": 16, # HPC has 28 cores, 128GB RAM
         
         "prefetch_factor": 1,  # Reduced for memory
         
@@ -93,7 +93,7 @@ def get_training_config() -> Dict:
         
         "gradient_checkpointing": True,
         
-        "resume": True,
+        "resume": False,  # Disabled for debugging
         
         "save_every_steps": 500,
         
@@ -127,32 +127,7 @@ def get_training_config() -> Dict:
         "target_field": "answer",
         "max_ans_toks": 256,
         
-        # ==================== Vision VAT Configuration ====================
-        # Number of learnable query tokens for Vision VAT
-        "vision_queries": 2,
-        
-        # Number of transformer layers in Vision VAT
-        "vision_layers": 1,
-        
-        # Number of attention heads in Vision VAT
-        "vision_heads": 2,
-        
-        # MLP expansion ratio for Vision VAT
-        "vision_mlp_ratio": 4.0,
-        
-        # Dropout rate in Vision VAT transformer blocks
-        "vision_dropout": 0.10,
-        
-        # Dropout rate after Vision VAT final projection
-        "vision_post_dropout": 0.10,
-        
-        # Use separate query embeddings for each camera view
-        "vision_per_view_query": False,
-        
-        # If True, error when per-view not feasible; if False, auto-disable with warning
-        "vision_strict_per_view": False,
-        
-        
+
         # ==================== QLoRA / LoRA Configuration ====================
         # User Request: Disable QLoRA, Use Standard LoRA
         "use_qlora": False,
@@ -163,11 +138,11 @@ def get_training_config() -> Dict:
         "qlora_double_quant": True,
         "qlora_compute_dtype": "float32", 
         
-        # LoRA Config (attention layers only to reduce memory)
+        # LoRA Config (All linear layers enabled)
         "llm_lora_r": 2,
         "llm_lora_alpha": 4,
         "llm_lora_dropout": 0.05,
-        "llm_lora_targets": ["q_proj", "v_proj"],  # Attention only
+        "llm_lora_targets": ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
         
         
         # ==================== CLIP LoRA Configuration ====================
@@ -175,7 +150,7 @@ def get_training_config() -> Dict:
         "clip_lora_r": 2,
         "clip_lora_alpha": 4,
         "clip_lora_dropout": 0.10,
-        "clip_lora_target_modules": ["qkv_proj", "out_proj"],  # Attention only
+        "clip_lora_target_modules": None, # Auto-detect all compatible layers
         
         
         # ==================== Optimization Configuration ====================
@@ -409,7 +384,7 @@ def main():
     print(f"Use vision: {config['use_vision']}")
 
     if config['use_vision']:
-        print(f"Vision VAT queries: {config['vision_queries']} (layers={config['vision_layers']}, heads={config['vision_heads']})")
+        print(f"  Vision pipeline enabled")
     print(f"\nLoRA Configuration:")
     print(f"  Tuning Mode: {config.get('tuning_mode', 'qlora')}")
     print(f"  Rank: {config['llm_lora_r']}, Alpha: {config['llm_lora_alpha']}, Dropout: {config['llm_lora_dropout']}")

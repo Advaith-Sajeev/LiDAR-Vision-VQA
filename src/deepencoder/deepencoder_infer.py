@@ -67,9 +67,9 @@ except Exception:
 SAM_VIT_B_URL = "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth"
 SAM_DEFAULT_NAME = "sam_vit_b_01ec64.pth"
 
-# Fixed target grid for 1024×1024 global-only pipeline
-FIXED_IMAGE_SIZE = 1024
-FIXED_GRID_SIDE = 16  # grid side length used in this configuration (16×16 = 256 tokens)
+# Fixed target grid for 384x384 pipeline (memory optimized for V100)
+FIXED_IMAGE_SIZE = 384
+FIXED_GRID_SIDE = 6  # grid side length used in this configuration (6×6 = 36 tokens)
 
 
 # ------------------------------
