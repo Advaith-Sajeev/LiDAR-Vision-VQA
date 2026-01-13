@@ -82,18 +82,19 @@ def run_validation(dl, device, tok, base, vision_adapter, runtime, nusc, config,
         vision_kv = None
         
         try:
-            # Batched vision encoding (much faster than sequential)
-            batch_view_tokens = batch_multiview_tokens_from_sample_tokens(
-                sample_tokens, nusc, runtime=runtime, view_order=DEFAULT_VIEW_ORDER, strict=False
-            )
-            
-            # Move all tensors to device
-            batch_view_tokens_device = [
-                [t.to(device) for t in view_tokens]
-                for view_tokens in batch_view_tokens
-            ]
-            
+            # Wrap with autocast: FP32 trainable weights receive auto-cast FP16 inputs
             with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
+                # Batched vision encoding (much faster than sequential)
+                batch_view_tokens = batch_multiview_tokens_from_sample_tokens(
+                    sample_tokens, nusc, runtime=runtime, view_order=DEFAULT_VIEW_ORDER, strict=False
+                )
+                
+                # Move all tensors to device
+                batch_view_tokens_device = [
+                    [t.to(device) for t in view_tokens]
+                    for view_tokens in batch_view_tokens
+                ]
+                
                 vision_kv = vision_adapter_model.forward_batch(batch_view_tokens_device)
                 
         except Exception as e:
@@ -101,17 +102,18 @@ def run_validation(dl, device, tok, base, vision_adapter, runtime, nusc, config,
             print(f"[validation] Batched vision encoding failed, using sequential: {e}")
             vision_kvs = []
             for tok_str in sample_tokens:
-                mv = multiview_tokens_from_sample_token(
-                    tok_str, nusc, runtime=runtime, view_order=DEFAULT_VIEW_ORDER, strict=False
-                )
-                # Safety check
-                if not mv.get("tokens") or len(mv["tokens"]) != NUM_VIEWS:
-                    dummy_shape = (TOKENS_PER_VIEW, PROJECTOR_DIM)
-                    mv["tokens"] = [torch.zeros(dummy_shape, device=device) for _ in range(NUM_VIEWS)]
-
-                vt_list = [t.to(device) for t in mv["tokens"]]
-
+                # Wrap with autocast
                 with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
+                    mv = multiview_tokens_from_sample_token(
+                        tok_str, nusc, runtime=runtime, view_order=DEFAULT_VIEW_ORDER, strict=False
+                    )
+                    # Safety check
+                    if not mv.get("tokens") or len(mv["tokens"]) != NUM_VIEWS:
+                        dummy_shape = (TOKENS_PER_VIEW, PROJECTOR_DIM)
+                        mv["tokens"] = [torch.zeros(dummy_shape, device=device) for _ in range(NUM_VIEWS)]
+
+                    vt_list = [t.to(device) for t in mv["tokens"]]
+
                     kv = vision_adapter_model(vt_list)  # [TOTAL_VISION_TOKENS, PROJECTOR_DIM]
                     kv = kv.unsqueeze(0)  # Add batch dimension
                 vision_kvs.append(kv)
