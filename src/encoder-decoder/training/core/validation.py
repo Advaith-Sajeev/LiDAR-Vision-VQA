@@ -513,9 +513,11 @@ def run_inference_sampling(
         # Batched vision encoding
         batch_prefix_vision = None
         if nusc is not None:
-            batch_view_tokens = batch_multiview_tokens_from_sample_tokens(
-                batch_tokens, nusc, runtime=runtime, view_order=DEFAULT_VIEW_ORDER, strict=False
-            )
+            # Wrap with autocast: FP32 trainable weights receive auto-cast FP16 inputs
+            with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
+                batch_view_tokens = batch_multiview_tokens_from_sample_tokens(
+                    batch_tokens, nusc, runtime=runtime, view_order=DEFAULT_VIEW_ORDER, strict=False
+                )
             try:
                 batch_view_tokens_device = [
                     [t.to(device) for t in view_tokens]

@@ -75,12 +75,12 @@ def get_training_config() -> Dict:
         "epochs": 10,
         
         # Batch size per GPU
-        # V100 16GB is small -> Keep batch_size=1
-        "batch_size": 1,
+        # V100 16GB has ~11GB headroom -> increase batch size
+        "batch_size": 3,
         
         # Gradient accumulation to match larger effective batches
-        # 16 accumulation steps * 1 batch size = 16 effective batch size
-        "grad_accum": 16,
+        # 5 accumulation steps * 3 batch size = 15 effective batch size
+        "grad_accum": 5,
         
         "num_workers": 16, # HPC has 28 cores, 128GB RAM
         
