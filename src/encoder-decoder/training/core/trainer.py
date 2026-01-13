@@ -11,7 +11,7 @@ from pathlib import Path
 from tqdm.auto import tqdm
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
-from typing import Dict
+from typing import Dict, List, Sequence, Optional
 
 from ..data import VisionNuDataset, make_collate, SingleProcessDetSampler
 from ..utils import (
