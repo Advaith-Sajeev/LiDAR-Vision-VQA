@@ -635,10 +635,8 @@ def run_inference_sampling(
                     get_special_token_emb=emb_token,
                 )
             
-            # inputs_embeds is now already in model_dtype - no redundant cast needed
-            # Verify dtype matches (debug assertion)
-            assert inputs_embeds.dtype == model_dtype, \
-                f"dtype mismatch: inputs_embeds={inputs_embeds.dtype}, model={model_dtype}"
+            # Cast inputs_embeds to model dtype (VisionAdapter outputs FP32 but model is FP16)
+            inputs_embeds = inputs_embeds.to(dtype=model_dtype)
             
             attention_mask = torch.ones(1, inputs_embeds.shape[1], dtype=torch.long, device=device)
             
