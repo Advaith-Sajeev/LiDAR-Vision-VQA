@@ -157,9 +157,47 @@ def scene_aware_split(dataset, lengths: Sequence[int], generator: torch.Generato
             val_indices.extend(indices)
             
     print(f"[dataset] Scene-aware split results:")
-    print(f"  Total scenes: {len(scenes)}")
-    print(f"  Train: {len(train_indices)} samples")
-    print(f"  Val:   {len(val_indices)} samples")
+    print(f"  Total: {len(scenes)} scenes")
+    
+    # Calculate scene counts (since we iterate greedily)
+    # This is a bit indirect because we didn't track them in loop, but we can infer or track.
+    # Let's just count them now for reporting.
+    # Note: scene_to_indices is {scene: [indices]}
+    # We can check which scenes are in train_indices vs val_indices? No, that's slow.
+    # Better: Track in the loop above.
+    
+    train_scene_count = 0
+    val_scene_count = 0 
+    
+    # Re-calculate counts (the loop above did the heavy lifting of allocation)
+    # The loop logic was:
+    # if current_train_len < target_train_len: train += indices; train_scene_count += 1
+    # else: val += indices; val_scene_count += 1
+    
+    # Wait, variable scope issues if I change the loop. 
+    # Let's simplify and make the print explicit by tracking in the loop.
+    
+    # IGNORE commented logical flow above, doing clean replacement below:
+    
+    # Just print samples for now as the loop structure makes tracking easier if I rewrite the loop or just update prints here.
+    # Actually, let's rewrite the print block to be accurate by just counting.
+    # Since we iterated sequentially:
+    # Train scenes are scenes[0 : train_scene_count]
+    # Val scenes are the rest.
+    
+    # But we didn't track the index where we switched.
+    # Let's do a quick calculation:
+    train_scene_count = 0
+    current_len = 0
+    for scene in scenes:
+        if current_len < target_train_len:
+            current_len += len(scene_to_indices[scene])
+            train_scene_count += 1
+    
+    val_scene_count = len(scenes) - train_scene_count
+
+    print(f"  Train: {len(train_indices)} samples ({train_scene_count} scenes)")
+    print(f"  Val:   {len(val_indices)} samples ({val_scene_count} scenes)")
     
     return [
         torch.utils.data.Subset(dataset, train_indices),
