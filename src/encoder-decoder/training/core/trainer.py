@@ -112,6 +112,34 @@ class Trainer:
         debug.info("trainer", "Initializing models...")
         self._setup_models()
         
+        # CRITICAL FIX: Cast all trainable parameters to float32 for GradScaler compatibility
+        # Mixed precision (fp16) requires master weights/trainable params to be fp32
+        # This prevents "ValueError: Attempting to unscale FP16 gradients"
+        if is_main_process():
+            print("[dtype] Casting trainable parameters to float32 for mixed precision stability...")
+        
+        def cast_trainable_to_fp32(model_or_iterator, name):
+            count = 0
+            # Handle both nn.Module and iterator/list of parameters
+            if isinstance(model_or_iterator, torch.nn.Module):
+                iterator = model_or_iterator.parameters()
+            else:
+                iterator = model_or_iterator
+                
+            for p in iterator:
+                if p.requires_grad and p.dtype != torch.float32:
+                    p.data = p.data.to(dtype=torch.float32)
+                    count += 1
+            if count > 0 and is_main_process():
+                print(f"[dtype] Cast {count} trainable parameters in {name} to float32")
+
+        cast_trainable_to_fp32(self.base, "LLM (Base)")
+        cast_trainable_to_fp32(self.vision_adapter, "Vision Adapter")
+        
+        if hasattr(self.runtime, "parameters"):
+             # runtime.parameters() creates a new iterator, so we can iterate it safely
+             cast_trainable_to_fp32(self.runtime.parameters(), "DeepEncoder (CLIP/SAM/Projector)")
+        
         # Initialize datasets
         debug.info("trainer", "Initializing datasets...")
         self._setup_datasets()

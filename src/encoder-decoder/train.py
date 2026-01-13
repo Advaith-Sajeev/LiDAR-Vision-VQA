@@ -84,7 +84,7 @@ def get_training_config() -> Dict:
         
         "num_workers": 16, # HPC has 28 cores, 128GB RAM
         
-        "prefetch_factor": 1,  # Reduced for memory
+        "prefetch_factor": 2,  # Better data loading overlap (uses CPU RAM, not GPU VRAM)
         
         "seed": 42,
         
@@ -158,7 +158,7 @@ def get_training_config() -> Dict:
         "lr_vision_vat": 5e-4,
         "lr_vision": 5e-4,
         "weight_decay": 0.05,
-        "warmup_steps": 200, # Lower for local runs usually
+        "warmup_steps": 30, # Keep low for small debug runs; increase to 200+ for full dataset
         "clip_norm": 1.0,
         
         # ==================== Hardware Optimization ====================
