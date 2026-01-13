@@ -133,12 +133,19 @@ class Trainer:
             if count > 0 and is_main_process():
                 print(f"[dtype] Cast {count} trainable parameters in {name} to float32")
 
-        cast_trainable_to_fp32(self.base, "LLM (Base)")
-        cast_trainable_to_fp32(self.vision_adapter, "Vision Adapter")
+        cast_trainable_to_fp32(self.base, "LLM (Base) - LoRA adapters")
+        # NOTE: VisionAdapter stays in FP16 - it doesn't use LoRA and receives FP16 inputs from DeepEncoder
+        # Only cast CLIP LoRA adapters and Projector (which outputs to FP16 VisionAdapter input)
         
-        if hasattr(self.runtime, "parameters"):
-             # runtime.parameters() creates a new iterator, so we can iterate it safely
-             cast_trainable_to_fp32(self.runtime.parameters(), "DeepEncoder (CLIP/SAM/Projector)")
+        if hasattr(self.runtime, "clip_vit"):
+            # Only cast LoRA parameters in CLIP (not the entire model)
+            lora_count = 0
+            for n, p in self.runtime.clip_vit.named_parameters():
+                if p.requires_grad and "lora_" in n and p.dtype != torch.float32:
+                    p.data = p.data.to(dtype=torch.float32)
+                    lora_count += 1
+            if lora_count > 0 and is_main_process():
+                print(f"[dtype] Cast {lora_count} LoRA parameters in DeepEncoder CLIP to float32")
         
         # Initialize datasets
         debug.info("trainer", "Initializing datasets...")
@@ -970,6 +977,7 @@ class Trainer:
         debug.debug("trainer", f"Sample tokens: {sample_tokens[:3] if len(sample_tokens) > 3 else sample_tokens}...")
         
         # Check training toggles
+        vision_kv = None  # Initialize to avoid unbound error if encoding fails
         if self.config["use_vision"]:
             debug.start_timer("trainer", "vision_processing")
             debug.data_flow("trainer", "vision_start", f"Processing {len(sample_tokens)} samples")
