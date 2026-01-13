@@ -158,7 +158,7 @@ def get_training_config() -> Dict:
         "lr_vision_vat": 5e-4,
         "lr_vision": 5e-4,
         "weight_decay": 0.05,
-        "warmup_steps": 30, # Keep low for small debug runs; increase to 200+ for full dataset
+        "warmup_steps": 60, # ~10% of 625 total steps (1k samples, 10 epochs, effective batch 16)
         "clip_norm": 1.0,
         
         # ==================== Hardware Optimization ====================
