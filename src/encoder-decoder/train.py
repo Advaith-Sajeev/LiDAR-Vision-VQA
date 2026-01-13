@@ -53,7 +53,7 @@ def get_training_config() -> Dict:
         
         # Maximum number of samples to use (None = use all data)
         # Set to small number (e.g., 10) for quick testing
-        "max_samples": 100,
+        "max_samples": 1000,
         
         
         # ==================== Validation Configuration ====================
