@@ -190,6 +190,10 @@ def setup_models(config: Dict, device: torch.device, is_main: bool):
         quantization_config=quantization_config,
         attn_implementation=attn_implementation,
     )
+
+    # Disable use_cache if gradient checkpointing is enabled (silences warning)
+    if config.get("gradient_checkpointing", False):
+        base.config.use_cache = False
     
     # Resize embeddings for new special tokens
     base.resize_token_embeddings(len(tok))

@@ -52,8 +52,8 @@ def get_training_config() -> Dict:
         # ──────────────────────────────────────────────────────────────────
         
         # Maximum number of samples to use (None = use all data)
-        # Set to 1000 for the current sanity test
-        "max_samples": 1000,
+        # Set to 5000 for the current sanity test
+        "max_samples": 5000,
         
         
         # ==================== Validation Configuration ====================
@@ -106,8 +106,8 @@ def get_training_config() -> Dict:
         
         
         # ==================== Inference Configuration ====================
-        "inference_sampling_every": 0,
-        "inference_samples_n": 0,  # Disabled for benchmarking 
+        "inference_sampling_every": 5,
+        "inference_samples_n": 40,  # Disabled for benchmarking 
         "inference_caption_json": None,
         
         "inference_max_tokens": 256,

@@ -288,9 +288,13 @@ class DeepEncoderRuntime:
 
         # -------- CLIP (frozen) --------
         self.clip_vit = build_clip_b16().to(device=self.device, dtype=self.dtype)
+        
+        # Use -quickgelu suffix for OpenAI weights to avoid warnings
+        target_model_name = "ViT-B-16-quickgelu" if openclip_pretrained == "openai" else "ViT-B-16"
+        
         load_openclip_vit_into_vitmodel(
             self.clip_vit,
-            model_name="ViT-B-16",
+            model_name=target_model_name,
             device=self.device,
             dtype=self.dtype,
             openclip_pretrained=openclip_pretrained,
