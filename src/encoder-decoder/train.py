@@ -52,8 +52,8 @@ def get_training_config() -> Dict:
         # ──────────────────────────────────────────────────────────────────
         
         # Maximum number of samples to use (None = use all data)
-        # Set to small number (e.g., 10) for quick testing
-        "max_samples": None,
+        # Set to 1000 for the current sanity test
+        "max_samples": 1000,
         
         
         # ==================== Validation Configuration ====================
@@ -75,11 +75,11 @@ def get_training_config() -> Dict:
         "epochs": 20,
         
         # Batch size per GPU
-        # V100 16GB has ~11GB headroom -> increase batch size
+        # With vision tokens + 0.5B LLM on 16GB V100, keep batch small
         "batch_size": 1,
         
         # Gradient accumulation to match larger effective batches
-        # 4 accumulation steps * 4 batch size = 16 effective batch size
+        # 4 accumulation steps * 1 batch size = 4 effective batch size
         "grad_accum": 4,
         
         "num_workers": 12, # HPC has 28 cores; 12 uses more headroom per GPU
@@ -114,7 +114,7 @@ def get_training_config() -> Dict:
         "inference_temperature": 0.0,
         "inference_do_sample": False,
         "inference_num_beams": 1,
-        "inference_batch_size": 4, # Match training batch size
+        "inference_batch_size": 1, # Match training batch size
         
         # ==================== Evaluation Metrics ====================
         "eval_caption_bleu4": True,
@@ -144,7 +144,7 @@ def get_training_config() -> Dict:
         
         # LoRA Config (All linear layers enabled)
         "llm_lora_r": 4,
-        "llm_lora_alpha": 4,
+        "llm_lora_alpha": 8,
         "llm_lora_dropout": 0.3,
         "llm_lora_targets": ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
         
