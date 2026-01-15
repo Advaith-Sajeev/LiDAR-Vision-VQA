@@ -26,10 +26,10 @@ from training.core import Trainer
 
 def get_training_config() -> Dict:
     """
-    Get comprehensive training configuration for LOCAL training (V100 16GB Optimized).
+    Get comprehensive training configuration (V100 16GB Optimized).
     
-    This config replicates the 'modal_config.py' structure but with settings 
-    tuned for the local environment and specific hardware constraints.
+    This config replicates the 'modal_config.py' structure but with settings
+    tuned for the target environment (local dev or HPC) and specific hardware constraints.
     """
     
     config = {
@@ -53,7 +53,7 @@ def get_training_config() -> Dict:
         
         # Maximum number of samples to use (None = use all data)
         # Set to 5000 for the current sanity test
-        "max_samples": 5000,
+        "max_samples": 100,
         
         
         # ==================== Validation Configuration ====================
@@ -82,7 +82,7 @@ def get_training_config() -> Dict:
         # 4 accumulation steps * 1 batch size = 4 effective batch size
         "grad_accum": 4,
         
-        "num_workers": 12, # HPC has 28 cores; 12 uses more headroom per GPU
+        "num_workers": 16, # HPC has 28 cores; 16 uses more headroom per GPU
 
         "prefetch_factor": 4,  # Higher prefetch to reduce GPU starvation on HPC
         
@@ -107,6 +107,10 @@ def get_training_config() -> Dict:
         
         # ==================== Inference Configuration ====================
         "inference_sampling_every": 5,
+        # Component toggles for inference sampling only.
+        # These do NOT affect training; training vision is controlled by `use_vision`.
+        "inference_use_vision": True,
+        "inference_use_system": True,
         # When train/val sampling counts are set (>0), inference sampling will pull:
         #   - N samples from the TRAIN split
         #   - M samples from the VALIDATION split by default
@@ -116,11 +120,6 @@ def get_training_config() -> Dict:
         "inference_test_samples_n": 20,
         # Optional path to a held-out TEST json on HPC. If None, sampling falls back to val split.
         "inference_test_caption_json": None,
-
-        # Backward compatible (legacy) behavior: if train/test counts are 0, use this count
-        # from val split (or inference_caption_json if provided).
-        "inference_samples_n": 40,
-        "inference_caption_json": None,
         
         "inference_max_tokens": 256,
         "inference_temperature": 0.0,

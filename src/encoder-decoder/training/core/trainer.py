@@ -541,8 +541,9 @@ class Trainer:
         # Store reference to full dataset for token2path access
         # self.ds_full = ds_full
         
-        # Update train_size to reflect the actual split length (scene-aware split is approximate)
+        # Scene-aware split is approximate vs requested lengths; use the actual subset sizes.
         self.train_size = len(ds_train)
+        self.val_size = len(ds_val)
         
         if is_main_process():
             print(f"[dataset] train={len(ds_train)}  val={len(ds_val)}")
@@ -601,9 +602,11 @@ class Trainer:
             collate_fn=collate_fn,
         )
         
+        self.ds_train = ds_train
         self.ds_val = ds_val
         self.sampler_train = sampler_train
-        self.train_size = train_size
+        # Keep consistent with the actual split size (do not overwrite with the requested target length).
+        self.train_size = len(ds_train)
         self.load_images = load_images  # Store for use in training loop
     
     def _setup_ddp(self):
@@ -1111,6 +1114,12 @@ class Trainer:
         # Use non_blocking=True for async CPU→GPU transfers (overlaps with other work)
         p_ids = batch["prompt_ids"].to(self.device, non_blocking=True)
         a_ids = batch["answer_ids"].to(self.device, non_blocking=True)
+        prompt_attn = batch.get("prompt_attn")
+        answer_attn = batch.get("answer_attn")
+        if prompt_attn is not None:
+            prompt_attn = prompt_attn.to(self.device, non_blocking=True)
+        if answer_attn is not None:
+            answer_attn = answer_attn.to(self.device, non_blocking=True)
         sample_tokens = batch["sample_tokens"]
         
         debug.shape("trainer", "prompt_ids", p_ids)
@@ -1186,17 +1195,20 @@ class Trainer:
                         )
                         
                         if not mv.get("tokens") or len(mv["tokens"]) != NUM_VIEWS:
-                            dummy_shape = (TOKENS_PER_VIEW, PROJECTOR_DIM)  # [576, 896] per view
-                            mv["tokens"] = [torch.zeros(dummy_shape, device=self.device, dtype=self.amp_dtype) for _ in range(NUM_VIEWS)]
+                            dummy_shape = (TOKENS_PER_VIEW, self.d_model)
+                            mv["tokens"] = [
+                                torch.zeros(dummy_shape, device=self.device, dtype=self.amp_dtype)
+                                for _ in range(NUM_VIEWS)
+                            ]
                         
                         vt = [t.to(self.device) for t in mv["tokens"]]
                         
                         with torch.autocast(device_type=self.device.type, dtype=self.amp_dtype, enabled=self.use_amp):
-                            kv = self.vision_adapter(vt)
-                            kv = kv.unsqueeze(0)
-                        vision_kvs.append(kv)
-                    
-                    vision_kv = torch.cat(vision_kvs, dim=0)
+                            kv_views = self.vision_adapter(vt)  # List[Tensor] length=NUM_VIEWS
+                        vision_kvs.append(kv_views)
+
+                    # Keep the same structure as forward_batch(): List[List[Tensor]]
+                    vision_kv = vision_kvs
             
             debug.tensor_stats("trainer", "vision_kv", vision_kv)
             debug.end_timer("trainer", "vision_processing")
@@ -1283,7 +1295,13 @@ class Trainer:
             if ModalityPosition.ANSWER_TOKENS in seq_info['positions']:
                 ans_start, ans_end = seq_info['positions'][ModalityPosition.ANSWER_TOKENS]
                 labels = torch.full((B, total_len), -100, dtype=torch.long, device=self.device)
-                labels[:, ans_start:ans_end] = a_ids
+                if answer_attn is not None:
+                    # Mask out padded answer positions
+                    masked_a_ids = a_ids.clone()
+                    masked_a_ids[answer_attn == 0] = -100
+                    labels[:, ans_start:ans_end] = masked_a_ids
+                else:
+                    labels[:, ans_start:ans_end] = a_ids
                 debug.debug("trainer", f"Supervised tokens: positions {ans_start}:{ans_end} ({ans_end - ans_start} tokens)")
             else:
                 raise RuntimeError("Answer tokens not found in sequence - this should never happen")
@@ -1291,7 +1309,17 @@ class Trainer:
             debug.shape("trainer", "labels", labels)
             
             # Create attention mask
+            # - Vision tokens/delimiters are always valid (mask=1)
+            # - Text prompt and answer should respect tokenizer padding masks
             attn = torch.ones((B, total_len), dtype=torch.long, device=self.device)
+            if prompt_attn is not None and ModalityPosition.TEXT_PROMPT in seq_info['positions']:
+                p_start, p_end = seq_info['positions'][ModalityPosition.TEXT_PROMPT]
+                p_len = p_end - p_start
+                attn[:, p_start:p_end] = prompt_attn[:, :p_len]
+            if answer_attn is not None and ModalityPosition.ANSWER_TOKENS in seq_info['positions']:
+                a_start, a_end = seq_info['positions'][ModalityPosition.ANSWER_TOKENS]
+                a_len = a_end - a_start
+                attn[:, a_start:a_end] = answer_attn[:, :a_len]
             debug.shape("trainer", "attention_mask", attn)
             
             # Forward through LLM

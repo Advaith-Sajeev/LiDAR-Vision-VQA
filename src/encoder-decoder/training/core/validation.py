@@ -346,12 +346,18 @@ def run_inference_sampling(
     use_system_toggle = config.get("inference_use_system", True)
     
     print(f"[inference_sampling] Component toggles: Vision={use_vision_toggle}, System={use_system_toggle}")
-    
-    # Inform about decoding strategy
-    if not use_vision_toggle:
-        print(f"[inference_sampling] Using GREEDY decoding (modalities disabled, more stable for early training)")
+
+    # Inform about decoding strategy (driven by inference_do_sample/temperature, not by vision toggle)
+    do_sample = bool(config.get("inference_do_sample", False))
+    temperature = float(config.get("inference_temperature", 0.0))
+    if temperature <= 1e-5:
+        do_sample = False
+    if do_sample:
+        print(
+            f"[inference_sampling] Decoding: SAMPLING (temp={temperature}, top_p={config.get('inference_top_p', 0.9)})"
+        )
     else:
-        print(f"[inference_sampling] Using SAMPLING decoding (temp={config.get('inference_temperature', 0.7)}, top_p={config.get('inference_top_p', 0.9)})")
+        print("[inference_sampling] Decoding: GREEDY (do_sample=False or temp≈0)")
 
     
     # Unwrap DDP if needed
@@ -452,7 +458,12 @@ def run_inference_sampling(
         all_samples = [{**s, "dataset_type": "caption", "split": out_tag} for s in caption_samples]
 
         inference_batch_size = max(1, int(config.get("inference_batch_size", 8)))
-        print(f"\n[inference_sampling] Pre-encoding {len(all_samples)} samples ({out_tag}, batch_size={inference_batch_size})...")
+        if use_vision_toggle:
+            print(
+                f"\n[inference_sampling] Pre-encoding {len(all_samples)} samples ({out_tag}, batch_size={inference_batch_size})..."
+            )
+        else:
+            print(f"\n[inference_sampling] Vision disabled; skipping vision encoding ({out_tag}).")
 
         encoded_samples = []
         for batch_start in range(0, len(all_samples), inference_batch_size):
@@ -461,7 +472,7 @@ def run_inference_sampling(
             batch_tokens = [s["sample_token"] for s in batch_samples]
 
             batch_prefix_vision = None
-            if nusc is not None:
+            if use_vision_toggle and nusc is not None:
                 with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
                     batch_view_tokens = batch_multiview_tokens_from_sample_tokens(
                         batch_tokens, nusc, runtime=runtime, view_order=DEFAULT_VIEW_ORDER, strict=False
@@ -505,7 +516,7 @@ def run_inference_sampling(
                 ground_truth = sample.get(config["target_field"], "").strip()
 
                 vision_views_list = sample.get("_vision_views")
-                use_system_in_inference = config.get("inference_use_system", True)
+                use_system_in_inference = use_system_toggle
 
                 if use_system_in_inference:
                     system_prompt = config.get(
@@ -641,134 +652,55 @@ def run_inference_sampling(
     test_n = int(config.get("inference_test_samples_n", 0) or 0)
     test_json_path = config.get("inference_test_caption_json")
 
-    if train_n > 0 or test_n > 0:
-        all_results = []
-
-        if train_n > 0:
-            train_rows = _extract_rows(train_dataset)
-            if not train_rows:
-                print("[inference_sampling] Warning: train_dataset not available; skipping train inference sampling.")
-            else:
-                r_train, _ = _run_one_source(
-                    caption_data=train_rows,
-                    source_label="train_split",
-                    out_tag="train",
-                    n_samples=train_n,
-                )
-                all_results.extend(r_train)
-
-        if test_n > 0:
-            if test_json_path:
-                # External test set provided
-                try:
-                    test_rows = _load_json_rows(test_json_path)
-                    r_test, _ = _run_one_source(
-                        caption_data=test_rows,
-                        source_label=f"file: {test_json_path}",
-                        out_tag="test",
-                        n_samples=test_n,
-                    )
-                    all_results.extend(r_test)
-                except Exception as e:
-                    print(f"[inference_sampling] Warning: Could not load test JSON ({test_json_path}): {e}")
-            else:
-                # No test set available: fall back to validation split
-                val_rows = _extract_rows(val_dataset) if val_dataset is not None else None
-                if not val_rows:
-                    print("[inference_sampling] Warning: No test JSON and no val_dataset available; skipping val/test sampling.")
-                else:
-                    r_val, _ = _run_one_source(
-                        caption_data=val_rows,
-                        source_label="validation_split",
-                        out_tag="val",
-                        n_samples=test_n,
-                    )
-                    all_results.extend(r_val)
-
-        # Return combined metrics for plotting compatibility
-        combined_metrics = calculate_metrics_by_type(all_results, config) if all_results else {}
-        _restore_state()
-        return combined_metrics
-
-    # ==============================
-    # Mode B: Legacy val/file mixing
-    # ==============================
-    # Priority 1: Explicit inference_caption_json
-    # Priority 2: Validation split from trainer (val_dataset)
-    # Priority 3: Fallback to full caption_json
-
-    caption_data = []
-    inference_source = "unknown"
-
-    caption_json_path = config.get("inference_caption_json")
-    if caption_json_path:
-        try:
-            caption_data = _load_json_rows(caption_json_path)
-            inference_source = f"file: {caption_json_path}"
-            print(f"[inference_sampling] Loaded {len(caption_data)} samples from: {inference_source}")
-        except Exception as e:
-            print(f"[inference_sampling] Warning: Could not load inference JSON: {e}")
-            caption_data = []
-    elif val_dataset is not None:
-        try:
-            caption_data = _extract_rows(val_dataset) or []
-            if caption_data:
-                inference_source = "validation_split"
-                print(f"[inference_sampling] Using validation split ({len(caption_data)} samples) from trainer.")
-        except Exception as e:
-            print(f"[inference_sampling] Warning: Failed to extract samples from val_dataset: {e}")
-            caption_data = []
-
-    if not caption_data:
-        caption_json_path = config.get("caption_json")
-        if caption_json_path:
-            print("[inference_sampling] Warning: No inference file or validation set available. Falling back to FULL training data.")
-            try:
-                caption_data = _load_json_rows(caption_json_path)
-                inference_source = f"fallback_full: {caption_json_path}"
-                print(f"[inference_sampling] Loaded {len(caption_data)} samples from: {inference_source}")
-            except Exception as e:
-                print(f"[inference_sampling] Error: Could not load fallback JSON: {e}")
-        else:
-            print("[inference_sampling] Error: No data source available for inference sampling!")
-    
-    # For legacy mode, run using the existing output naming.
-    total_n = int(config.get("inference_samples_n", 0) or 0)
-    if total_n <= 0:
-        print("[inference_sampling] inference_samples_n<=0; skipping inference sampling.")
+    if train_n <= 0 and test_n <= 0:
+        print("[inference_sampling] inference_train_samples_n<=0 and inference_test_samples_n<=0; skipping inference sampling.")
         _restore_state()
         return {}
 
-    legacy_results, legacy_metrics = _run_one_source(
-        caption_data=caption_data,
-        source_label=inference_source,
-        out_tag="val",
-        n_samples=total_n,
-    )
+    all_results = []
 
-    # Preserve older filenames as an alias for tooling expectations
-    if legacy_results:
-        samples_manifest = {
-            "epoch": epoch,
-            "best_step": best_step,
-            "timestamp": datetime.now().isoformat(),
-            "samples": legacy_results,
-        }
-        samples_file = out_dir / f"inference_sampling_epoch{epoch}.json"
-        with open(samples_file, "w") as f:
-            json.dump(samples_manifest, f, indent=2)
+    if train_n > 0:
+        train_rows = _extract_rows(train_dataset)
+        if not train_rows:
+            print("[inference_sampling] Warning: train_dataset not available; skipping train inference sampling.")
+        else:
+            r_train, _ = _run_one_source(
+                caption_data=train_rows,
+                source_label="train_split",
+                out_tag="train",
+                n_samples=train_n,
+            )
+            all_results.extend(r_train)
 
-        summary_payload = {
-            "epoch": epoch,
-            "best_step": best_step,
-            "timestamp": datetime.now().isoformat(),
-            "num_samples": len(legacy_results),
-            "metrics": legacy_metrics,
-            "samples_file": samples_file.name,
-        }
-        metrics_file = out_dir / f"metrics_summary_epoch{epoch}.json"
-        with open(metrics_file, "w") as f:
-            json.dump(summary_payload, f, indent=2)
+    if test_n > 0:
+        if test_json_path:
+            # External test set provided
+            try:
+                test_rows = _load_json_rows(test_json_path)
+                r_test, _ = _run_one_source(
+                    caption_data=test_rows,
+                    source_label=f"file: {test_json_path}",
+                    out_tag="test",
+                    n_samples=test_n,
+                )
+                all_results.extend(r_test)
+            except Exception as e:
+                print(f"[inference_sampling] Warning: Could not load test JSON ({test_json_path}): {e}")
+        else:
+            # No test set available: fall back to validation split
+            val_rows = _extract_rows(val_dataset) if val_dataset is not None else None
+            if not val_rows:
+                print("[inference_sampling] Warning: No test JSON and no val_dataset available; skipping val/test sampling.")
+            else:
+                r_val, _ = _run_one_source(
+                    caption_data=val_rows,
+                    source_label="validation_split",
+                    out_tag="val",
+                    n_samples=test_n,
+                )
+                all_results.extend(r_val)
 
+    # Return combined metrics for plotting compatibility
+    combined_metrics = calculate_metrics_by_type(all_results, config) if all_results else {}
     _restore_state()
-    return legacy_metrics
+    return combined_metrics

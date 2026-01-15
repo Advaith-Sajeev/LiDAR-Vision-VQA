@@ -161,12 +161,17 @@ def get_modal_training_config() -> Dict:
         # ==================== Inference Sampling Configuration ====================
         # Generate predictions on validation samples every N epochs (0 = disable)
         "inference_sampling_every": 5,
-        
-        # Total number of samples to generate
-        "inference_samples_n": 50,
-        
-        # Test JSON files for inference sampling (used based on dataset_mode)
-        "inference_caption_json": None,
+
+        # Component toggles for inference sampling only.
+        # These do NOT affect training; training vision is controlled by `use_vision`.
+        "inference_use_vision": True,
+        "inference_use_system": True,
+
+        # Split-aware sampling. If `inference_test_caption_json` is None, "test" sampling
+        # falls back to the validation split provided by the trainer.
+        "inference_train_samples_n": 25,
+        "inference_test_samples_n": 25,
+        "inference_test_caption_json": None,
         
         # Generation parameters for inference sampling
         "inference_max_tokens": 256,
