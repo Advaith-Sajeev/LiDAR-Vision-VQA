@@ -15,6 +15,11 @@ from typing import Optional
 
 import modal
 
+try:
+    from tqdm import tqdm
+except ImportError:  # tqdm not installed locally
+    tqdm = None  # type: ignore
+
 app = modal.App("lidar-vision-count-files")
 volume = modal.Volume.from_name("lidar-llm", create_if_missing=False)
 
@@ -93,11 +98,16 @@ def main(root: str = "/data/DATA"):
 
     if batches:
         print(f"Found {len(batches)} batches under {root}. Counting batch by batch...")
-        for batch_path in tqdm(sorted(batches), desc="Batches", unit="batch"):
+        batch_iter = sorted(batches)
+        if tqdm:
+            batch_iter = tqdm(batch_iter, desc="Batches", unit="batch")
+        for batch_path in batch_iter:
             result = count_files.remote(batch_path)
             summary[batch_path] = result
             total_files += result.get("files", 0)
             total_seconds += result.get("seconds", 0.0)
+        if tqdm and hasattr(batch_iter, "close"):
+            batch_iter.close()
         print("\nPer-batch counts:")
         for b, res in summary.items():
             print(f"{b}: {res['files']} files (took {res['seconds']}s)")

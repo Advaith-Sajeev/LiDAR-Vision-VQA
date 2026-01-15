@@ -20,12 +20,12 @@ from enum import IntEnum
 #
 # SEQUENCE LAYOUT (vision-only with per-view delimiters):
 # ┌─────────────────────────────────────────────────────────────────────────┐
-# │ [cam_front_start] [256 tokens] [cam_front_end]                          │
-# │ [cam_front_right_start] [256 tokens] [cam_front_right_end]              │
-# │ [cam_front_left_start] [256 tokens] [cam_front_left_end]                │
-# │ [cam_back_start] [256 tokens] [cam_back_end]                            │
-# │ [cam_back_right_start] [256 tokens] [cam_back_right_end]                │
-# │ [cam_back_left_start] [256 tokens] [cam_back_left_end]                  │
+# │ [cam_front_start] [576 tokens] [cam_front_end]                          │
+# │ [cam_front_right_start] [576 tokens] [cam_front_right_end]              │
+# │ [cam_front_left_start] [576 tokens] [cam_front_left_end]                │
+# │ [cam_back_start] [576 tokens] [cam_back_end]                            │
+# │ [cam_back_right_start] [576 tokens] [cam_back_right_end]                │
+# │ [cam_back_left_start] [576 tokens] [cam_back_left_end]                  │
 # │ [text_prompt...]                                                         │
 # │ [answer_tokens...]  (training only)                                      │
 # └─────────────────────────────────────────────────────────────────────────┘
@@ -135,20 +135,19 @@ VIEW_DELIMITER_TOKENS: Dict[str, Tuple[str, str]] = {
 # They are derived from the DeepEncoder architecture and should NOT be changed
 # unless the underlying model architecture changes.
 
-# DeepEncoder outputs 6x6 grid of tokens per view (for 384x384)
-FIXED_GRID_SIDE: int = 6
-TOKENS_PER_VIEW: int = FIXED_GRID_SIDE * FIXED_GRID_SIDE  # 36 tokens per camera view
+# DeepEncoder (new CLIP-B/16 path) outputs a 24x24 grid of patch tokens per view (384x384 images → 16px patches)
+FIXED_GRID_SIDE: int = 24
+TOKENS_PER_VIEW: int = FIXED_GRID_SIDE * FIXED_GRID_SIDE  # 576 tokens per camera view
 
-# DeepEncoder projector output dimension (now configurable to match d_model)
-# Default is 2048 (CLIP 1024 + SAM 1024) but can be set to d_model directly
+# DeepEncoder projector output dimension (matches LLM hidden size)
 # For Qwen2.5-0.5B, d_model is 896
 PROJECTOR_DIM: int = 896
 
 # Total vision tokens when all 6 views are used (without delimiters)
-TOTAL_VISION_TOKENS: int = NUM_VIEWS * TOKENS_PER_VIEW  # 6 * 36 = 216
+TOTAL_VISION_TOKENS: int = NUM_VIEWS * TOKENS_PER_VIEW  # 6 * 576 = 3456
 
 # Total vision tokens including per-view delimiters (12 delimiter tokens)
-TOTAL_VISION_WITH_DELIMITERS: int = TOTAL_VISION_TOKENS + NUM_VIEWS * 2  # 216 + 12 = 228
+TOTAL_VISION_WITH_DELIMITERS: int = TOTAL_VISION_TOKENS + NUM_VIEWS * 2  # 3456 + 12 = 3468
 
 
 # ============================================================================

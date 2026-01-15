@@ -9,11 +9,10 @@ from nuscenes.nuscenes import NuScenes
 from typing import Dict, Tuple, Optional
 
 from deepencoder.deepencoder_infer import DeepEncoderRuntime
-from deepencoder.lora_config import DeepEncoderLoRAConfig
 from configs.constants import (
     NUM_VIEWS,           # 6 camera views
-    TOKENS_PER_VIEW,     # 256 tokens per view (16x16 grid)
-    TOTAL_VISION_TOKENS, # 1536 (6 * 256)
+    TOKENS_PER_VIEW,     # 576 tokens per view (24x24 grid)
+    TOTAL_VISION_TOKENS, # 3456 (6 * 576)
     VIEW_SPECIAL_TOKENS, # Per-view delimiter tokens
 )
 
@@ -239,26 +238,6 @@ def setup_models(config: Dict, device: torch.device, is_main: bool):
     if is_main:
         print(f"[nuScenes] Loaded {config['nu_version']}")
 
-    # DeepEncoder with configurable output dimension
-    clip_lora_config = None
-    if config.get("clip_lora_enabled", False):
-        clip_target_modules = config.get("clip_lora_target_modules", None)
-        # If None, DeepEncoder will auto-detect targets internally
-        # No need to call infer_clip_lora_targets here
-        if is_main:
-            if clip_target_modules is not None:
-                print(f"[CLIP LoRA] Using configured target modules: {clip_target_modules}")
-            else:
-                print(f"[CLIP LoRA] Target modules not specified - DeepEncoder will auto-detect from CLIP architecture")
-        
-        clip_lora_config = DeepEncoderLoRAConfig(
-            enabled=True,  # Must set to True for LoRA to be applied
-            r=config["clip_lora_r"],
-            lora_alpha=config["clip_lora_alpha"],
-            lora_dropout=config.get("clip_lora_dropout", 0.1),
-            target_modules=clip_target_modules,
-        )
-
     # Use model_dtype for DeepEncoder to ensure consistency
     # Map torch dtype to string for DeepEncoder
     dtype_map = {
@@ -271,31 +250,11 @@ def setup_models(config: Dict, device: torch.device, is_main: bool):
         print(f"[DeepEncoder] Using dtype: {deep_dtype_str} (matches LLM dtype)")
     
     runtime = DeepEncoderRuntime(
-        sam_ckpt=config.get("sam_ckpt", None),
-        auto_download_sam=config.get("auto_download_sam", True),
         device=("cuda" if device.type == "cuda" else "cpu"),
         dtype=deep_dtype_str,
         openclip_pretrained=config["openclip_pretrained"],
-        lora_config=clip_lora_config,
-        freeze_clip_backbone_when_lora_enabled=True,
         output_dim=d_model,  # Output directly in decoder's d_model dimension
     )
-
-    # Freeze SAM backbone but keep compression heads (net_2, net_3) trainable
-    for name, p in runtime.sam.named_parameters():
-        # net_2 and net_3 are the DeepEncoder/VARY compression heads
-        if name.startswith("net_2") or name.startswith("net_3"):
-            p.requires_grad = True   # learnable compression heads
-        else:
-            p.requires_grad = False  # frozen SAM backbone
-
-    # Enable gradient checkpointing for CLIP if configured
-    if config.get("gradient_checkpointing", True):
-        clip_model = runtime.clip_vit.base_model.model if hasattr(runtime.clip_vit, 'base_model') else runtime.clip_vit
-        if hasattr(clip_model, 'gradient_checkpointing_enable'):
-            clip_model.gradient_checkpointing_enable()
-            if is_main:
-                print(f"[CLIP ViT] Gradient checkpointing enabled")
 
     # Verify projector dimension
     projector_out_dim = runtime.projector.cfg.n_embed
@@ -306,8 +265,8 @@ def setup_models(config: Dict, device: torch.device, is_main: bool):
     for p in runtime.projector.parameters():
         p.requires_grad = True
 
-    # VisionAdapter - takes DeepEncoder output, adds view embeddings, returns 6 separate tensors
-    vision_adapter = VisionAdapter(d_model, dropout=0.10).to(device)
+    # VisionAdapter - takes DeepEncoder output, adds view + positional embeddings, returns 6 separate tensors
+    vision_adapter = VisionAdapter(d_model, tokens_per_view=TOKENS_PER_VIEW, dropout=0.10).to(device)
     vision_adapter = vision_adapter.to(dtype=model_dtype)
     if is_main:
         print(f"[VisionAdapter] Using dtype: {model_dtype}")
@@ -342,7 +301,7 @@ def setup_optimizer_and_scheduler(
     """
     lora_params = [p for p in base.parameters() if p.requires_grad]
     
-    # Vision parameters (CLIP + LoRA + Projector + SAM heads)
+    # Vision parameters (DeepEncoder projector + VisionAdapter; CLIP is frozen)
     vision_params = list(runtime.parameters())
     va_params = list(vision_adapter.parameters())
 

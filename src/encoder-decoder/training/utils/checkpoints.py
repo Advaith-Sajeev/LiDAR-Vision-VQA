@@ -86,10 +86,10 @@ def save_state(
         torch.save(unwrap(vision_adapter).state_dict(), out_dir / f"vision_adapter_{tag}.pt")
     if projector is not None:
         torch.save(unwrap(projector).state_dict(), out_dir / f"projector_{tag}.pt")
-    if clip_vit is not None:
+    if clip_vit is not None and config.get("clip_lora_enabled", False):
         unwrap(clip_vit).save_pretrained(out_dir / f"clip_lora_adapter_{tag}")
     
-    # Save SAM compression head (net_2 and net_3 - the trainable DeepEncoder/VARY layers)
+    # SAM path unused in CLIP-only pipeline; keep for backward compatibility when provided
     if sam is not None:
         sam_model = unwrap(sam)
         sam_compression_head_state = {

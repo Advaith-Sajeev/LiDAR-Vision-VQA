@@ -72,19 +72,19 @@ def get_training_config() -> Dict:
         
         
         # ==================== Training Configuration ====================
-        "epochs": 10,
+        "epochs": 20,
         
         # Batch size per GPU
         # V100 16GB has ~11GB headroom -> increase batch size
-        "batch_size": 4,
+        "batch_size": 1,
         
         # Gradient accumulation to match larger effective batches
         # 4 accumulation steps * 4 batch size = 16 effective batch size
         "grad_accum": 4,
         
-        "num_workers": 24, # HPC has 28 cores, use 24 for loading
-        
-        "prefetch_factor": 4,  # Increase buffer to avoid GPU starvation
+        "num_workers": 12, # HPC has 28 cores; 12 uses more headroom per GPU
+
+        "prefetch_factor": 4,  # Higher prefetch to reduce GPU starvation on HPC
         
         "seed": 42,
         
@@ -106,7 +106,7 @@ def get_training_config() -> Dict:
         
         
         # ==================== Inference Configuration ====================
-        "inference_sampling_every": 5,
+        "inference_sampling_every": 0,
         "inference_samples_n": 0,  # Disabled for benchmarking 
         "inference_caption_json": None,
         
@@ -143,18 +143,19 @@ def get_training_config() -> Dict:
         "qlora_compute_dtype": "float32", 
         
         # LoRA Config (All linear layers enabled)
-        "llm_lora_r": 2,
+        "llm_lora_r": 4,
         "llm_lora_alpha": 4,
         "llm_lora_dropout": 0.3,
         "llm_lora_targets": ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
         
         
         # ==================== CLIP LoRA Configuration ====================
-        "clip_lora_enabled": True,
+        # CLIP remains frozen for the CLIP-only encoder path
+        "clip_lora_enabled": False,
         "clip_lora_r": 2,
         "clip_lora_alpha": 4,
         "clip_lora_dropout": 0.3,
-        "clip_lora_target_modules": None, # Auto-detect all compatible layers
+        "clip_lora_target_modules": None, # Auto-detect all compatible layers (unused when disabled)
         
         
         # ==================== Optimization Configuration ====================
@@ -162,11 +163,11 @@ def get_training_config() -> Dict:
         "lr_vision_vat": 5e-4,
         "lr_vision": 5e-4,
         "weight_decay": 0.2,
-        "warmup_steps": 1000, # ~10% of 625 total steps (1k samples, 10 epochs, effective batch 16)
+        "warmup_steps": 3000, # ~5-6% of total steps for 20 epochs with eff. batch 4
         "clip_norm": 1.0,
         
         # ==================== Hardware Optimization ====================
-        # User Request: Disable Flash Attention
+        # Flash Attention not supported on target; leave disabled
         "use_flash_attn": False,
         
         # Torch compile (Disable for debugging/local iteration)
@@ -179,8 +180,9 @@ def get_training_config() -> Dict:
         "nu_version": "v1.0-trainval",
         
         # SAM Checkpoint (Local path or None to download)
-        "sam_ckpt": None, 
-        "auto_download_sam": True,
+        # SAM is not used in the CLIP-only encoder path
+        "sam_ckpt": None,
+        "auto_download_sam": False,
         
         # Dtype for DeepEncoder: fp16 for V100 (native support)
         "deep_dtype": "float16",
@@ -395,8 +397,10 @@ def main():
     print(f"  LLM target modules: {config.get('llm_lora_targets', 'default')}")
     if config['use_vision']:
         clip_targets = config.get('clip_lora_target_modules', None)
-        print(f"  CLIP LoRA enabled: {config.get('clip_lora_enabled', True)}")
-        print(f"  CLIP target modules: {clip_targets if clip_targets is not None else 'auto-detect'}")
+        clip_enabled = config.get('clip_lora_enabled', False)
+        print(f"  CLIP LoRA enabled: {clip_enabled}")
+        if clip_enabled:
+            print(f"  CLIP target modules: {clip_targets if clip_targets is not None else 'auto-detect'}")
     
     print(f"\n{'='*30} Optimization {'='*30}")
 

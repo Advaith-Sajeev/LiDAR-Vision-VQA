@@ -1,15 +1,16 @@
-"""Vision Adapter - adds per-view embeddings to DeepEncoder outputs.
+"""Vision Adapter - adds per-view and positional embeddings to DeepEncoder outputs.
 
 Data flow:
-- DeepEncoder produces [256, d_model] tokens per view (CLIP + SAM features, projected to d_model)
+- DeepEncoder produces [576, d_model] tokens per view (CLIP-B/16, projected to d_model)
 
 This module:
 1. Takes 6 camera views as separate tensors in fixed order (CAM_FRONT, CAM_FRONT_RIGHT, etc.)
 2. Adds a learned embedding specific to each camera/view
-3. Applies LayerNorm + dropout for regularization
+3. Adds a shared learned positional embedding across tokens
+4. Applies LayerNorm + dropout for regularization
 4. Returns 6 separate tensors - NO CONCATENATION
 
-Output: List of 6 tensors, each [256, d_model], ready for per-view delimiter insertion.
+Output: List of 6 tensors, each [576, d_model], ready for per-view delimiter insertion.
 """
 
 import torch
@@ -18,7 +19,7 @@ from typing import List
 
 # Import camera view config from centralized config
 try:
-    from configs.constants import DEFAULT_VIEW_ORDER, CAM_VIEWS
+    from configs.constants import DEFAULT_VIEW_ORDER, CAM_VIEWS, TOKENS_PER_VIEW
 except ImportError:
     # Fallback if configs not in path
     DEFAULT_VIEW_ORDER = (
@@ -30,6 +31,7 @@ except ImportError:
         "CAM_BACK_LEFT",
     )
     CAM_VIEWS = DEFAULT_VIEW_ORDER
+    TOKENS_PER_VIEW = 576
 
 
 # Import debug logger
@@ -49,21 +51,22 @@ class VisionAdapter(nn.Module):
     delimiters can be inserted by the sequence builder.
 
     Inputs:
-        views_tokens: List of 6 tensors, each [256, d_model] from DeepEncoder
+        views_tokens: List of 6 tensors, each [576, d_model] from DeepEncoder
                       (one per camera view in CAM_VIEWS order)
 
     Output:
-        List of 6 tensors, each [256, d_model] with view embeddings added
+        List of 6 tensors, each [576, d_model] with view + positional embeddings added
     
     Args:
         d_model: Dimension from DeepEncoder (now equals LLM d_model)
         dropout: Dropout rate after normalization
     """
 
-    def __init__(self, d_model: int, dropout: float = 0.10):
+    def __init__(self, d_model: int, tokens_per_view: int = TOKENS_PER_VIEW, dropout: float = 0.10):
         super().__init__()
         self.d_model = d_model
         self.num_views = len(CAM_VIEWS)
+        self.tokens_per_view = tokens_per_view
 
         # Per-token normalization + regularization
         self.norm = nn.LayerNorm(d_model)
@@ -74,8 +77,14 @@ class VisionAdapter(nn.Module):
             torch.zeros(self.num_views, d_model), requires_grad=True
         )
 
+        # Shared learnable positional embedding across views: [1, tokens_per_view, d_model]
+        self.pos_embed = nn.Parameter(
+            torch.zeros(1, self.tokens_per_view, d_model), requires_grad=True
+        )
+
         # Init view embeddings (small random values)
         nn.init.trunc_normal_(self.view_embed, std=0.02)
+        nn.init.trunc_normal_(self.pos_embed, std=0.02)
 
     def forward(self, views_tokens: List[torch.Tensor]) -> List[torch.Tensor]:
         """
@@ -83,7 +92,7 @@ class VisionAdapter(nn.Module):
         
         Args:
             views_tokens: list of tensors, length == num_views (6),
-                          each of shape [HW, d_model] (typically [256, d_model]).
+                          each of shape [HW, d_model] (typically [576, d_model]).
 
         Returns:
             List of 6 tensors, each [HW, d_model] with view embeddings added
@@ -108,10 +117,20 @@ class VisionAdapter(nn.Module):
         for i, view_tok in enumerate(views_tokens):
             if DEBUG_AVAILABLE:
                 debug.trace("vision_adapt", f"View {i} ({CAM_VIEWS[i]}): input shape {tuple(view_tok.shape)}")
+
+            if view_tok.shape[0] != self.tokens_per_view:
+                error_msg = (
+                    f"Expected {self.tokens_per_view} tokens per view, "
+                    f"got {view_tok.shape[0]} for {CAM_VIEWS[i]}"
+                )
+                if DEBUG_AVAILABLE:
+                    debug.error("vision_adapt", error_msg)
+                raise ValueError(error_msg)
             
             # Add view-specific embedding (broadcasts across all tokens)
             # view_tok: [HW, d_model], view_embed[i]: [d_model]
-            out = view_tok + self.view_embed[i]  # [HW, d_model]
+            pos = self.pos_embed[:, : view_tok.shape[0], :].squeeze(0)
+            out = view_tok + self.view_embed[i] + pos  # [HW, d_model]
             
             # Normalize and apply dropout
             out = self.norm(out)

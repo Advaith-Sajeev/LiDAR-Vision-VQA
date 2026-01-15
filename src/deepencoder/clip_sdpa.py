@@ -15,7 +15,7 @@ def clip_l_lora_default_targets():
     # ln   = ("layer_norm1", "layer_norm2")
     return (*attn, *mlp)
 
-__all__ = ["VitModel", "build_clip_l", "clip_l_lora_default_targets", "vit_model_cfg"]
+__all__ = ["VitModel", "build_clip_l", "build_clip_b16", "clip_l_lora_default_targets", "vit_model_cfg", "vit_b16_cfg"]
 
 from contextlib import nullcontext
 import math
@@ -157,7 +157,7 @@ class CLIPVisionEmbeddings(nn.Module):
 
         self.class_embedding = nn.Parameter(torch.randn(self.embed_dim))
 
-        # Only used when patch_embeds is None (we usually bypass with SAM features)
+        # Standard CLIP patch embedding used when external patch embeddings are not provided
         self.patch_embedding = nn.Conv2d(
             in_channels=num_channels,
             out_channels=self.embed_dim,
@@ -175,7 +175,7 @@ class CLIPVisionEmbeddings(nn.Module):
     def forward(self, pixel_values: torch.Tensor, patch_embeds: Optional[torch.Tensor] = None, **kwargs):
         """
         pixel_values: [B,3,H,W]
-        patch_embeds: [B, C=1024, Hs, Ws] from SAM (preferred) or None to use CLIP's own patcher
+        patch_embeds: Optional precomputed patch map [B, C=1024, Hs, Ws]; if None, use CLIP patcher
         Returns: token embeddings [B, 1+HW, C]
         
         Note: Accepts **kwargs to be compatible with PEFT wrappers that may pass extra arguments.
@@ -377,11 +377,11 @@ class VitModel(nn.Module):
         Dual-interface forward pass:
         1. Custom interface: forward(x, patch_embeds) where:
            - x: [B,3,H,W] pixel values
-           - patch_embeds: [B, 1024, Hs, Ws] from SAM (preferred) or None
+              - patch_embeds: [B, 1024, Hs, Ws] optional precomputed patch maps (uses internal patcher if None)
         
         2. PEFT-compatible interface: forward(pixel_values=..., patch_embeds=...) where:
            - pixel_values: [B,3,H,W] pixel values (alternative name for x)
-           - patch_embeds: [B, 1024, Hs, Ws] from SAM (preferred) or None
+              - patch_embeds: [B, 1024, Hs, Ws] optional precomputed patch maps (uses internal patcher if None)
         
         Returns: [B, 1+HW, 1024]
         
@@ -390,7 +390,7 @@ class VitModel(nn.Module):
         # Debug: Log what we received (uncomment for troubleshooting)
         # print(f"[VitModel.forward] args={len(args)}, x={x is not None}, patch_embeds={patch_embeds is not None}, pixel_values={pixel_values is not None}, kwargs={list(kwargs.keys())}")
         
-        # Handle positional arguments (when called as clip_vit(x, sam_feats))
+        # Handle positional arguments (when called as clip_vit(x, patch_embeds))
         if len(args) >= 1 and x is None and pixel_values is None:
             x = args[0]
         if len(args) >= 2 and patch_embeds is None:
@@ -445,9 +445,38 @@ vit_model_cfg = adict(
     recompute_list=[],
 )
 
+# CLIP ViT-B/16 config (frozen for the new simple encoder path)
+vit_b16_cfg = adict(
+    num_layers=12,
+    hidden_size=768,
+    num_heads=12,
+    num_attention_heads=12,
+    ffn_hidden_size=3072,
+    seq_length=600,                # approximate upper bound (1 + 24*24)
+    max_position_embeddings=600,   # kept for parity
+    use_flash_attn=_HAS_FLASH_ATTN,
+    understand_projector_stride=2,
+    hidden_dropout=0.0,
+    attention_dropout=0.0,
+    no_persist_layer_norm=False,
+    layernorm_epsilon=1e-5,
+    pre_layernorm_epsilon=1e-5,
+    image_size=384,                # keep 384×384 preprocessing
+    patch_size=16,
+    recompute_list=[],
+)
+
 def build_clip_l():
     return VitModel(
         cfg=vit_model_cfg,
+        freeze_embed=False,
+        freeze_pre_norm=False,
+    )
+
+
+def build_clip_b16():
+    return VitModel(
+        cfg=vit_b16_cfg,
         freeze_embed=False,
         freeze_pre_norm=False,
     )

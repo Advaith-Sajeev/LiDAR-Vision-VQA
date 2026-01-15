@@ -20,6 +20,13 @@ from google.genai import types
 # Load environment variables from .env file
 load_dotenv()
 
+# Prefer a prompt file in the same directory; fall back across known filenames
+PROMPT_CANDIDATES = (
+    "system_prompt.txt",
+    "system_prompt_summary.txt",
+    "system_prompt_entitylist.txt",
+)
+
 
 def strip_markdown_fences(text: str) -> str:
     """Remove markdown code fences (```json ... ```) from the response."""
@@ -28,6 +35,19 @@ def strip_markdown_fences(text: str) -> str:
     # Remove closing fence
     text = re.sub(r'\n?```\s*$', '', text)
     return text.strip()
+
+
+def load_system_prompt(script_dir: Path) -> str:
+    """Load the first available prompt file from known options."""
+    for name in PROMPT_CANDIDATES:
+        candidate = script_dir / name
+        if candidate.exists():
+            return candidate.read_text(encoding="utf-8")
+    available = ", ".join([p.name for p in script_dir.glob("system_prompt*.txt")])
+    raise FileNotFoundError(
+        "No prompt file found. Expected one of: "
+        f"{', '.join(PROMPT_CANDIDATES)}; available: {available or 'none'}"
+    )
 
 # View order and prefixes for 6 camera views
 VIEW_PREFIXES = [
@@ -92,8 +112,8 @@ def generate(api_key_name: str, artifact_folder: str, output_path: str):
     
     client = genai.Client(api_key=api_key)
 
-    # Load system prompt
-    system_prompt = Path("system_prompt.txt").read_text(encoding="utf-8")
+    # Load system prompt from the script directory with fallbacks
+    system_prompt = load_system_prompt(Path(__file__).parent)
 
     # Build parts list with all 6 images and their labels
     parts = []

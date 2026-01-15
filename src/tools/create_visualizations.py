@@ -134,7 +134,6 @@ def process_sample(sample_dir: Path, unmatched: List[Dict], out_dir: Path) -> No
     target_view = detect_view(question)
     artifacts = sample.get("artifacts", {})
     image_files = artifacts.get("copied_image_files", [])
-    image_files = artifacts.get("copied_image_files", [])
 
     if not target_view:
         unmatched.append(

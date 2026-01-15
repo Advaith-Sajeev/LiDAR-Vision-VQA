@@ -6,12 +6,12 @@ input sequences. The order is guaranteed and documented:
 
     SEQUENCE ORDER (vision-only with per-view delimiters):
     ┌─────────────────────────────────────────────────────────────────┐
-    │ [cam_front_start] [256 tokens] [cam_front_end]                  │
-    │ [cam_front_right_start] [256 tokens] [cam_front_right_end]      │
-    │ [cam_front_left_start] [256 tokens] [cam_front_left_end]        │
-    │ [cam_back_start] [256 tokens] [cam_back_end]                    │
-    │ [cam_back_right_start] [256 tokens] [cam_back_right_end]        │
-    │ [cam_back_left_start] [256 tokens] [cam_back_left_end]          │
+    │ [cam_front_start] [576 tokens] [cam_front_end]                  │
+    │ [cam_front_right_start] [576 tokens] [cam_front_right_end]      │
+    │ [cam_front_left_start] [576 tokens] [cam_front_left_end]        │
+    │ [cam_back_start] [576 tokens] [cam_back_end]                    │
+    │ [cam_back_right_start] [576 tokens] [cam_back_right_end]        │
+    │ [cam_back_left_start] [576 tokens] [cam_back_left_end]          │
     │ text_prompt [prompt_len, d_model]                               │
     │ answer_tokens [answer_len, d_model] (for training)              │
     └─────────────────────────────────────────────────────────────────┘
@@ -80,12 +80,12 @@ class SequenceBuilder:
         
         Each view gets:
         - <cam_X_start> delimiter
-        - View tokens [B, 256, d_model]
+        - View tokens [B, 576, d_model]
         - <cam_X_end> delimiter
         
         Args:
             view_tokens_list: List of 6 tensors from VisionAdapter,
-                             each [256, d_model] or [B, 256, d_model]
+                             each [576, d_model] or [B, 576, d_model]
             get_special_token_emb: Function(str) -> [1, 1, d_model] for special tokens
         """
         if len(view_tokens_list) != NUM_VIEWS:
@@ -231,7 +231,7 @@ def build_training_sequence(
         batch_size: Batch size
         tok_emb: [B, seq_len, d_model] text prompt embeddings
         ans_emb: [B, seq_len, d_model] answer embeddings
-        view_tokens_list: List of 6 tensors from VisionAdapter, each [256, d_model]
+        view_tokens_list: List of 6 tensors from VisionAdapter, each [576, d_model]
         get_special_token_emb: Function(str) -> [1, 1, d_model] for special tokens
     
     Returns:
@@ -271,7 +271,7 @@ def build_inference_sequence(
         dtype: Target dtype
         batch_size: Batch size
         tok_emb: [B, seq_len, d_model] text prompt embeddings
-        view_tokens_list: List of 6 tensors from VisionAdapter, each [256, d_model]
+        view_tokens_list: List of 6 tensors from VisionAdapter, each [576, d_model]
         get_special_token_emb: Function(str) -> [1, 1, d_model] for special tokens
     
     Returns:

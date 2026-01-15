@@ -298,13 +298,9 @@ class Trainer:
         cast_trainable_to_fp32(self.base, "LLM (Base) - LoRA adapters")
         cast_trainable_to_fp32(self.vision_adapter, "Vision Adapter")
         
-        # Cast DeepEncoder trainable params: CLIP LoRA, Projector, SAM compression heads
-        if hasattr(self.runtime, "clip_vit"):
-            cast_trainable_to_fp32(self.runtime.clip_vit, "DeepEncoder CLIP (LoRA)")
+        # Cast DeepEncoder trainable params: projector (CLIP is frozen)
         if hasattr(self.runtime, "projector"):
             cast_trainable_to_fp32(self.runtime.projector, "DeepEncoder Projector")
-        if hasattr(self.runtime, "sam"):
-            cast_trainable_to_fp32(self.runtime.sam, "DeepEncoder SAM (compression heads)")
         
         # Initialize datasets
         debug.info("trainer", "Initializing datasets...")
@@ -322,7 +318,6 @@ class Trainer:
             print(f"[dtype]   Vision Adapter: {next(self.vision_adapter.parameters()).dtype}")
             print(f"[dtype]   DeepEncoder CLIP: {next(self.runtime.clip_vit.parameters()).dtype}")
             print(f"[dtype]   DeepEncoder Projector: {next(self.runtime.projector.parameters()).dtype}")
-            print(f"[dtype]   DeepEncoder SAM: {next(self.runtime.sam.parameters()).dtype}")
         
         # Print parameter counts
         t_base, a_base, _ = count_trainable_params(self.base)
@@ -744,72 +739,50 @@ class Trainer:
                 )
                 proj_model.load_state_dict(torch.load(proj_path, map_location=self.device))
                 
-                # Load CLIP LoRA adapter
-                clip_lora_path = self.out_dir / f"clip_lora_adapter_{tag}"
-                if clip_lora_path.exists():
-                    if is_main_process():
-                        print(f"[resume] loading CLIP LoRA adapter from {clip_lora_path}")
-                    
-                    # Validate LoRA config before loading
-                    if not self._validate_lora_config(clip_lora_path, adapter_type="CLIP"):
-                        raise RuntimeError(
-                            f"CLIP LoRA config mismatch. Cannot resume with different LoRA configuration. "
-                            f"Please use the same lora_r, lora_alpha, and clip_lora_target_modules as the checkpoint, "
-                            f"or start training from scratch with resume=False."
-                        )
-                    
-                    clip_vit_unwrapped = (
-                        self.runtime.clip_vit.module
-                        if isinstance(self.runtime.clip_vit, nn.parallel.DistributedDataParallel)
-                        else self.runtime.clip_vit
-                    )
-                    # Load adapter weights using PEFT's set_peft_model_state_dict
-                    adapter_weights_path = clip_lora_path / "adapter_model.safetensors"
-                    if adapter_weights_path.exists():
-                        from safetensors.torch import load_file
-                        adapter_state = load_file(str(adapter_weights_path))
-                    else:
-                        adapter_weights_path = clip_lora_path / "adapter_model.bin"
-                        if adapter_weights_path.exists():
-                            adapter_state = torch.load(adapter_weights_path, map_location=self.device)
-                        else:
-                            # This is a critical error - adapter_config.json exists but weights are missing
-                            # This indicates a corrupted or incomplete checkpoint
-                            raise FileNotFoundError(
-                                f"CLIP LoRA adapter config exists at {clip_lora_path}/adapter_config.json "
-                                f"but no adapter weights found (checked adapter_model.safetensors and adapter_model.bin). "
-                                f"This indicates a corrupted checkpoint. Either restore the weights or start fresh with resume=False."
+                # Load CLIP LoRA adapter (skipped when clip_lora_enabled=False)
+                if self.config.get("clip_lora_enabled", False):
+                    clip_lora_path = self.out_dir / f"clip_lora_adapter_{tag}"
+                    if clip_lora_path.exists():
+                        if is_main_process():
+                            print(f"[resume] loading CLIP LoRA adapter from {clip_lora_path}")
+                        
+                        # Validate LoRA config before loading
+                        if not self._validate_lora_config(clip_lora_path, adapter_type="CLIP"):
+                            raise RuntimeError(
+                                f"CLIP LoRA config mismatch. Cannot resume with different LoRA configuration. "
+                                f"Please use the same lora_r, lora_alpha, and clip_lora_target_modules as the checkpoint, "
+                                f"or start training from scratch with resume=False."
                             )
-                    
-                    # adapter_state is guaranteed to be set if we reach here (otherwise exception raised)
-                    from peft import set_peft_model_state_dict
-                    set_peft_model_state_dict(clip_vit_unwrapped, adapter_state)
-                    if is_main_process():
-                        print(f"[resume] CLIP LoRA adapter loaded successfully via set_peft_model_state_dict()")
+                        
+                        clip_vit_unwrapped = (
+                            self.runtime.clip_vit.module
+                            if isinstance(self.runtime.clip_vit, nn.parallel.DistributedDataParallel)
+                            else self.runtime.clip_vit
+                        )
+                        # Load adapter weights using PEFT's set_peft_model_state_dict
+                        adapter_weights_path = clip_lora_path / "adapter_model.safetensors"
+                        if adapter_weights_path.exists():
+                            from safetensors.torch import load_file
+                            adapter_state = load_file(str(adapter_weights_path))
+                        else:
+                            adapter_weights_path = clip_lora_path / "adapter_model.bin"
+                            if adapter_weights_path.exists():
+                                adapter_state = torch.load(adapter_weights_path, map_location=self.device)
+                            else:
+                                # This is a critical error - adapter_config.json exists but weights are missing
+                                # This indicates a corrupted or incomplete checkpoint
+                                raise FileNotFoundError(
+                                    f"CLIP LoRA adapter config exists at {clip_lora_path}/adapter_config.json "
+                                    f"but no adapter weights found (checked adapter_model.safetensors and adapter_model.bin). "
+                                    f"This indicates a corrupted checkpoint. Either restore the weights or start fresh with resume=False."
+                                )
+                        
+                        # adapter_state is guaranteed to be set if we reach here (otherwise exception raised)
+                        from peft import set_peft_model_state_dict
+                        set_peft_model_state_dict(clip_vit_unwrapped, adapter_state)
+                        if is_main_process():
+                            print(f"[resume] CLIP LoRA adapter loaded successfully via set_peft_model_state_dict()")
                 
-                # Load SAM compression head (net_2 and net_3 - the trainable DeepEncoder/VARY layers)
-                sam_compression_head_path = self.out_dir / f"sam_compression_head_{tag}.pt"
-                if sam_compression_head_path.exists():
-                    if is_main_process():
-                        print(f"[resume] loading SAM compression head from {sam_compression_head_path}")
-                    sam_model = (
-                        self.runtime.sam.module
-                        if isinstance(self.runtime.sam, nn.parallel.DistributedDataParallel)
-                        else self.runtime.sam
-                    )
-                    sam_compression_head_state = torch.load(sam_compression_head_path, map_location=self.device)
-                    # Load only the compression head parameters (net_2, net_3)
-                    current_state = sam_model.state_dict()
-                    for name, param in sam_compression_head_state.items():
-                        if name in current_state:
-                            current_state[name] = param
-                    sam_model.load_state_dict(current_state)
-                    if is_main_process():
-                        print(f"[resume] SAM compression head loaded successfully ({len(sam_compression_head_state)} parameters)")
-                else:
-                    if is_main_process():
-                        print(f"[resume] WARNING: No SAM compression head found at {sam_compression_head_path}")
-            
             # Load LLM LoRA adapter
             lora_path = self.out_dir / f"qwen2_lora_adapter_{tag}"
             if lora_path.exists():
@@ -960,7 +933,7 @@ class Trainer:
         if True:
             self.vision_adapter.train()
             # Use runtime.train() to properly set CLIP/Projector to train mode
-            # while keeping SAM frozen in eval mode
+            # while keeping the frozen CLIP backbone in eval mode
             self.runtime.train()
         
         # Check if training is already complete
@@ -1212,7 +1185,7 @@ class Trainer:
                         )
                         
                         if not mv.get("tokens") or len(mv["tokens"]) != NUM_VIEWS:
-                            dummy_shape = (TOKENS_PER_VIEW, PROJECTOR_DIM)  # [256, 2048] per view
+                            dummy_shape = (TOKENS_PER_VIEW, PROJECTOR_DIM)  # [576, 896] per view
                             mv["tokens"] = [torch.zeros(dummy_shape, device=self.device, dtype=self.amp_dtype) for _ in range(NUM_VIEWS)]
                         
                         vt = [t.to(self.device) for t in mv["tokens"]]
@@ -1260,8 +1233,8 @@ class Trainer:
                     batched_view_tokens = []
                     for v_idx in range(num_views):
                         # Stack view v for all samples
-                        # each t is [256, d_model]
-                        # stacked is [B, 256, d_model]
+                        # each t is [576, d_model]
+                        # stacked is [B, 576, d_model]
                         v_tokens = torch.stack([sample[v_idx] for sample in vision_kv], dim=0)
                         batched_view_tokens.append(v_tokens)
                     debug.debug("trainer", f"Collated {num_views} views")
@@ -1379,10 +1352,6 @@ class Trainer:
             torch.nn.utils.clip_grad_norm_(
                 [p for p in self.runtime.clip_vit.parameters() if p.requires_grad], self.config["clip_norm"]
             )
-            # SAM compression head gradients are clipped via runtime.sam trainable parameters
-            torch.nn.utils.clip_grad_norm_(
-                [p for p in self.runtime.sam.parameters() if p.requires_grad], self.config["clip_norm"]
-            )
         
         # Step optimizer with scaler (handles inf/nan gradients gracefully)
         self.scaler.step(self.optim)
@@ -1443,7 +1412,6 @@ class Trainer:
             clip_vit=self.runtime.clip_vit if self.config["use_vision"] else None,
             vision_adapter=self.vision_adapter if self.config["use_vision"] else None,
             projector=self.runtime.projector if self.config["use_vision"] else None,
-            sam=self.runtime.sam if self.config["use_vision"] else None,  # SAM compression head
             sched_meta=self.sched_meta,
             config=self.config,
             val_losses=self.val_losses,
@@ -1485,7 +1453,6 @@ class Trainer:
             clip_vit=self.runtime.clip_vit if self.config["use_vision"] else None,
             vision_adapter=self.vision_adapter if self.config["use_vision"] else None,
             projector=self.runtime.projector if self.config["use_vision"] else None,
-            sam=self.runtime.sam if self.config["use_vision"] else None,
             sched_meta=self.sched_meta,
             config=self.config,
             val_losses=self.val_losses,
@@ -1587,7 +1554,6 @@ class Trainer:
             clip_vit=self.runtime.clip_vit if self.config["use_vision"] else None,
             vision_adapter=self.vision_adapter if self.config["use_vision"] else None,
             projector=self.runtime.projector if self.config["use_vision"] else None,
-            sam=self.runtime.sam if self.config["use_vision"] else None,
             sched_meta=self.sched_meta,
             config=self.config,
             val_losses=self.val_losses,

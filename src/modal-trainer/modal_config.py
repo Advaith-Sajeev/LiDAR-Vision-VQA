@@ -235,18 +235,15 @@ def get_modal_training_config() -> Dict:
         
         
         # ==================== CLIP LoRA Configuration ====================
-        # Enable LoRA fine-tuning for CLIP (if False, CLIP is fully frozen)
-        "clip_lora_enabled": True,
+        # CLIP is frozen in the CLIP-only encoder path; LoRA is disabled by default
+        "clip_lora_enabled": False,
 
-        # CLIP LoRA rank and alpha (decoupled from LLM)
+        # CLIP LoRA rank and alpha (unused unless explicitly re-enabled)
         "clip_lora_r": 8,
         "clip_lora_alpha": 16,
         "clip_lora_dropout": 0.10,
         
-        # CLIP LoRA target modules (which layers to apply LoRA to)
-        # Common targets for CLIP ViT models:
-        #   - Attention: "qkv_proj", "out_proj" (combined Q/K/V projection)
-        #   - MLP: "mlp.fc1", "mlp.fc2" ["qkv_proj", "out_proj", "mlp.fc1", "mlp.fc2"] 
+        # CLIP LoRA target modules (unused when clip_lora_enabled is False)
         # Set to None to use auto-detected defaults from infer_clip_lora_targets()
         "clip_lora_target_modules": None,
         
@@ -277,13 +274,9 @@ def get_modal_training_config() -> Dict:
         # Options: "v1.0-trainval", "v1.0-mini", "v1.0-test"
         "nu_version": "v1.0-trainval",
         
-        # Path to SAM checkpoint (None = auto-download if auto_download_sam=True)
-        # Will be saved to /data/model_cache for persistence across runs
-        # NOTE: Code uses SAM ViT-B, not ViT-H!
-        "sam_ckpt": "/data/model_cache/sam/sam_vit_b_01ec64.pth",
-        
-        # Automatically download SAM weights if missing
-        "auto_download_sam": True,
+        # SAM is not used in the CLIP-only encoder path
+        "sam_ckpt": None,
+        "auto_download_sam": False,
         
         # Data type for DeepEncoder processing
         # Options: "float32", "bfloat16" (bfloat16 faster but requires modern GPU)
