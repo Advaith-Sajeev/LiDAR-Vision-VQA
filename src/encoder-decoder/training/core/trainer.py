@@ -1055,6 +1055,7 @@ class Trainer:
                     use_amp=self.use_amp,
                     amp_dtype=self.amp_dtype,
                     val_dataset=self.ds_val,
+                    train_dataset=self.ds_train,
                 )
                 
                 # Store metrics for live plotting

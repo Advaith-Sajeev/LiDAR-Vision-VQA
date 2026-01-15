@@ -315,7 +315,8 @@ def run_inference_sampling(
     base, vision_adapter, runtime, nusc,
     tok, config, out_dir, epoch, device, best_step,
     use_amp=False, amp_dtype=torch.float32,
-    val_dataset=None
+    val_dataset=None,
+    train_dataset=None,
 ):
     """
     Generate predictions on validation samples with evaluation metrics.
@@ -387,445 +388,373 @@ def run_inference_sampling(
     
     vision_adapter_model.eval()
     runtime.eval()
+
+    def _restore_state():
+        # Restore training mode and gradient checkpointing
+        if was_training_base:
+            base_model.train()
+
+        if gradient_checkpointing_was_enabled and hasattr(base_model, "gradient_checkpointing_enable"):
+            base_model.gradient_checkpointing_enable()
+
+        base_model.config.use_cache = original_use_cache
+
+        if was_training_adapter:
+            vision_adapter_model.train()
+
+        # Restore runtime to training mode (CLIP stays frozen by requires_grad=False)
+        runtime.train()
     
-    # Load caption data logic
-    # Priority 1: Explicit inference_caption_json (e.g. test set)
+    def _extract_rows(ds):
+        if ds is None:
+            return None
+        # torch.utils.data.Subset
+        if hasattr(ds, "dataset") and hasattr(ds, "indices") and hasattr(ds.dataset, "rows"):
+            return [ds.dataset.rows[i] for i in ds.indices]
+        # full dataset
+        if hasattr(ds, "rows"):
+            return list(ds.rows)
+        return None
+
+    def _load_json_rows(path: str):
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, list):
+            raise ValueError(f"Expected a list of records in {path}, got {type(data)}")
+        return data
+
+    def _run_one_source(*, caption_data, source_label: str, out_tag: str, n_samples: int):
+        """Run inference sampling on a specific caption_data list and save under out_tag."""
+        if n_samples <= 0:
+            return [], {}
+
+        # ===== INFERENCE DATA VALIDATION =====
+        if nusc is not None and config.get("validate_image_paths", True):
+            all_tokens = list(set([s.get("sample_token") for s in caption_data if s.get("sample_token")] ))
+            if all_tokens:
+                print(f"\n[inference_sampling] Validating camera image paths ({out_tag}) for {len(all_tokens)} unique tokens...")
+                image_validation = validate_image_paths(
+                    nusc=nusc,
+                    sample_tokens=all_tokens,
+                    view_order=DEFAULT_VIEW_ORDER,
+                    num_workers=config.get("image_validation_workers", 16),
+                )
+                if image_validation.get("tokens_with_missing", 0) > 0:
+                    print(f"[inference_sampling] ⚠️  {image_validation['tokens_with_missing']} samples have missing camera views ({out_tag})")
+
+        caption_available = [s for s in caption_data if s.get("sample_token")]
+        if len(caption_available) < n_samples:
+            print(f"[inference_sampling] Warning ({out_tag}): need {n_samples}, have {len(caption_available)}. Using all available.")
+            caption_samples = caption_available
+        else:
+            caption_samples = random.sample(caption_available, n_samples)
+
+        all_samples = [{**s, "dataset_type": "caption", "split": out_tag} for s in caption_samples]
+
+        inference_batch_size = max(1, int(config.get("inference_batch_size", 8)))
+        print(f"\n[inference_sampling] Pre-encoding {len(all_samples)} samples ({out_tag}, batch_size={inference_batch_size})...")
+
+        encoded_samples = []
+        for batch_start in range(0, len(all_samples), inference_batch_size):
+            batch_end = min(batch_start + inference_batch_size, len(all_samples))
+            batch_samples = all_samples[batch_start:batch_end]
+            batch_tokens = [s["sample_token"] for s in batch_samples]
+
+            batch_prefix_vision = None
+            if nusc is not None:
+                with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
+                    batch_view_tokens = batch_multiview_tokens_from_sample_tokens(
+                        batch_tokens, nusc, runtime=runtime, view_order=DEFAULT_VIEW_ORDER, strict=False
+                    )
+                try:
+                    batch_view_tokens_device = [[t.to(device) for t in view_tokens] for view_tokens in batch_view_tokens]
+                    with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
+                        batch_prefix_vision = vision_adapter_model.forward_batch(batch_view_tokens_device)
+                except RuntimeError as e:
+                    if "out of memory" in str(e).lower():
+                        print(f"[inference_sampling] Batched vision encoding OOM ({out_tag}), retrying sequentially...")
+                        torch.cuda.empty_cache()
+                        sequential_outputs = []
+                        for single_views in batch_view_tokens:
+                            single_views_device = [t.to(device) for t in single_views]
+                            with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
+                                single_prefix = vision_adapter_model.forward_batch([single_views_device])
+                            sequential_outputs.append(single_prefix)
+                        batch_prefix_vision = torch.cat(sequential_outputs, dim=0)
+                    else:
+                        print(f"[inference_sampling] Batched vision encoding failed ({out_tag}): {e}")
+                        batch_prefix_vision = None
+                except Exception as e:
+                    print(f"[inference_sampling] Batched vision encoding failed ({out_tag}): {e}")
+                    batch_prefix_vision = None
+
+            for i, sample in enumerate(batch_samples):
+                if batch_prefix_vision is not None:
+                    sample["_vision_views"] = batch_prefix_vision[i]
+                else:
+                    sample["_vision_views"] = None
+                encoded_samples.append(sample)
+
+        print(f"[inference_sampling] ✓ Pre-encoding complete ({out_tag}): {len(encoded_samples)} samples ready")
+
+        results = []
+        for sample in encoded_samples:
+            try:
+                sample_token = sample["sample_token"]
+                question = sample.get("question", "").strip()
+                ground_truth = sample.get(config["target_field"], "").strip()
+
+                vision_views_list = sample.get("_vision_views")
+                use_system_in_inference = config.get("inference_use_system", True)
+
+                if use_system_in_inference:
+                    system_prompt = config.get(
+                        "system_prompt",
+                        "You are an expert autonomous driving assistant. Analyze the camera images to understand the driving scene.",
+                    )
+                    msgs = [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": question},
+                    ]
+                else:
+                    msgs = [{"role": "user", "content": question}]
+
+                prompt = tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
+
+                with torch.autocast(device_type=device.type, dtype=model_dtype, enabled=use_amp):
+                    E = base_model.get_input_embeddings()
+
+                    def emb_token(txt):
+                        ids = tok([txt], add_special_tokens=False, return_tensors="pt").input_ids.to(device)
+                        return E(ids)
+
+                    prompt_ids = tok(prompt, return_tensors="pt", add_special_tokens=False).input_ids.to(device)
+                    prompt_embeds = E(prompt_ids)
+
+                    inputs_embeds, _ = build_inference_sequence(
+                        device=device,
+                        dtype=model_dtype,
+                        batch_size=1,
+                        tok_emb=prompt_embeds,
+                        view_tokens_list=vision_views_list,
+                        get_special_token_emb=emb_token,
+                    )
+
+                inputs_embeds = inputs_embeds.to(dtype=model_dtype)
+                attention_mask = torch.ones(1, inputs_embeds.shape[1], dtype=torch.long, device=device)
+
+                max_position_embeddings = base_model.config.max_position_embeddings
+                input_length = inputs_embeds.shape[1]
+                max_new_tokens_config = config.get("inference_max_tokens", 64)
+                max_new_tokens = min(max_new_tokens_config, max_position_embeddings - input_length - 10)
+                if max_new_tokens < 1:
+                    max_new_tokens = 1
+
+                do_sample = config.get("inference_do_sample", True)
+                temperature = config.get("inference_temperature", 0.7)
+                if temperature <= 1e-5:
+                    do_sample = False
+
+                generation_kwargs = {
+                    "inputs_embeds": inputs_embeds,
+                    "attention_mask": attention_mask,
+                    "max_new_tokens": max_new_tokens,
+                    "pad_token_id": tok.pad_token_id,
+                    "eos_token_id": tok.eos_token_id,
+                    "bos_token_id": tok.bos_token_id,
+                    "use_cache": True,
+                    "do_sample": do_sample,
+                    "num_beams": config.get("inference_num_beams", 1),
+                    "repetition_penalty": 1.0,
+                }
+                if do_sample:
+                    generation_kwargs.update(
+                        {
+                            "temperature": temperature,
+                            "top_p": config.get("inference_top_p", 0.9),
+                            "top_k": config.get("inference_top_k", 50),
+                        }
+                    )
+
+                with torch.inference_mode():
+                    outputs = base_model.generate(**generation_kwargs)
+
+                prediction = tok.decode(outputs[0], skip_special_tokens=True).strip()
+
+                sample_result = {
+                    "source": source_label,
+                    "split": out_tag,
+                    "sample_token": sample_token,
+                    "dataset_type": "caption",
+                    "question": question,
+                    "ground_truth": ground_truth,
+                    "prediction": prediction,
+                }
+                sample_result["metrics"] = calculate_sample_level_metrics(sample_result, config)
+                results.append(sample_result)
+            except Exception as e:
+                print(f"[inference_sampling] Error ({out_tag}) processing {sample.get('sample_token', 'unknown')}: {e}")
+                continue
+
+        if results:
+            metrics = calculate_metrics_by_type(results, config)
+        else:
+            metrics = {}
+
+        samples_manifest = {
+            "epoch": epoch,
+            "best_step": best_step,
+            "timestamp": datetime.now().isoformat(),
+            "source": source_label,
+            "split": out_tag,
+            "num_samples": len(results),
+            "samples": results,
+        }
+        samples_file = out_dir / f"inference_sampling_{out_tag}_epoch{epoch}.json"
+        with open(samples_file, "w") as f:
+            json.dump(samples_manifest, f, indent=2)
+
+        summary_payload = {
+            "epoch": epoch,
+            "best_step": best_step,
+            "timestamp": datetime.now().isoformat(),
+            "source": source_label,
+            "split": out_tag,
+            "num_samples": len(results),
+            "metrics": metrics,
+            "samples_file": samples_file.name,
+        }
+        metrics_file = out_dir / f"metrics_summary_{out_tag}_epoch{epoch}.json"
+        with open(metrics_file, "w") as f:
+            json.dump(summary_payload, f, indent=2)
+
+        print(f"\n[inference_sampling] ({out_tag}) Sample manifest saved to {samples_file}")
+        print(f"[inference_sampling] ({out_tag}) Metrics summary saved to {metrics_file}")
+        return results, metrics
+
+    # ==============================
+    # Mode A: Split-aware train/test
+    # ==============================
+    train_n = int(config.get("inference_train_samples_n", 0) or 0)
+    test_n = int(config.get("inference_test_samples_n", 0) or 0)
+    test_json_path = config.get("inference_test_caption_json")
+
+    if train_n > 0 or test_n > 0:
+        all_results = []
+
+        if train_n > 0:
+            train_rows = _extract_rows(train_dataset)
+            if not train_rows:
+                print("[inference_sampling] Warning: train_dataset not available; skipping train inference sampling.")
+            else:
+                r_train, _ = _run_one_source(
+                    caption_data=train_rows,
+                    source_label="train_split",
+                    out_tag="train",
+                    n_samples=train_n,
+                )
+                all_results.extend(r_train)
+
+        if test_n > 0:
+            if not test_json_path:
+                print("[inference_sampling] Warning: inference_test_caption_json is None; skipping test inference sampling.")
+            else:
+                try:
+                    test_rows = _load_json_rows(test_json_path)
+                    r_test, _ = _run_one_source(
+                        caption_data=test_rows,
+                        source_label=f"file: {test_json_path}",
+                        out_tag="test",
+                        n_samples=test_n,
+                    )
+                    all_results.extend(r_test)
+                except Exception as e:
+                    print(f"[inference_sampling] Warning: Could not load test JSON ({test_json_path}): {e}")
+
+        # Return combined metrics for plotting compatibility
+        combined_metrics = calculate_metrics_by_type(all_results, config) if all_results else {}
+        _restore_state()
+        return combined_metrics
+
+    # ==============================
+    # Mode B: Legacy val/file mixing
+    # ==============================
+    # Priority 1: Explicit inference_caption_json
     # Priority 2: Validation split from trainer (val_dataset)
-    # Priority 3: Fallback to full caption_json (training + validation mixture)
-    
+    # Priority 3: Fallback to full caption_json
+
     caption_data = []
     inference_source = "unknown"
-    
+
     caption_json_path = config.get("inference_caption_json")
-    
     if caption_json_path:
-        # Case 1: Explicit file provided
         try:
-            with open(caption_json_path, "r", encoding="utf-8") as f:
-                caption_data = json.load(f)
+            caption_data = _load_json_rows(caption_json_path)
             inference_source = f"file: {caption_json_path}"
             print(f"[inference_sampling] Loaded {len(caption_data)} samples from: {inference_source}")
         except Exception as e:
             print(f"[inference_sampling] Warning: Could not load inference JSON: {e}")
             caption_data = []
-            
     elif val_dataset is not None:
-        # Case 2: Use validation split (Subset)
         try:
-            # Check if it's a Subset (standard from random_split)
-            if hasattr(val_dataset, 'dataset') and hasattr(val_dataset, 'indices'):
-                # access rows from parent dataset using indices
-                caption_data = [val_dataset.dataset.rows[i] for i in val_dataset.indices]
+            caption_data = _extract_rows(val_dataset) or []
+            if caption_data:
                 inference_source = "validation_split"
                 print(f"[inference_sampling] Using validation split ({len(caption_data)} samples) from trainer.")
-            elif hasattr(val_dataset, 'rows'):
-                # fallback if passed full dataset directly
-                caption_data = val_dataset.rows
-                inference_source = "validation_dataset_full"
-                print(f"[inference_sampling] Using provided dataset ({len(caption_data)} samples).")
         except Exception as e:
             print(f"[inference_sampling] Warning: Failed to extract samples from val_dataset: {e}")
             caption_data = []
 
     if not caption_data:
-        # Case 3: Fallback to full training JSON
         caption_json_path = config.get("caption_json")
         if caption_json_path:
-            print(f"[inference_sampling] Warning: No inference file or validation set available. Falling back to FULL training data.")
+            print("[inference_sampling] Warning: No inference file or validation set available. Falling back to FULL training data.")
             try:
-                with open(caption_json_path, "r", encoding="utf-8") as f:
-                    caption_data = json.load(f)
+                caption_data = _load_json_rows(caption_json_path)
                 inference_source = f"fallback_full: {caption_json_path}"
                 print(f"[inference_sampling] Loaded {len(caption_data)} samples from: {inference_source}")
             except Exception as e:
                 print(f"[inference_sampling] Error: Could not load fallback JSON: {e}")
         else:
-            print(f"[inference_sampling] Error: No data source available for inference sampling!")
+            print("[inference_sampling] Error: No data source available for inference sampling!")
     
-    # ===== INFERENCE DATA VALIDATION =====
-    # Validate camera image paths for inference data (when using vision)
-    # This ensures test data has the same validation as training data
-    if nusc is not None and config.get("validate_image_paths", True):
-        all_inference_tokens = list(set([s.get("sample_token") for s in caption_data if s.get("sample_token")]))
-        if all_inference_tokens:
-            print(f"\n[inference_sampling] Validating camera image paths for {len(all_inference_tokens)} unique tokens...")
-            image_validation = validate_image_paths(
-                nusc=nusc,
-                sample_tokens=all_inference_tokens,
-                view_order=DEFAULT_VIEW_ORDER,
-                num_workers=config.get("image_validation_workers", 16),
-                # Check all inference samples (they're typically fewer than training)
-            )
-            if image_validation.get('tokens_with_missing', 0) > 0:
-                print(f"[inference_sampling] ⚠️  {image_validation['tokens_with_missing']} samples have missing camera views")
-                print(f"[inference_sampling] ⚠️  Missing views will be filled with zeros, which may affect evaluation quality.")
-    
-    # =========================================================================
-    # SAMPLING STRATEGY BASED ON DATASET MODE
-    # =========================================================================
-    total_n = config["inference_samples_n"]
-    
-    # Filter for samples that have valid sample_token
-    caption_available = [s for s in caption_data if s.get("sample_token")]
+    # For legacy mode, run using the existing output naming.
+    total_n = int(config.get("inference_samples_n", 0) or 0)
+    if total_n <= 0:
+        print("[inference_sampling] inference_samples_n<=0; skipping inference sampling.")
+        _restore_state()
+        return {}
 
-    
-    # Calculate sample distribution based on dataset_mode
-    print(f"[inference_sampling] Sampling strategy (caption only, total={total_n}):")
-    print(f"  Caption: {total_n} samples (100%)")
-    
-    # Validate sufficient samples
-    if len(caption_available) < total_n:
-        print(f"[inference_sampling] Warning: Insufficient caption samples: need {total_n}, have {len(caption_available)}.")
-        print(f"[inference_sampling] Using all available samples.")
-        caption_samples = caption_available
-    else:
-        caption_samples = random.sample(caption_available, total_n)
-        
-    print(f"\n[inference_sampling] ✓ Sampled exactly:")
-    print(f"  Caption: {len(caption_samples)} samples")
-    print(f"  Total: {len(caption_samples)} samples")
-    
-    all_samples = [
-        {**s, "dataset_type": "caption"} for s in caption_samples
-    ]
-    
-    # ===== BATCHED ENCODING PHASE =====
-    # Pre-encode vision features in batches for efficiency
-    # This avoids redundant per-sample encoding during generation
-    
-    inference_batch_size = max(1, int(config.get("inference_batch_size", 8)))  # Encode in batches
-    print(f"\n[inference_sampling] Pre-encoding {len(all_samples)} samples (batch_size={inference_batch_size})...")
-    
-    # Filter valid samples and prepare for batched encoding
-    valid_samples = []
-    for sample in all_samples:
-        sample_token = sample["sample_token"]
-        valid_samples.append(sample)
-    
-    # Pre-compute all encodings in batches
-    encoded_samples = []
-    
-    for batch_start in range(0, len(valid_samples), inference_batch_size):
-        batch_end = min(batch_start + inference_batch_size, len(valid_samples))
-        batch_samples = valid_samples[batch_start:batch_end]
-        batch_tokens = [s["sample_token"] for s in batch_samples]
-        
-        # Batched vision encoding
-        batch_prefix_vision = None
-        if nusc is not None:
-            # Wrap with autocast: FP32 trainable weights receive auto-cast FP16 inputs
-            with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
-                batch_view_tokens = batch_multiview_tokens_from_sample_tokens(
-                    batch_tokens, nusc, runtime=runtime, view_order=DEFAULT_VIEW_ORDER, strict=False
-                )
-            try:
-                batch_view_tokens_device = [
-                    [t.to(device) for t in view_tokens]
-                    for view_tokens in batch_view_tokens
-                ]
-                
-                # VisionAdapter output goes directly to LLM (no VAT compression)
-                with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
-                    batch_prefix_vision = vision_adapter_model.forward_batch(batch_view_tokens_device)  # [B, 1536, d_model]
-            except RuntimeError as e:
-                if "out of memory" in str(e).lower():
-                    print("[inference_sampling] Batched vision encoding OOM, retrying sequentially (batch_size=1)...")
-                    torch.cuda.empty_cache()
-                    sequential_outputs = []
-                    for single_views in batch_view_tokens:
-                        single_views_device = [t.to(device) for t in single_views]
-                        with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
-                            single_prefix = vision_adapter_model.forward_batch([single_views_device])
-                        sequential_outputs.append(single_prefix)
-                    batch_prefix_vision = torch.cat(sequential_outputs, dim=0)
-                else:
-                    print(f"[inference_sampling] Batched vision encoding failed: {e}")
-                    batch_prefix_vision = None
-            except Exception as e:
-                print(f"[inference_sampling] Batched vision encoding failed: {e}")
-                batch_prefix_vision = None
-        
-        # Store encoded features for each sample
-        for i, sample in enumerate(batch_samples):
-            # Collate vision tokens properly:
-            # batch_prefix_vision is List[List[Tensor]] [Batch][View]
-            if batch_prefix_vision:
-                sample["_vision_views"] = batch_prefix_vision[i] # List[Tensor] (for this sample)
-            else:
-                sample["_vision_views"] = None
-            encoded_samples.append(sample)
-        
-        if (batch_start // inference_batch_size) % 2 == 0:
-            print(f"[inference_sampling] Encoded {batch_end}/{len(valid_samples)} samples...")
-    
-    print(f"[inference_sampling] ✓ Pre-encoding complete: {len(encoded_samples)} samples ready")
-    
-    # ===== GENERATION PHASE =====
-    # Generate predictions using pre-encoded features
-    results = []
-    
-    for sample in encoded_samples:
-        try:
-            sample_token = sample["sample_token"]
-            question = sample.get("question", "").strip()
-            ground_truth = sample.get(config["target_field"], "").strip()
-            dataset_type = sample["dataset_type"]
-            
-            # Use pre-encoded features
-            vision_views_list = sample.get("_vision_views")  # List[Tensor] or None
+    legacy_results, legacy_metrics = _run_one_source(
+        caption_data=caption_data,
+        source_label=inference_source,
+        out_tag="val",
+        n_samples=total_n,
+    )
 
-            
-            # Format prompt with configurable system prompt and toggles
-            # CRITICAL: Match the exact order used during training!
-            # BUT allow toggling components for debugging/ablation studies
-            
-            # Check inference toggles (default to True for backward compatibility)
-            use_system_in_inference = config.get("inference_use_system", True)
-            
-            # Build prompt based on system toggle
-            if use_system_in_inference:
-                system_prompt = config.get(
-                    "system_prompt", 
-                    "You are an expert autonomous driving assistant. Analyze the camera images to understand the driving scene. Provide accurate, concise descriptions of objects, their locations, distances, and spatial relationships. Use directional terms like 'ahead', 'left', 'right', 'behind' and specify distances in meters when describing object locations."
-                )
-                msgs = [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": question},
-                ]
-            else:
-                # Skip system prompt, only user question
-                msgs = [
-                    {"role": "user", "content": question},
-                ]
-            
-            prompt = tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
-            
-            # Build inputs_embeds using the SAME order as training
-            # Training order: VISION → LIDAR → SYSTEM+QUESTION
-            # 
-            # CRITICAL: Use model_dtype directly instead of relying on autocast output dtype.
-            # This avoids double-casting: autocast may produce fp16/bf16, then we'd cast again.
-            # Instead, we explicitly cast to model_dtype once after all operations.
-            with torch.autocast(device_type=device.type, dtype=model_dtype, enabled=use_amp):
-                E = base_model.get_input_embeddings()
-                
-                def emb_token(txt):
-                    ids = tok([txt], add_special_tokens=False, return_tensors="pt").input_ids.to(device)
-                    return E(ids)
-                
-                # Tokenize the prompt (system + user + generation prompt)
-                prompt_ids = tok(prompt, return_tensors="pt", add_special_tokens=False).input_ids.to(device)
-                prompt_embeds = E(prompt_ids)  # [1, L, d_model]
-            
-                # Build the full input with explicit position markers
-                effective_vision = vision_views_list
-                
-                # Safety check: ensure we have at least some content
-                if effective_vision is None and prompt_embeds is None:
-                    print(f"[inference_sampling] Error: No components enabled for {sample_token}, skipping...")
-                    print(f"[inference_sampling]   Check: inference_use_vision or ensure prompt is not empty")
-                    continue
-                
-                inputs_embeds, sequence_metadata = build_inference_sequence(
-                    device=device,
-                    dtype=model_dtype,  # Use model_dtype directly, not amp_dtype
-                    batch_size=1,
-                    tok_emb=prompt_embeds,
-                    view_tokens_list=effective_vision,
-                    get_special_token_emb=emb_token,
-                )
-            
-            # Cast inputs_embeds to model dtype (VisionAdapter outputs FP32 but model is FP16)
-            inputs_embeds = inputs_embeds.to(dtype=model_dtype)
-            
-            attention_mask = torch.ones(1, inputs_embeds.shape[1], dtype=torch.long, device=device)
-            
-            # Debug logging
-            if config.get("debug_shapes", False):
-                print(f"[inference_sampling] inputs_embeds shape: {inputs_embeds.shape}")
-                print(f"[inference_sampling] attention_mask shape: {attention_mask.shape}")
-            
-            # Check model's max position embeddings
-            max_position_embeddings = base_model.config.max_position_embeddings
-            input_length = inputs_embeds.shape[1]
-            max_new_tokens_config = config.get("inference_max_tokens", 64)
-            
-            # Calculate safe max_new_tokens to avoid exceeding model's context length
-            max_new_tokens = min(max_new_tokens_config, max_position_embeddings - input_length - 10)
-            
-            if max_new_tokens < 10:
-                print(f"[inference_sampling] Warning: Very limited generation space for {sample_token}")
-                print(f"[inference_sampling]   Input: {input_length}, Max pos: {max_position_embeddings}, Max new: {max_new_tokens}")
-                max_new_tokens = max(1, max_new_tokens)  # Force at least 1 token
-            
-            if config.get("debug_shapes", False):
-                print(f"[inference_sampling] Generation params: input_len={input_length}, max_new={max_new_tokens}")
-            
-            # Use greedy decoding only when Vision is disabled (for debugging)
-            # When vision is enabled, use sampling for more diverse outputs
-            use_greedy = False
-            
-            # Common generation kwargs for speed optimization
-            common_kwargs = {
-                "inputs_embeds": inputs_embeds,
-                "attention_mask": attention_mask,
-                "max_new_tokens": max_new_tokens,
-                "pad_token_id": tok.pad_token_id,
-                "eos_token_id": tok.eos_token_id,
-                "bos_token_id": tok.bos_token_id,
-                "use_cache": True,  # Enable KV cache for faster generation
-            }
-            
-            if use_greedy:
-                generation_kwargs = {
-                    **common_kwargs,
-                    "do_sample": False,  # Greedy decoding
-                    "num_beams": 1,
-                }
-            else:
-                # Check if we should sample or greedy decode
-                do_sample = config.get("inference_do_sample", True)
-                temperature = config.get("inference_temperature", 0.7)
-                
-                # If temperature is 0, force greedy decoding (sampling not possible)
-                if temperature <= 1e-5:
-                    do_sample = False
-                
-                generation_kwargs = {
-                    **common_kwargs,
-                    "do_sample": do_sample,
-                    "num_beams": config.get("inference_num_beams", 1),
-                    "repetition_penalty": 1.0,
-                }
-                
-                # Only add sampling parameters if sampling is enabled
-                if do_sample:
-                    generation_kwargs.update({
-                        "temperature": temperature,
-                        "top_p": config.get("inference_top_p", 0.9),
-                        "top_k": config.get("inference_top_k", 50),
-                    })
-            
-            # Generate with torch.inference_mode for speed
-            try:
-                with torch.inference_mode():
-                    outputs = base_model.generate(**generation_kwargs)
-                
-                # CRITICAL: generate() with inputs_embeds behavior:
-                # - Returns ONLY the generated tokens (not input + generated)
-                # - The output length will be <= max_new_tokens
-                # - We decode the entire output as the prediction
-                
-                actual_output_length = outputs.shape[1]
-                
-                # Decode the generated tokens directly
-                prediction = tok.decode(outputs[0], skip_special_tokens=True).strip()
-                
-                if prediction:
-                    print(f"[inference_sampling] ✓ Generated {actual_output_length} tokens for {sample_token}")
-                    print(f"[inference_sampling]   '{prediction[:100]}{'...' if len(prediction) > 100 else ''}'")
-                else:
-                    # Empty after decoding - likely only special tokens
-                    print(f"[inference_sampling] Warning: Generated {actual_output_length} tokens but empty after decoding")
-                    raw_decoded = tok.decode(outputs[0], skip_special_tokens=False)
-                    print(f"[inference_sampling]   Raw: '{raw_decoded[:100]}...'")
-                
-            except Exception as gen_error:
-                print(f"[inference_sampling] Generation failed for {sample_token}: {gen_error}")
-                import traceback
-                traceback.print_exc()
-                prediction = ""
-            
-            sample_result = {
-                "sample_token": sample_token,
-                "dataset_type": dataset_type,
-                "question": question,
-                "ground_truth": ground_truth,
-                "prediction": prediction,
-            }
-            sample_result["metrics"] = calculate_sample_level_metrics(sample_result, config)
-            results.append(sample_result)
-        
-        except Exception as e:
-            print(f"[inference_sampling] Error processing {sample.get('sample_token', 'unknown')}: {e}")
-            import traceback
-            traceback.print_exc()
-            continue
-    
-    # Calculate metrics
-    print(f"\n[inference_sampling] Calculating metrics for {len(results)} samples...")
-    
-    if not results:
-        print("[inference_sampling] Warning: No results generated, skipping metrics calculation")
-        metrics = {}
-    else:
-        metrics = calculate_metrics_by_type(results, config)
-    
-    # Save detailed sample manifest and aggregate metrics separately
-    samples_manifest = {
-        "epoch": epoch,
-        "best_step": best_step,
-        "timestamp": datetime.now().isoformat(),
-        "samples": results,
-    }
-    samples_file = out_dir / f"inference_sampling_epoch{epoch}.json"
-    with open(samples_file, "w") as f:
-        json.dump(samples_manifest, f, indent=2)
+    # Preserve older filenames as an alias for tooling expectations
+    if legacy_results:
+        samples_manifest = {
+            "epoch": epoch,
+            "best_step": best_step,
+            "timestamp": datetime.now().isoformat(),
+            "samples": legacy_results,
+        }
+        samples_file = out_dir / f"inference_sampling_epoch{epoch}.json"
+        with open(samples_file, "w") as f:
+            json.dump(samples_manifest, f, indent=2)
 
-    summary_payload = {
-        "epoch": epoch,
-        "best_step": best_step,
-        "timestamp": datetime.now().isoformat(),
-        "num_samples": len(results),
-        "metrics": metrics,
-        "samples_file": samples_file.name,
-    }
-    metrics_file = out_dir / f"metrics_summary_epoch{epoch}.json"
-    with open(metrics_file, "w") as f:
-        json.dump(summary_payload, f, indent=2)
+        summary_payload = {
+            "epoch": epoch,
+            "best_step": best_step,
+            "timestamp": datetime.now().isoformat(),
+            "num_samples": len(legacy_results),
+            "metrics": legacy_metrics,
+            "samples_file": samples_file.name,
+        }
+        metrics_file = out_dir / f"metrics_summary_epoch{epoch}.json"
+        with open(metrics_file, "w") as f:
+            json.dump(summary_payload, f, indent=2)
 
-    print(f"\n[inference_sampling] Sample manifest saved to {samples_file}")
-    print(f"[inference_sampling] Metrics summary saved to {metrics_file}")
-    print(f"\n{'='*60}")
-    print("INFERENCE SAMPLING METRICS")
-    print('='*60)
-    
-    if "caption_dashboard" in metrics:
-        cap = metrics['caption_dashboard']
-        print(f"\nCaption Dashboard ({cap['num_samples']} samples):")
-        if "bleu4" in cap:
-            print(f"  BLEU-4:       {cap['bleu4']:.4f}")
-        if "rouge_l" in cap:
-            print(f"  ROUGE-L:      {cap['rouge_l']:.4f}")
-        if "meteor" in cap:
-            print(f"  METEOR:       {cap['meteor']:.4f}")
-        if "cider" in cap:
-            print(f"  CIDEr:        {cap['cider']:.4f}")
-        if "spice" in cap:
-            print(f"  SPICE:        {cap['spice']:.4f}")
-        if "bertscore_f1" in cap:
-            print(f"  BERTScore-F1: {cap['bertscore_f1']:.4f}")
-    
-
-    
-    print('='*60 + '\n')
-    
-    # Restore training mode and gradient checkpointing
-    if was_training_base:
-        base_model.train()
-
-    
-    # Re-enable gradient checkpointing if it was enabled
-    if gradient_checkpointing_was_enabled and hasattr(base_model, 'gradient_checkpointing_enable'):
-        base_model.gradient_checkpointing_enable()
-    
-    # Restore use_cache setting
-    base_model.config.use_cache = original_use_cache
-    
-    if was_training_adapter:
-        vision_adapter_model.train()
-    # Restore runtime to training mode (CLIP/Projector train, SAM stays frozen)
-    runtime.train()
-    
-    # Return metrics for live plotting
-    return metrics
+    _restore_state()
+    return legacy_metrics
