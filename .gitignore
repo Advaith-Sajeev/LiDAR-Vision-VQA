@@ -41,3 +41,4 @@ src/CreateDataset/.env
 .bin/*
 
 src.bak/
+checkpoints.bak/*
