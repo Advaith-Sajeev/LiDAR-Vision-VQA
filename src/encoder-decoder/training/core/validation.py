@@ -633,9 +633,11 @@ def run_inference_sampling(
         return results, metrics
 
     # ==============================
-    # Mode A: Split-aware train/test
+    # Mode A: Split-aware train/val (optionally external test file)
     # ==============================
     train_n = int(config.get("inference_train_samples_n", 0) or 0)
+    # NOTE: "test" here means "second split".
+    # If inference_test_caption_json is not provided, we fall back to the validation split.
     test_n = int(config.get("inference_test_samples_n", 0) or 0)
     test_json_path = config.get("inference_test_caption_json")
 
@@ -656,9 +658,8 @@ def run_inference_sampling(
                 all_results.extend(r_train)
 
         if test_n > 0:
-            if not test_json_path:
-                print("[inference_sampling] Warning: inference_test_caption_json is None; skipping test inference sampling.")
-            else:
+            if test_json_path:
+                # External test set provided
                 try:
                     test_rows = _load_json_rows(test_json_path)
                     r_test, _ = _run_one_source(
@@ -670,6 +671,19 @@ def run_inference_sampling(
                     all_results.extend(r_test)
                 except Exception as e:
                     print(f"[inference_sampling] Warning: Could not load test JSON ({test_json_path}): {e}")
+            else:
+                # No test set available: fall back to validation split
+                val_rows = _extract_rows(val_dataset) if val_dataset is not None else None
+                if not val_rows:
+                    print("[inference_sampling] Warning: No test JSON and no val_dataset available; skipping val/test sampling.")
+                else:
+                    r_val, _ = _run_one_source(
+                        caption_data=val_rows,
+                        source_label="validation_split",
+                        out_tag="val",
+                        n_samples=test_n,
+                    )
+                    all_results.extend(r_val)
 
         # Return combined metrics for plotting compatibility
         combined_metrics = calculate_metrics_by_type(all_results, config) if all_results else {}

@@ -107,13 +107,14 @@ def get_training_config() -> Dict:
         
         # ==================== Inference Configuration ====================
         "inference_sampling_every": 5,
-        # When train/test sampling counts are set (>0), inference sampling will pull:
+        # When train/val sampling counts are set (>0), inference sampling will pull:
         #   - N samples from the TRAIN split
-        #   - M samples from a TEST json (inference_test_caption_json)
-        # and will save them separately.
+        #   - M samples from the VALIDATION split by default
+        # If you provide inference_test_caption_json, that file is used instead of val.
+        # Samples are saved separately per split.
         "inference_train_samples_n": 20,
         "inference_test_samples_n": 20,
-        # Path to a held-out TEST json on HPC. If None, test sampling is skipped.
+        # Optional path to a held-out TEST json on HPC. If None, sampling falls back to val split.
         "inference_test_caption_json": None,
 
         # Backward compatible (legacy) behavior: if train/test counts are 0, use this count
