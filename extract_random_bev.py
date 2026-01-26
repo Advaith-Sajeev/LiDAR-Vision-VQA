@@ -35,7 +35,7 @@ CONFIG = {
     "VISUALIZE": True,
     
     # PCDet config & checkpoint
-    "PCDET_CFG":  "src/lidar-encoder/cfgs/nuscenes_models/cbgs_voxel0075_voxelnext.yaml",
+    "PCDET_CFG":  "src/lidar-encoder/tools/cfgs/nuscenes_models/cbgs_voxel0075_voxelnext.yaml",
     "PCDET_CKPT": "src/lidar-encoder/models/voxelnext_nuscenes_kernel1.pth",
 }
 # ============================================================
