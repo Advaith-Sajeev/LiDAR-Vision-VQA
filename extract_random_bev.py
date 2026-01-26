@@ -218,34 +218,26 @@ def main():
     viz_dir.mkdir(parents=True, exist_ok=True)
     feat_dir.mkdir(parents=True, exist_ok=True)
 
-    # 2. Select Token
+    # 2. Select Token Loop
     print(f"[1/5] Loading tokens from {CONFIG['CSV_PATH']}...")
     try:
         df = pd.read_csv(CONFIG["CSV_PATH"])
-        # Assuming the column is named 'token' or taking the first column
         # Look for 'token' or 'sample_token' column
         token_col = next((c for c in df.columns if 'token' in c.lower()), df.columns[0])
-        token = df[token_col].sample(n=1).iloc[0]
-        print(f"      Selected Random Token: {token}")
     except Exception as e:
         print(f"Error reading CSV: {e}")
         return
 
-    # 3. Initialize NuScenes to find file path
-    # We need to determine if this token is train or test to know which root to use.
-    # Since we can't easily know, we might have to try both or rely on the CSV info if present.
-    # For now, let's assume it's in the 'train' split directory as default, 
-    # or check file existence.
-    
-    # NOTE: Keep the HPC logic. We'll try to init nusc for 'train' first.
-    split_name = "train" # Default to train/val dataset
+    # Try up to 10 random tokens
+    MAX_RETRIES = 10
+    nusc = None
+    lidar_path = None
+    token = None
+
+    # Init NuScenes ONCE before the loop (it's slow)
+    split_name = "train" 
     split_root = Path(CONFIG["SPLIT_DIRS"][split_name])
-    
-    # Try to find version
     version = "v1.0-trainval"
-    if not (split_root / version).exists():
-        # Fallback logic if needed, or specific to HPC structure
-        pass
 
     print(f"[2/5] Initializing NuScenes ({version} in {split_root})...")
     try:
@@ -254,15 +246,35 @@ def main():
         print(f"Failed to init NuScenes: {e}")
         return
 
-    try:
-        lidar_path = find_lidar_path(nusc, token, split_root)
-        print(f"      Lidar Path: {lidar_path}")
-    except Exception as e:
-        print(f"Error finding lidar path (maybe token is in 'test' split?): {e}")
-        return
+    print(f"      Trying up to {MAX_RETRIES} random tokens from CSV...")
+    for attempt in range(MAX_RETRIES):
+        try:
+            potential_token = df[token_col].sample(n=1).iloc[0]
+            print(f"      Attempt {attempt+1}: Checking token {potential_token}...")
+            
+            # Check if token exists in this NuScenes subset
+            try:
+                # NuScenes will raise KeyError if token not found in tables
+                _ = nusc.get("sample", potential_token)
+            except KeyError:
+                print(f"      -> Token not found in loaded NuScenes tables. Skipping.")
+                continue
 
-    if not lidar_path.exists():
-        print(f"Error: Lidar file does not exist at {lidar_path}")
+            # If token exists, try to find the file
+            path = find_lidar_path(nusc, potential_token, split_root)
+            if path.exists():
+                lidar_path = path
+                token = potential_token
+                print(f"      -> SUCCESS! Found LiDAR file: {lidar_path}")
+                break
+            else:
+                print(f"      -> File missing at {path}. Skipping.")
+        except Exception as e:
+            print(f"      -> Error checking token: {e}")
+            continue
+
+    if lidar_path is None:
+        print(f"Error: Could not find any valid LiDAR file after {MAX_RETRIES} attempts. Check your CSV or Dataset subset.")
         return
 
     # 4. Load Model
