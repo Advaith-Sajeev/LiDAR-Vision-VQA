@@ -222,8 +222,13 @@ def main():
     print(f"[1/5] Loading tokens from {CONFIG['CSV_PATH']}...")
     try:
         df = pd.read_csv(CONFIG["CSV_PATH"])
-        # Look for 'token' or 'sample_token' column
-        token_col = next((c for c in df.columns if 'token' in c.lower()), df.columns[0])
+        # Explicitly look for 'sample_token' column first, then 'token'
+        if 'sample_token' in df.columns:
+            token_col = 'sample_token'
+        else:
+            token_col = next((c for c in df.columns if 'token' in c.lower()), df.columns[0])
+            
+        print(f"      Using column '{token_col}' for tokens.")
     except Exception as e:
         print(f"Error reading CSV: {e}")
         return
